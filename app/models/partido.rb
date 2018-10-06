@@ -1,0 +1,2 @@
+class Partido < ApplicationRecord
+end
