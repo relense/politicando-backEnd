@@ -10,13 +10,19 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema.define(version: 2018_10_06_141520) do
+ActiveRecord::Schema.define(version: 2018_10_12_200613) do
 
   create_table "partidos", force: :cascade do |t|
     t.string "party_name", null: false
     t.string "description", null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.integer "deputies_republic_chamber"
+    t.integer "deputies_acores_legislative_chamber"
+    t.integer "deputies_madeira_legislative_chamber"
+    t.integer "member_europen_parlament"
+    t.integer "president_town_hall"
+    t.integer "councilmen_municipal"
   end
 
 end

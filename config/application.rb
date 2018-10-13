@@ -10,10 +10,24 @@ module PoliticandoBackend
   class Application < Rails::Application
     # Initialize configuration defaults for originally generated Rails version.
     config.load_defaults 5.2
+    config.action_controller.asset_host = "#{ENV['DEFAULT_URL_PROTOCOL']}://#{ENV['DEFAULT_URL_HOST']}"
 
     # Settings in config/environments/* take precedence over those specified here.
     # Application configuration can go into files in config/initializers
     # -- all .rb files in that directory are automatically loaded after loading
     # the framework and any gems in your application.
+
+    Rails.application.routes.default_url_options = {
+      host: ENV['DEFAULT_URL_HOST'],
+      protocol: ENV['DEFAULT_URL_PROTOCOL'] || 'https'
+    }
+
+    config.middleware.insert_before 0, Rack::Cors do
+      allow do
+        origins 'http://localhost:3000'
+        resource '*', :headers => :any, :methods => [:get, :post, :put, :delete, :options]
+      end
+    end
+    
   end
 end
