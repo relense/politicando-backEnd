@@ -11,6 +11,9 @@ Things you may want to cover:
 
 * Configuration
 
+    * Run Certificate
+     - In console run:  rails s -b 'ssl://localhost:4000?key=localhost.key&cert=localhost.crt'
+
 * Database creation
 
 * Database initialization

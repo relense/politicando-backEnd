@@ -10,14 +10,20 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema.define(version: 2018_11_02_112904) do
+ActiveRecord::Schema.define(version: 2018_11_11_174840) do
 
   create_table "articles", force: :cascade do |t|
     t.string "title", null: false
-    t.string "content", null: false
+    t.text "content", null: false
     t.string "image_link"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.integer "event_registry_uri"
+    t.string "news_url"
+    t.datetime "published_time"
+    t.string "source"
+    t.string "image_url"
+    t.index ["event_registry_uri"], name: "index_articles_on_event_registry_uri"
   end
 
   create_table "articles_partidos", id: false, force: :cascade do |t|

@@ -1,31 +1,27 @@
-require 'open-uri'
-
 class NewsApi::Api
+    include HTTParty
+    base_uri 'eventregistry.org'
 
-    def top_headlines
-        url = 'https://newsapi.org/v2/top-headlines?&sources=google-news&country=pt&apiKey=' + ENV["NEWS_API_KEY"]
-        req = open(url)
-        response_body = JSON.parse(req.read)
+    def initialize
+        @date = DateTime.now
+        @actual_date = @date
 
-        articles = response_body["articles"]
-
-        articles.each do |article|
-            puts article["source"]["name"]
-        end
-
+        @request_params = {
+            query: {
+                query: "{\"$query\":{\"$and\":[{\"conceptUri\":\"http://en.wikipedia.org/wiki/Politics\"},{\"$or\":[{\"sourceUri\":\"publico.pt\"},{\"sourceUri\":\"cmjornal.pt\"},{\"sourceUri\":\"rtp.pt\"},{\"sourceUri\":\"sicnoticias.sapo.pt\"},{\"sourceUri\":\"expresso.sapo.pt\"},{\"sourceUri\":\"dn.pt\"},{\"sourceUri\":\"observador.pt\"},{\"sourceUri\":\"eco.pt\"}]},{\"dateStart\":\"#{@actual_date.strftime("%Y-%m-%d")}\",\"dateEnd\":\"#{@actual_date.strftime("%Y-%m-%d")}\",\"lang\":\"por\"}]}}",
+            	action: "getArticles",
+            	dataType: [ "news" ],
+            	resultType: "articles",
+            	articlesSortBy: "date",
+            	articlesCount: 100,
+            	articleBodyLen: -1,
+              includeArticleImage: true,
+                apiKey: ENV["EVENT_REGISTRY_API_KEY"]
+            }
+        }
     end
 
-    def every_news
-        excluded_domains = "Abola.pt,Ojogo.pt,Record.pt,Estadao.com.br,Macmagazine.com.br"
-
-        url = 'https://newsapi.org/v2/everything?sources=google-news&q=business&excludeDomains=' + excluded_domains +'&language=pt&apiKey=' + ENV["NEWS_API_KEY"]
-        req = open(url)
-        response_body = JSON.parse(req.read)
-
-        articles = response_body["articles"]
-
-        articles.each do |article|
-            puts article["source"]["name"]
-        end
+    def all_headlines
+        self.class.get("/api/v1/article", @request_params)
     end
 end

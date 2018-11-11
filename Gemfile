@@ -30,6 +30,7 @@ gem 'jbuilder', '~> 2.5'
 
 gem 'news-api'
 gem 'pry', '~> 0.11.3'
+gem 'httparty', '~> 0.13.7'
 
 # Use Capistrano for deployment
 # gem 'capistrano-rails', group: :development
