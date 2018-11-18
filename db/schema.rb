@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema.define(version: 2018_11_11_174840) do
+ActiveRecord::Schema.define(version: 2018_11_17_104200) do
 
   create_table "articles", force: :cascade do |t|
     t.string "title", null: false
@@ -23,6 +23,7 @@ ActiveRecord::Schema.define(version: 2018_11_11_174840) do
     t.datetime "published_time"
     t.string "source"
     t.string "image_url"
+    t.string "tags"
     t.index ["event_registry_uri"], name: "index_articles_on_event_registry_uri"
   end
 

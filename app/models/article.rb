@@ -1,30 +1,91 @@
 class Article < ApplicationRecord
     has_and_belongs_to_many :partidos
 
-    def associate_partie
+    def associate_party_include
       parties = Partido.all
 
-      exists_partie = false
+      associated = false
 
-        parties.each do |partie|
-          if title.include? " #{partie.party_name} " && "#{partie.description}"
-            ArticlesPartido.create(partido_id: partie.id, article_id: self.id)
-            exists_partie = true
-            break
-          end
+      parties.each do |party|
+        if title.include?(" #{party.party_name} ") || title.include?(" #{party.description} ")
+          ArticlesPartido.create(partido_id: party.id, article_id: self.id)
+          return true
         end
 
-      if !exists_partie
-        parties.each do |partie|
-          if content.include? " #{partie.party_name} " && "#{partie.description}"
-            ArticlesPartido.create(partido_id: partie.id, article_id: self.id)
-            exists_partie = true
-            break
-          end
+        if content.include?(" #{party.party_name} ") || content.include?(" #{party.description} ")
+          ArticlesPartido.create(partido_id: party.id, article_id: self.id)
+          return true
         end
       end
 
-      exists_partie
-
+      associated
     end
+
+    def associate_party
+      parties = Partido.all #ir buscar todos os partidos
+      associated_parties = ""
+
+      associated = false #variavel que vai permitir saber se o artigo foi associado.
+      party_count = Array.new(14) { 0 } #array para guardar a contagem de cada partido
+
+      parties.each_with_index do |party, index|
+         party_count[index] = title.scan(/\s#{party.party_name}\W/).length #space in the beggining and end of word
+         party_count[index] += title.scan(/^#{party.party_name}\s/).length #beggining of the line word with space after
+
+         party_count[index] += title.scan(/\s#{party.description}\W/).length
+         party_count[index] += title.scan(/^#{party.description}\s/).length
+
+         party_count[index] += content.scan(/\s#{party.party_name}\W/).length
+         party_count[index] += content.scan(/^#{party.party_name}\s/).length
+
+         party_count[index] += content.scan(/\s#{party.description}\W/).length
+         party_count[index] += content.scan(/^#{party.description}\s/).length
+      end
+
+      most_mentioned = party_count.each_with_index.max(4)
+
+      if most_mentioned[0][0] >= 2
+        ArticlesPartido.create(partido_id: most_mentioned[0][1] + 1, article_id: self.id)
+        associated_parties = Partido.find(most_mentioned[0][1] + 1).party_name
+        associated = true
+
+         if most_mentioned[1][0] >= 3
+           ArticlesPartido.create(partido_id: most_mentioned[1][1] + 1, article_id: self.id)
+           associated_parties += "," + Partido.find(most_mentioned[1][1] + 1).party_name
+         end
+
+         if most_mentioned[2][0] >= 3
+           ArticlesPartido.create(partido_id: most_mentioned[2][1] + 1, article_id: self.id)
+           associated_parties += "," + Partido.find(most_mentioned[2][1] + 1).party_name
+         end
+
+         if most_mentioned[3][0] >= 3
+           ArticlesPartido.create(partido_id: most_mentioned[3][1] + 1, article_id: self.id)
+           associated_parties += "," + Partido.find(most_mentioned[3][1] + 1).party_name
+         end
+      end
+
+      {associated: associated, tags: associated_parties}
+    end
+
+    def self.validate(value, party_id, article_id)
+      if value >= 1
+        ArticlesPartido.create(partido_id: party_id + 1, article_id: article_id)
+        return true
+      end
+      return false
+    end
+
 end
+
+# party_count = article.title.scan(/\sPAN\W/).length
+# party_count = article.title.scan(/^PAN\s/).length
+#
+# party_count += article.title.scan(/\sPAN\W/).length
+# party_count += article.title.scan(/^PAN\s/).length
+#
+# party_count += article.content.scan(/\sPAN\W/).length
+# party_count += article.content.scan(/^PAN\s/).length
+#
+# party_count += article.content.scan(/\sPAN\W/).length
+# party_count += article.content.scan(/^PAN\s/).length
