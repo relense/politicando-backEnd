@@ -5,7 +5,7 @@ Rails.application.routes.draw do
         get 'partie_articles'
         get '/get_ten/:article_id', action: :get_ten
       end
-      resources :articles, only: [:index] do
+      resources :articles, only: [:index, :show] do
         get 'get_ten'
       end
     end

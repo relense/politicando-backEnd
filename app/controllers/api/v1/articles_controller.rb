@@ -5,6 +5,12 @@ class Api::V1::ArticlesController < ApplicationController
       render json: articles, status: 200
     end
 
+    def show
+      article = Article.find(params[:id])
+
+      render json: article, status: 200
+    end
+
     def get_ten
       articles = Article.all.order(published_time: :desc)
 
