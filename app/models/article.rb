@@ -1,5 +1,6 @@
 class Article < ApplicationRecord
     has_and_belongs_to_many :partidos
+    has_many :comments
 
     def associate_party_include
       parties = Partido.all

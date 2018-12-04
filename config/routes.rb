@@ -7,6 +7,9 @@ Rails.application.routes.draw do
       end
       resources :articles, only: [:index, :show] do
         get 'get_ten'
+        get 'article_comments'
+      end
+      resources :comments, only: [:create, :show] do
       end
     end
   end

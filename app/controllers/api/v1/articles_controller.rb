@@ -5,6 +5,12 @@ class Api::V1::ArticlesController < ApplicationController
       render json: articles, status: 200
     end
 
+    def article_comments
+      comments = Article.find(params["article_id"].to_i).comments
+
+      render json: comments, status: 200
+    end  
+
     def show
       article = Article.find(params[:id])
 
