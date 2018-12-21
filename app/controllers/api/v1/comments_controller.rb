@@ -1,17 +1,17 @@
 class Api::V1::CommentsController < ApplicationController
   def create
-  end
-
-  def show
-
+    @comment = Comment.new(create_comment_params)
+    if @comment.save
+      render json: @comment, status: 200
+    end
   end
   
   private
 
   def create_comment_params
     params
-      .require(:comment)
-      .permit(:username, :comment, :article_id, :comment_id)
+      .require(:comments)
+      .permit(:username, :comment, :commentType, :article_id, :comments_id)
   end
 
 end

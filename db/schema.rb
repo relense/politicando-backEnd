@@ -36,9 +36,9 @@ ActiveRecord::Schema.define(version: 2018_12_04_220019) do
 
   create_table "comments", force: :cascade do |t|
     t.string "username"
-    t.text "comment"
-    t.string "commentType"
-    t.integer "article_id"
+    t.text "comment", null: false
+    t.string "commentType", null: false
+    t.integer "article_id", null: false
     t.integer "comments_id"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
