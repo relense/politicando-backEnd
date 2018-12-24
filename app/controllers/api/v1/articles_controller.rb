@@ -44,13 +44,22 @@ class Api::V1::ArticlesController < ApplicationController
   private
 
   def organize_comments(comments)
+
+    posts_list = []
+
+    comments.each do |c|
+      if c.commentType === "post"
+        posts_list.push(c)
+      end
+    end
+
     organized_comments_list = []
 
-    comments.each do |comment|
+    posts_list.each do |comment|
       children = []
       
       comments.each do |c|
-        if c.comments_id === comment.id
+        if c.comments_id === comment.id && c.commentType === "reply"
           child = findChildren(comments, c)
           children.push(child)
         end
