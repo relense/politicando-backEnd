@@ -25,7 +25,6 @@ class Article < ApplicationRecord
   def associate_party
     parties = Partido.all #ir buscar todos os partidos
     associated_parties = ""
-
     associated = false #variavel que vai permitir saber se o artigo foi associado.
     party_count = Array.new(14) { 0 } #array para guardar a contagem de cada partido
 
@@ -66,7 +65,7 @@ class Article < ApplicationRecord
         end
     end
 
-    {associated: associated, tags: associated_parties}
+    { associated: associated, tags: associated_parties }
   end
 
   def self.validate(value, party_id, article_id)
