@@ -2,7 +2,9 @@ class Api::V1::CommentsController < ApplicationController
   def create
     @comment = Comment.new(create_comment_params)
     if @comment.save
-      render json: @comment, status: 200
+      comment_hash = @comment.as_json
+      comment_hash.merge!({'child': nil, 'opened': true, 'children': nil})
+      render json: comment_hash, status: 200
     end
   end
   

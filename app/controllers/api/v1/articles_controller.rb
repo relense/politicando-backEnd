@@ -13,9 +13,9 @@ class Api::V1::ArticlesController < ApplicationController
 
   def article_comments
     comments = Article.find(params["article_id"].to_i).comments
-    organized = organize_comments(comments)
+    # organized = organize_comments(comments)
 
-    render json: organized, status: 200
+    render json: comments, status: 200
   end  
 
   def show
