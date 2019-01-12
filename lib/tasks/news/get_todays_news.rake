@@ -28,10 +28,10 @@ namespace :news do
             )
 
           associated = added_article.associate_party
-          if !associated[:associated]
-            added_article.delete
-          else
+          if associated[:associated]
             added_article.update(tags: associated[:tags])
+          else
+            added_article.delete
           end
         end
       end
