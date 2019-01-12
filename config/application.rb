@@ -28,6 +28,4 @@ module PoliticandoBackend
         resource '*', :headers => :any, :methods => [:get, :post, :delete, :put, :options]
       end
     end
-
-  end
 end
