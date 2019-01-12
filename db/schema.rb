@@ -12,6 +12,9 @@
 
 ActiveRecord::Schema.define(version: 2018_12_04_220019) do
 
+  # These are extensions that must be enabled in order to support this database
+  enable_extension "plpgsql"
+
   create_table "articles", force: :cascade do |t|
     t.string "title", null: false
     t.text "content", null: false
@@ -38,8 +41,8 @@ ActiveRecord::Schema.define(version: 2018_12_04_220019) do
     t.string "username"
     t.text "comment", null: false
     t.string "commentType", null: false
-    t.integer "article_id", null: false
-    t.integer "comments_id"
+    t.bigint "article_id", null: false
+    t.bigint "comments_id"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
     t.index ["article_id"], name: "index_comments_on_article_id"
@@ -55,7 +58,7 @@ ActiveRecord::Schema.define(version: 2018_12_04_220019) do
     t.string "electoral_circle_description", null: false
     t.string "legislature", null: false
     t.string "current_position", null: false
-    t.integer "partido_id"
+    t.bigint "partido_id"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
     t.index ["partido_id"], name: "index_councilmen_on_partido_id"
