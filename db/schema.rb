@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema.define(version: 2018_11_17_104200) do
+ActiveRecord::Schema.define(version: 2018_12_04_220019) do
 
   create_table "articles", force: :cascade do |t|
     t.string "title", null: false
@@ -32,6 +32,33 @@ ActiveRecord::Schema.define(version: 2018_11_17_104200) do
     t.integer "article_id"
     t.index ["article_id"], name: "index_articles_partidos_on_article_id"
     t.index ["partido_id"], name: "index_articles_partidos_on_partido_id"
+  end
+
+  create_table "comments", force: :cascade do |t|
+    t.string "username"
+    t.text "comment", null: false
+    t.string "commentType", null: false
+    t.integer "article_id", null: false
+    t.integer "comments_id"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["article_id"], name: "index_comments_on_article_id"
+    t.index ["comments_id"], name: "index_comments_on_comments_id"
+  end
+
+  create_table "councilmen", force: :cascade do |t|
+    t.integer "parlament_id", null: false
+    t.integer "registration_id", null: false
+    t.string "parlament_name", null: false
+    t.string "parlament_complete_name"
+    t.integer "electoral_circle_id", null: false
+    t.string "electoral_circle_description", null: false
+    t.string "legislature", null: false
+    t.string "current_position", null: false
+    t.integer "partido_id"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["partido_id"], name: "index_councilmen_on_partido_id"
   end
 
   create_table "partidos", force: :cascade do |t|
