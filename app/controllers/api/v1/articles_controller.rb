@@ -13,9 +13,9 @@ class Api::V1::ArticlesController < ApplicationController
 
   def article_comments
     comments = Article.find(params["article_id"].to_i).comments
-    # organized = organize_comments(comments)
+    organized = organize_comments(comments)
 
-    render json: comments, status: 200
+    render json: organized, status: 200
   end  
 
   def show
@@ -44,34 +44,15 @@ class Api::V1::ArticlesController < ApplicationController
   private
 
   def organize_comments(comments)
-
-    posts_list = []
-
-    comments.each do |c|
-      if c.commentType === "post"
-        posts_list.push(c)
-      end
-    end
-
     organized_comments_list = []
 
-    posts_list.each do |comment|
-      children = []
-      
-      comments.each do |c|
-        if c.comments_id === comment.id && c.commentType === "reply"
-          child = findChildren(comments, c)
-          children.push(child)
-        end
-      end
-
+    comments.each do |comment|
       comment_hash = comment.as_json
-      if children.size > 0
-        comment_hash.merge!({children: children})
-      end 
 
       if comment.comments_id.present?
         comment_hash.merge!({parent_username: Comment.find(comment.comments_id).username})
+      else
+        comment_hash.merge!({parent_username: nil})
       end
 
       organized_comments_list.push(comment_hash);
@@ -79,27 +60,4 @@ class Api::V1::ArticlesController < ApplicationController
 
     return organized_comments_list
   end
-
-  def findChildren(comments, current_comment)
-    children = []
-
-    comments.each do |comment|
-      if current_comment.id === comment.comments_id
-          child = findChildren(comments, comment)
-          children.push(child)
-      end
-    end 
-
-    comment_hash = current_comment.as_json
-    if children.size > 0
-      comment_hash.merge!({children: children})
-    end 
-
-    if current_comment.comments_id.present?
-      comment_hash.merge!({parent_username: Comment.find(current_comment.comments_id).username})
-    end
-
-    comment_hash
-  end
-
 end
