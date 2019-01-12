@@ -24,7 +24,7 @@ module PoliticandoBackend
 
     config.middleware.use "Rack::Cors" do
       allow do
-        origins '*'
+        origins 'http://localhost:3000'
         resource '*', :headers => :any, :methods => [:get, :post, :delete, :put, :options]
       end
     end
