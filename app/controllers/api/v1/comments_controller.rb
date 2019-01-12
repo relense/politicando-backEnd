@@ -3,7 +3,8 @@ class Api::V1::CommentsController < ApplicationController
     @comment = Comment.new(create_comment_params)
     if @comment.save
       comment_hash = @comment.as_json
-      comment_hash.merge!({'child': nil, 'opened': true, 'children': nil})
+      comment_hash.merge!({'child': nil, 'opened': true, 'children': 0})
+      
       render json: comment_hash, status: 200
     end
   end
