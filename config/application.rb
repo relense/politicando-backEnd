@@ -21,5 +21,12 @@ module PoliticandoBackend
       host: ENV['DEFAULT_URL_HOST'],
       protocol: ENV['DEFAULT_URL_PROTOCOL'] || 'https'
     }
+
+    config.middleware.use Rack::Cors do
+      allow do
+        origins '*'
+        resource '*', :headers => :any, :methods => [:get, :post, :delete, :put, :options]
+      end
+    end
   end
 end
