@@ -22,7 +22,7 @@ module PoliticandoBackend
       protocol: ENV['DEFAULT_URL_PROTOCOL'] || 'https'
     }
 
-    config.middleware.use "Rack::Cors" do
+    config.middleware.use Rack::Cors do
       allow do
         origins '*'
         resource '*', :headers => :any, :methods => [:get, :post, :delete, :put, :options]
