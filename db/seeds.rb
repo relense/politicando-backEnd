@@ -125,16 +125,16 @@ Partido.create([
     president_town_hall: 0,
     councilmen_municipal: 0
   },
-  {
-    party_name: "L",
-    description: "LIVRE",
-    deputies_republic_chamber: 0,
-    deputies_acores_legislative_chamber: 0,
-    deputies_madeira_legislative_chamber: 0,
-    member_europen_parlament: 0,
-    president_town_hall: 1,
-    councilmen_municipal: 0
-  },
+  # {
+  #   party_name: "L",
+  #   description: "LIVRE",
+  #   deputies_republic_chamber: 0,
+  #   deputies_acores_legislative_chamber: 0,
+  #   deputies_madeira_legislative_chamber: 0,
+  #   member_europen_parlament: 0,
+  #   president_town_hall: 1,
+  #   councilmen_municipal: 0
+  # },
   {
     party_name: "NC",
     description: "Nós, Cidadãos!",
