@@ -1,8 +1,6 @@
 require_relative 'boot'
 
 require 'rails/all'
-require 'rack'
-require 'rack/cors'
 
 # Require the gems listed in Gemfile, including any gems
 # you've limited to :test, :development, or :production.
@@ -24,11 +22,10 @@ module PoliticandoBackend
       protocol: ENV['DEFAULT_URL_PROTOCOL'] || 'https'
     }
 
-    config.middleware.insert_before 0, Rack::Cors do
+    config.middleware.use "Rack::Cors" do
       allow do
-         origins '*'
-         resource '*', :headers => :any, :methods => [:get, :post, :options]
-       end
+        origins 'localhost:3000', 'politicando.pt'
+        resource '*', :headers => :any, :methods => [:get, :post, :delete, :put, :options]
+      end
     end
-  end
 end
