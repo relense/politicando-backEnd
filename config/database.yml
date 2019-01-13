@@ -20,9 +20,9 @@ default: &default
   encoding: unicode
   pool: <%= ENV['DB_POOL'] || ENV.fetch("RAILS_MAX_THREADS") { 5 } %>
 
-development:
-  <<: *default
-  database: politicando-backend_development
+# development:
+#   <<: *default
+#   database: politicando-backend_development
    
   # Connect on a TCP socket. Omitted by default since the client uses a
   # domain socket that doesn't need configuration. Windows does not have
