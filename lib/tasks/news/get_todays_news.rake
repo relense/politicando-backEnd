@@ -1,7 +1,7 @@
 namespace :news do
   task get_todays_news: :environment do
-    actualHour = DateTime.now.strftime("%H").to_i;
-    if actualHour === 8 || actualHour === 12 || actualHour === 16 || actualHour === 20
+    actualHour = DateTime.now.strftime("%H");
+    if actualHour === "8" || actualHour === "12" || actualHour === "16" || actualHour === "20"
       n = NewsApi::Api.new
       all_headlines = n.all_headlines(1)
       pages = all_headlines["articles"]["pages"]
