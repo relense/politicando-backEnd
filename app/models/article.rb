@@ -29,6 +29,48 @@ class Article < ApplicationRecord
     party_count = Array.new(14) { 0 } #array para guardar a contagem de cada partido
 
     parties.each_with_index do |party, index|
+
+      if party.description === "LIVRE" 
+        party_count[index] = title.scan(/\s#{party.description}\W/).length #space in the beggining and end of word
+        party_count[index] += title.scan(/^#{party.description}\s/).length #beggining of the line word with space after
+
+        party_count[index] += content.scan(/\s#{party.description}\W/).length
+        party_count[index] += content.scan(/^#{party.description}\s/).length
+
+      elsif party.party_name === "MAS"
+        party_count[index] = title.scan(/\s#{"Partido " + party.party_name}\W/).length #space in the beggining and end of word
+        party_count[index] += title.scan(/^#{"Partido " + party.party_name}\s/).length #beggining of the line word with space after
+
+        party_count[index] += title.scan(/\s#{party.description}\W/).length
+        party_count[index] += title.scan(/^#{party.description}\s/).length
+
+        party_count[index] += content.scan(/\s#{"Partido " + party.party_name}\W/).length
+        party_count[index] += content.scan(/^#{"Partido " + party.party_name}\s/).length
+
+        party_count[index] += content.scan(/\s#{party.description}\W/).length
+        party_count[index] += content.scan(/^#{party.description}\s/).length
+
+      elsif party.description === "Iniciativa Liberal"
+        party_count[index] = title.scan(/\s#{party.party_name}\W/).length #space in the beggining and end of word
+        party_count[index] += title.scan(/^#{party.party_name}\s/).length #beggining of the line word with space after
+
+        party_count[index] += title.scan(/\s#{"Partido " + party.description}\W/).length
+        party_count[index] += title.scan(/^#{"Partido " + party.description}\s/).length
+
+        party_count[index] += content.scan(/\s#{party.party_name}\W/).length
+        party_count[index] += content.scan(/^#{party.party_name}\s/).length
+
+        party_count[index] += content.scan(/\s#{"Partido " + party.description}\W/).length
+        party_count[index] += content.scan(/^#{"Partido " + party.description}\s/).length
+
+      elsif party.description === "Aliança"
+        party_count[index] = title.scan(/\s#{"O " + party.description}\W/).length
+        party_count[index] += title.scan(/^#{"O " + party.description}\s/).length
+
+        party_count[index] += content.scan(/\s#{"O " + party.description}\W/).length
+        party_count[index] += content.scan(/^#{"O " + party.description}\s/).length
+
+      else
         party_count[index] = title.scan(/\s#{party.party_name}\W/).length #space in the beggining and end of word
         party_count[index] += title.scan(/^#{party.party_name}\s/).length #beggining of the line word with space after
 
@@ -40,6 +82,7 @@ class Article < ApplicationRecord
 
         party_count[index] += content.scan(/\s#{party.description}\W/).length
         party_count[index] += content.scan(/^#{party.description}\s/).length
+      end
     end
 
     most_mentioned = party_count.each_with_index.max(4)
