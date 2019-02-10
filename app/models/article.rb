@@ -67,6 +67,30 @@ class Article < ApplicationRecord
         party_count[index] += content.scan(/\s#{"O " + party.description}\W/).length
         party_count[index] += content.scan(/^#{"O " + party.description}\s/).length
 
+        party_count[index] = title.scan(/\s#{"o " + party.description}\W/).length
+        party_count[index] += title.scan(/^#{"o " + party.description}\s/).length
+
+        party_count[index] += content.scan(/\s#{"o " + party.description}\W/).length
+        party_count[index] += content.scan(/^#{"o " + party.description}\s/).length
+
+        party_count[index] = title.scan(/\s#{"do " + party.description}\W/).length
+        party_count[index] += title.scan(/^#{"do " + party.description}\s/).length
+
+        party_count[index] += content.scan(/\s#{"do " + party.description}\W/).length
+        party_count[index] += content.scan(/^#{"do " + party.description}\s/).length
+
+        party_count[index] = title.scan(/\s#{"partido " + party.description}\W/).length
+        party_count[index] += title.scan(/^#{"partido " + party.description}\s/).length
+
+        party_count[index] += content.scan(/\s#{"partido " + party.description}\W/).length
+        party_count[index] += content.scan(/^#{"partido " + party.description}\s/).length
+
+        party_count[index] = title.scan(/\s#{"Partido " + party.description}\W/).length
+        party_count[index] += title.scan(/^#{"Partido " + party.description}\s/).length
+
+        party_count[index] += content.scan(/\s#{"Partido " + party.description}\W/).length
+        party_count[index] += content.scan(/^#{"Partido " + party.description}\s/).length
+
       else
        party_count[index] = title.scan(/\s#{party.party_name}\W/).length #space in the beggining and end of word
        party_count[index] += title.scan(/^#{party.party_name}\s/).length #beggining of the line word with space after
