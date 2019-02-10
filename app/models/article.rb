@@ -56,16 +56,18 @@ class Article < ApplicationRecord
         party_count[index] += content.scan(/\s#{party.description}\W/).length
         party_count[index] += content.scan(/^#{party.description}\s/).length
       
-      
-      elsif party.description === "Iniciativa Liberal"
-        party_count[index] = party_count_keyword_party_description(party, "Partido ")
-
       elsif party.description === "Aliança"
-        party_count[index] = title.scan(/\s#{"O " + party.description}\W/).length
-        party_count[index] += title.scan(/^#{"O " + party.description}\s/).length
+        party_count[index] = title.scan(/\s#{"partido " + party.description}\W/).length
+        party_count[index] += title.scan(/^#{"partido " + party.description}\s/).length
 
-        party_count[index] += content.scan(/\s#{"O " + party.description}\W/).length
-        party_count[index] += content.scan(/^#{"O " + party.description}\s/).length
+        party_count[index] += content.scan(/\s#{"partido " + party.description}\W/).length
+        party_count[index] += content.scan(/^#{"partido " + party.description}\s/).length
+
+        party_count[index] += title.scan(/\s#{"Partido " + party.description}\W/).length
+        party_count[index] += title.scan(/^#{"Partido " + party.description}\s/).length
+
+        party_count[index] += content.scan(/\s#{"Partido " + party.description}\W/).length
+        party_count[index] += content.scan(/^#{"Partido " + party.description}\s/).length
 
         party_count[index] = title.scan(/\s#{"o " + party.description}\W/).length
         party_count[index] += title.scan(/^#{"o " + party.description}\s/).length
