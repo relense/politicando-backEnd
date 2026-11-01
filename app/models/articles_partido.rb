@@ -1,2 +1,0 @@
-class ArticlesPartido < ApplicationRecord
-end

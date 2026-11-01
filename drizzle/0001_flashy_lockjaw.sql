@@ -1,0 +1,1 @@
+ALTER TABLE "comments" ADD COLUMN "hidden_at" timestamp with time zone;
