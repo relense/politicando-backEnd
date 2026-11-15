@@ -1,8 +1,8 @@
 import { and, asc, eq, gt, inArray } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import { articleDeputies, articles } from "../db/schema.js";
-import { loadMatchableDeputies } from "../ingestion/ingest.js";
-import { matchDeputies } from "../matching/matchParties.js";
+import { loadMatchableDeputies, loadMatchableParties } from "../ingestion/ingest.js";
+import { countMentions, matchDeputies } from "../matching/matchParties.js";
 
 const BATCH = 500;
 
@@ -13,6 +13,7 @@ const BATCH = 500;
  */
 export const linkStoredArticles = async (db: Db, { since }: { since?: Date } = {}) => {
   const matchable = await loadMatchableDeputies(db);
+  const parties = await loadMatchableParties(db);
   let linked = 0;
   let scanned = 0;
   let lastId = 0;
@@ -29,13 +30,16 @@ export const linkStoredArticles = async (db: Db, { since }: { since?: Date } = {
     scanned += rows.length;
 
     // These articles were already judged political when stored, so there's no party gate.
-    const links = rows.flatMap((row) =>
-      matchDeputies({ title: row.title, content: row.excerpt }, matchable).map((d) => ({
+    const links = rows.flatMap((row) => {
+      const text = `${row.title}\n${row.excerpt}`;
+      const mentioned = (partyId: number) =>
+        parties.some((party) => party.id === partyId && countMentions(text, [party]) > 0);
+      return matchDeputies({ title: row.title, content: row.excerpt }, matchable, mentioned).map((d) => ({
         articleId: row.id,
         deputyId: d.deputyId,
         mentionCount: d.mentions,
-      })),
-    );
+      }));
+    });
 
     await db.transaction(async (tx) => {
       await tx.delete(articleDeputies).where(

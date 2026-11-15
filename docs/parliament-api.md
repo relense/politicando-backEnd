@@ -140,6 +140,7 @@ The summary above plus `legislature` and every vote:
   "favor":      [{ "party": "ps", "count": 1 }, { "party": "livre", "count": null }],
   "against":    [{ "party": "psd", "count": null }],
   "abstention": [{ "party": "ps", "count": null }],
+  "absent": [],                                    // groups recorded as absent
   "named": [{ "name": "Pedro Delgado Alves", "group": "PS", "position": "favor" }]
 }]
 ```
@@ -147,11 +148,37 @@ The summary above plus `legislature` and every vote:
 - Votes are recorded **by party**. `count: null` means the whole group. A number means
   only that many of its deputies (here 1 PS deputy voted for, the rest of PS abstained).
 - `named` lists deputies the parliament names because they voted apart from their group.
-- A deputy's own vote = their entry in `named` if they're there, otherwise their
-  party's position with `count: null`. When a party split without naming anyone, an
-  individual's vote isn't known.
+- For one deputy's votes, use `GET /deputies/:id/votes` (below) rather than working
+  them out yourself.
 - `party` is our slug, or the parliament's acronym for groups we don't list
   (e.g. independents, `Ninsc`).
+
+## `GET /deputies/:id/votes`
+
+How a deputy voted, newest first, paginated (`cursor`, `limit` 1-50, default 20). Only
+votes from when they were sitting are included.
+
+```jsonc
+{
+  "summary": { "favor": 1449, "against": 292, "abstention": 568, "absent": 0, "unknown": 30, "brokeRanks": 7 },
+  "items": [{
+    "initiative": { "id": 377001, "type": "Projeto de Lei", "number": "412", "title": "...", "status": "approved" },
+    "vote": { "id": "190221", "date": "2026-10-28", "phase": "Votação na generalidade", "result": "Aprovado" },
+    "position": "favor",                            // null when not known
+    "basis": "group"
+  }],
+  "nextCursor": "..."
+}
+```
+
+The parliament votes by group and doesn't list every deputy's vote, so `basis` says how
+each position is known. Show it in the UI (e.g. "voted with PS" vs "voted apart from
+their group"):
+- `named`: the record names them. These are the votes where they broke ranks.
+- `group`: their whole group voted this way and they weren't named as an exception.
+- `unanimous`: unanimous vote, recorded without a breakdown.
+- `absent`: their group was recorded as absent (`position: null`).
+- `unknown`: their group split without naming who voted which way (`position: null`).
 
 ## News about a deputy
 
@@ -159,4 +186,6 @@ The summary above plus `legislature` and every vote:
 - `GET /articles?deputy=7341` returns the news about one deputy (404 if unknown).
 
 Articles are linked when they mention the deputy's full parliamentary name
-("Francisco César"). Surname-only mentions ("Ventura diz...") are not linked yet.
+("Francisco César"), or a short name the press uses for party leaders ("Ventura",
+"Carneiro", "Aguiar-Branco"). Common surnames only count when the article also names the
+deputy's party. Other surname-only mentions aren't linked.

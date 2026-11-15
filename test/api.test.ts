@@ -329,6 +329,7 @@ describe("platform", () => {
       "/api/v2/articles/{id}",
       "/api/v2/articles/{id}/comments",
       "/api/v2/deputies/{id}",
+      "/api/v2/deputies/{id}/votes",
       "/api/v2/initiatives",
       "/api/v2/initiatives/{id}",
       "/api/v2/parliament",

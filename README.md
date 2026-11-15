@@ -66,8 +66,8 @@ Schedule it hourly next to the API, using the same Docker image with the command
 
 `npm run parliament:sync` downloads the current legislature's deputies, biographies and
 initiatives from parlamento.pt › Dados Abertos and replaces what's stored. Run it daily,
-using the same Docker image with the command `node dist/jobs/syncParliament.js`. It needs
-about 1 GB of memory, because the initiatives file is over 100 MB. It refuses to sync if
+using the same Docker image with the command `node dist/jobs/syncParliament.js`. It reads the
+100 MB initiatives file as a stream, so it peaks at about 300 MB of memory. It refuses to sync if
 the file lists fewer than 200 sitting deputies, and prints warnings when the chamber no
 longer fits the seat map.
 
@@ -79,7 +79,8 @@ longer fits the seat map.
 - Who sits where: `src/parliament/seatAssignments.ts`, empty until a reliable source exists.
 - New legislature: set `PARLIAMENT_LEGISLATURE` and replace the seat map.
 - New party in parliament: add its acronym to `src/parliament/groups.ts`.
-- The news scanner links articles to sitting deputies by their parliamentary name. A
+- The news scanner links articles to sitting deputies by their parliamentary name, plus
+  the short names in `src/parliament/aliases.ts` ("Ventura" counts only next to Chega). A
   deputy's mentions also count for their party, but an article still needs one direct
   party mention to be kept.
 

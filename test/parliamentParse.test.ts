@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { matchArticle, matchDeputies } from "../src/matching/matchParties.js";
-import { findFolderLink, findJsonLink } from "../src/parliament/openData.js";
+import { Readable } from "node:stream";
+import { deputyVote, wasSitting } from "../src/parliament/deputyVotes.js";
+import { findFolderLink, findJsonLink, streamJsonArray } from "../src/parliament/openData.js";
 import { parseDeputies, parseInitiatives, parseVoteDetail } from "../src/parliament/parse.js";
 import { SEATS } from "../src/parliament/seatMap.js";
 import { resolveSeats } from "../src/parliament/sync.js";
@@ -183,5 +185,76 @@ describe("deputy matching", () => {
     expect(matchDeputies({ title: "", content: "Francisco Césares e Francisco César." }, deputies)).toEqual([
       { deputyId: 7341, mentions: 1 },
     ]);
+  });
+});
+
+describe("short names", () => {
+  const parties = [
+    { id: 1, acronym: "CH", terms: ["Chega"] },
+    { id: 2, acronym: "PS", terms: ["PS"] },
+  ];
+  const ventura = { id: 6535, partyId: 1, terms: ["André Ventura"], contextTerms: ["André Ventura", "Ventura"] };
+  const branco = { id: 2061, partyId: 3, terms: ["José Pedro Aguiar-Branco", "Aguiar-Branco"] };
+
+  it("counts a common surname when the article names the party", () => {
+    const result = matchArticle({ title: "Ventura pede maturidade", content: "O líder do Chega falou." }, parties, [ventura]);
+    expect(result.deputies).toEqual([{ deputyId: 6535, mentions: 2 }]);
+  });
+
+  it("ignores a common surname without that context", () => {
+    expect(matchArticle({ title: "Ventura marca golo", content: "O PS reagiu ao PS." }, parties, [ventura]).deputies).toEqual([]);
+  });
+
+  it("counts the full name once, not also as the surname", () => {
+    expect(matchDeputies({ title: "", content: "André Ventura e o Chega." }, [ventura], () => true)).toEqual([
+      { deputyId: 6535, mentions: 1 },
+    ]);
+  });
+
+  it("counts a distinctive short name on its own", () => {
+    expect(matchDeputies({ title: "Aguiar-Branco avisa deputados", content: "" }, [branco])).toEqual([
+      { deputyId: 2061, mentions: 2 },
+    ]);
+  });
+});
+
+describe("deputyVote", () => {
+  const base = { favor: [], against: [], abstention: [], named: [], absent: [], unanimous: false, result: "Aprovado" };
+  const pedro = { name: "Pedro Vaz", group: "PS", party: "ps" };
+  const ana = { name: "Ana Lima", group: "PS", party: "ps" };
+
+  it("uses the named entry first", () => {
+    const vote = { ...base, favor: [{ party: "ps", count: 1 }], abstention: [{ party: "ps", count: null }],
+      named: [{ name: "Pedro Vaz", group: "PS", position: "favor" as const }] };
+    expect(deputyVote(vote, pedro)).toEqual({ position: "favor", basis: "named" });
+    // Everyone in the partial count is named, so the rest of PS abstained.
+    expect(deputyVote(vote, ana)).toEqual({ position: "abstention", basis: "group" });
+  });
+
+  it("doesn't guess when a group split without names", () => {
+    const vote = { ...base, favor: [{ party: "ps", count: 3 }], against: [{ party: "ps", count: null }] };
+    expect(deputyVote(vote, ana)).toEqual({ position: null, basis: "unknown" });
+  });
+
+  it("handles absent groups, unanimous votes and missing groups", () => {
+    expect(deputyVote({ ...base, absent: ["ps"] }, ana)).toEqual({ position: null, basis: "absent" });
+    expect(deputyVote({ ...base, unanimous: true }, ana)).toEqual({ position: "favor", basis: "unanimous" });
+    expect(deputyVote({ ...base, favor: [{ party: "psd", count: null }] }, ana)).toEqual({ position: null, basis: "unknown" });
+  });
+
+  it("checks sitting periods, end date exclusive", () => {
+    const periods = [{ from: "2025-06-03", to: "2025-09-01" }, { from: "2026-01-01", to: null }];
+    expect(wasSitting(periods, "2025-06-03")).toBe(true);
+    expect(wasSitting(periods, "2025-09-01")).toBe(false);
+    expect(wasSitting(periods, "2026-05-05")).toBe(true);
+  });
+});
+
+describe("streamJsonArray", () => {
+  it("yields array elements one by one and drops a byte order mark", async () => {
+    const body = Readable.from([Buffer.from("\uFEFF[{\"a\":1},"), Buffer.from("{\"a\":2}]")]);
+    const items: unknown[] = [];
+    for await (const item of streamJsonArray(body)) items.push(item);
+    expect(items).toEqual([{ a: 1 }, { a: 2 }]);
   });
 });

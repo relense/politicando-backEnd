@@ -19,8 +19,10 @@ export interface PartyMatch {
 export interface MatchableDeputy {
   id: number;
   partyId: number | null;
-  /** Kept as a one-item list so the regex cache can key on it, like party terms. */
+  /** The full name and distinctive short names, which always count. */
   terms: string[];
+  /** `terms` plus common short names ("Ventura"), used only when the article gives context. */
+  contextTerms?: string[];
 }
 
 export interface DeputyMatch {
@@ -87,13 +89,24 @@ export const countMentions = (text: string, entities: { terms: string[] }[]) =>
 const weighted = (article: { title: string; content: string }, regex: RegExp) =>
   count(article.title, regex) * TITLE_MENTION_WEIGHT + count(article.content, regex);
 
-/** Deputies named in an article, most mentioned first. */
+/**
+ * Deputies named in an article, most mentioned first. A common short name counts only
+ * when the article also names the deputy's party (per `partyMentioned`) or uses one of
+ * their always-counting names.
+ */
 export const matchDeputies = (
   article: { title: string; content: string },
   deputies: MatchableDeputy[],
+  partyMentioned: (partyId: number) => boolean = () => false,
 ): DeputyMatch[] =>
   deputies
-    .map((deputy) => ({ deputyId: deputy.id, mentions: weighted(article, regexFor(deputy)) }))
+    .map((deputy) => {
+      const plain = weighted(article, regexFor(deputy));
+      const hasContext = plain > 0 || (deputy.partyId !== null && partyMentioned(deputy.partyId));
+      const mentions =
+        deputy.contextTerms && hasContext ? weighted(article, regexFor({ terms: deputy.contextTerms })) : plain;
+      return { deputyId: deputy.id, mentions };
+    })
     .filter(({ mentions }) => mentions > 0)
     .sort((a, b) => b.mentions - a.mentions || a.deputyId - b.deputyId);
 
@@ -108,7 +121,7 @@ export const matchArticle = (
   deputies: MatchableDeputy[] = [],
 ): { parties: PartyMatch[]; deputies: DeputyMatch[] } => {
   const direct = new Map(parties.map((party) => [party.id, weighted(article, regexFor(party))]));
-  const deputyMatches = matchDeputies(article, deputies);
+  const deputyMatches = matchDeputies(article, deputies, (id) => (direct.get(id) ?? 0) > 0);
   const partyOf = new Map(deputies.map((deputy) => [deputy.id, deputy.partyId]));
 
   const anyDirect = [...direct.values()].some((mentions) => mentions > 0);

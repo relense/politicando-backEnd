@@ -33,6 +33,7 @@ export interface ParsedDeputy {
   constituency: string;
   situation: string;
   active: boolean;
+  sittingPeriods: { from: string; to: string | null }[];
   parliamentRole: string | null;
   gender: string | null;
   birthDate: string | null;
@@ -99,6 +100,13 @@ export const parseDeputies = (base: unknown, biographies: unknown): ParsedDeputy
       constituency: str(entry.DepCPDes) ?? "Desconhecido",
       situation,
       active,
+      sittingPeriods: situations
+        .filter((s) => str(s.sioDes)?.startsWith("Efetivo"))
+        .flatMap((s) => {
+          const from = isoDate(s.sioDtInicio);
+          return from ? [{ from, to: isoDate(s.sioDtFim) }] : [];
+        })
+        .sort((a, b) => a.from.localeCompare(b.from)),
       parliamentRole: role && !str(role.carDtFim) ? str(role.carDes) : null,
       gender: str(bio.CadSexo),
       birthDate: isoDate(bio.CadDtNascimento),
@@ -229,8 +237,12 @@ const statusOf = (events: Json[]): { status: InitiativeStatus; publishedAt: stri
 };
 
 /** @param data Iniciativas<Leg>_json.txt */
-export const parseInitiatives = (data: unknown): ParsedInitiative[] =>
-  asArray(data).flatMap((item) => {
+export const parseInitiatives = (data: unknown): ParsedInitiative[] => asArray(data).flatMap(parseInitiative);
+
+/** One element of the initiatives file, or [] if it can't be used. */
+export const parseInitiative = (raw: unknown): ParsedInitiative[] => {
+    if (typeof raw !== "object" || raw === null) return [];
+    const item = raw as Json;
     const id = int(item.IniId);
     const title = str(item.IniTitulo);
     const type = str(item.IniDescTipo);
@@ -262,6 +274,10 @@ export const parseInitiatives = (data: unknown): ParsedInitiative[] =>
           result: str(vote.resultado) ?? "",
           unanimous: str(vote.unanime) === "unanime",
           ...parseVoteDetail(str(vote.detalhe) ?? ""),
+          absent: (Array.isArray(vote.ausencias) ? vote.ausencias : [])
+            .map((group) => str(group))
+            .filter((group): group is string => group !== null)
+            .map((group) => partySlugForGroup(group) ?? group),
         }];
       }),
     );
@@ -290,4 +306,4 @@ export const parseInitiatives = (data: unknown): ParsedInitiative[] =>
         ...new Set(asArray(item.IniAutorDeputados).map((d) => int(d.idCadastro)).filter((d): d is number => !!d)),
       ],
     }];
-  });
+};

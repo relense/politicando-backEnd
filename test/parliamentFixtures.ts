@@ -120,10 +120,17 @@ export const initiativesFile = () => [
 ];
 
 /** A loader for syncParliament that serves the given files. */
-export const loaderFor = (files: { deputies?: unknown; biographies?: unknown; initiatives?: unknown } = {}) =>
-  async (dataset: "deputies" | "biographies" | "initiatives") =>
+export const loaderFor = (files: { deputies?: unknown; biographies?: unknown; initiatives?: unknown } = {}) => {
+  const data = (dataset: "deputies" | "biographies" | "initiatives") =>
     ({
       deputies: files.deputies ?? chamber(),
       biographies: files.biographies ?? biographies(),
       initiatives: files.initiatives ?? initiativesFile(),
     })[dataset];
+  return {
+    json: async (dataset: "deputies" | "biographies" | "initiatives") => data(dataset),
+    items: async function* (dataset: "deputies" | "biographies" | "initiatives") {
+      yield* data(dataset) as unknown[];
+    },
+  };
+};

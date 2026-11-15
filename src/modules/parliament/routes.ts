@@ -1,9 +1,10 @@
-import { and, asc, count, desc, eq, max, sql, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, max, sql, type SQL } from "drizzle-orm";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
 import type { Db } from "../../db/client.js";
 import { articles, deputies, initiatives, parties } from "../../db/schema.js";
 import { ApiError, notFound } from "../../errors.js";
+import { deputyVote, wasSitting } from "../../parliament/deputyVotes.js";
 import { partySlugForGroup } from "../../parliament/groups.js";
 import { SEAT_MAP_HEIGHT, SEAT_MAP_LEGISLATURE, SEAT_MAP_SOURCE, SEATS } from "../../parliament/seatMap.js";
 import { articleColumns, articleSchema } from "../articles/routes.js";
@@ -65,6 +66,7 @@ const voteSchema = z.object({
   favor: z.array(partyVoteSchema),
   against: z.array(partyVoteSchema),
   abstention: z.array(partyVoteSchema),
+  absent: z.array(z.string()).describe("Groups recorded as absent (party slugs)"),
   named: z
     .array(z.object({ name: z.string(), group: z.string(), position: positionSchema }))
     .describe("Deputies named because they voted differently from their group"),
@@ -80,6 +82,8 @@ const decodeCursor = (value: string) => {
     throw new ApiError(400, "invalid_cursor", "The cursor is not valid");
   }
 };
+
+const decodeVoteCursor = (value: string) => Buffer.from(value, "base64url").toString();
 
 // Plain SQL for the same reason as in the articles module: correlated subqueries need table names.
 const authorsSql = sql<z.infer<typeof initiativeSummarySchema>["authors"]>`json_build_object(
@@ -314,6 +318,106 @@ export const parliamentRoutes =
               : null,
           initiatives: { total: totals?.total ?? 0, approved: totals?.approved ?? 0, latest },
           articles: news.map((a) => ({ ...a, publishedAt: a.publishedAt.toISOString() })),
+        };
+      },
+    );
+
+    app.get(
+      "/deputies/:id/votes",
+      {
+        schema: {
+          tags: ["parliament"],
+          description:
+            "How a deputy voted, newest first, as far as the record shows. The parliament records votes by " +
+            "group, so `basis` says how each position is known; `position` is null when it isn't.",
+          params: idParams,
+          querystring: z.object({
+            cursor: z.string().optional().describe("The nextCursor of the previous page"),
+            limit: z.coerce.number().int().min(1).max(50).default(20),
+          }),
+          response: {
+            200: z.object({
+              summary: z.object({
+                favor: z.number(), against: z.number(), abstention: z.number(),
+                absent: z.number(), unknown: z.number(),
+                brokeRanks: z.number().describe("Votes where they were named voting apart from their group"),
+              }),
+              items: z.array(
+                z.object({
+                  initiative: z.object({
+                    id: z.number(), type: z.string(), number: z.string(), title: z.string(), status: statusSchema,
+                  }),
+                  vote: z.object({ id: z.string(), date: z.string(), phase: z.string(), result: z.string() }),
+                  position: positionSchema.nullable(),
+                  basis: z.enum(["named", "group", "unanimous", "absent", "unknown"]),
+                }),
+              ),
+              nextCursor: z.string().nullable(),
+            }),
+            400: errorSchema,
+            404: errorSchema,
+          },
+        },
+      },
+      async (request) => {
+        const { id } = request.params;
+        const { cursor, limit } = request.query;
+        const [deputy] = await db
+          .select({
+            name: deputies.name,
+            group: deputies.parliamentaryGroup,
+            party: parties.slug,
+            periods: deputies.sittingPeriods,
+          })
+          .from(deputies)
+          .leftJoin(parties, eq(parties.id, deputies.partyId))
+          .where(eq(deputies.id, id));
+        if (!deputy) throw notFound("Deputy");
+        const group = deputy.group ?? "";
+        const who = { name: deputy.name, group, party: deputy.party ?? group };
+
+        const rows = await db
+          .select({
+            id: initiatives.id, type: initiatives.type, number: initiatives.number,
+            title: initiatives.title, status: initiatives.status, votes: initiatives.votes,
+          })
+          .from(initiatives)
+          .where(gt(sql`jsonb_array_length(${initiatives.votes})`, 0));
+
+        const all = rows
+          .flatMap(({ votes, ...initiative }) =>
+            votes
+              .filter((vote) => wasSitting(deputy.periods, vote.date))
+              .map((vote) => ({
+                initiative,
+                vote: { id: vote.id, date: vote.date, phase: vote.phase, result: vote.result },
+                ...deputyVote(vote, who),
+              })),
+          )
+          .sort((a, b) => b.vote.date.localeCompare(a.vote.date) || Number(b.vote.id) - Number(a.vote.id));
+
+        const summary = { favor: 0, against: 0, abstention: 0, absent: 0, unknown: 0, brokeRanks: 0 };
+        for (const item of all) {
+          if (item.position) summary[item.position]++;
+          else summary[item.basis === "absent" ? "absent" : "unknown"]++;
+          if (item.basis === "named") summary.brokeRanks++;
+        }
+
+        let start = 0;
+        if (cursor !== undefined) {
+          const after = all.findIndex((item) => `${item.vote.date}:${item.vote.id}` === decodeVoteCursor(cursor));
+          if (after === -1) throw new ApiError(400, "invalid_cursor", "The cursor is not valid");
+          start = after + 1;
+        }
+        const page = all.slice(start, start + limit);
+        const last = page.at(-1);
+        return {
+          summary,
+          items: page,
+          nextCursor:
+            start + limit < all.length && last
+              ? Buffer.from(`${last.vote.date}:${last.vote.id}`).toString("base64url")
+              : null,
         };
       },
     );

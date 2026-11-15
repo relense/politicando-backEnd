@@ -1,0 +1,1 @@
+ALTER TABLE "deputies" ADD COLUMN "sitting_periods" jsonb DEFAULT '[]'::jsonb NOT NULL;

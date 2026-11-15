@@ -17,6 +17,7 @@ import {
   type PartyMatch,
 } from "../matching/matchParties.js";
 import { PARTY_DEFINITIONS } from "../matching/parties.js";
+import { DEPUTY_ALIASES } from "../parliament/aliases.js";
 import { extractArticle } from "./extractArticle.js";
 import { parseNewsSitemap, parseRss, type ListingItem } from "./parseListing.js";
 import type { PoliteClient } from "./politeClient.js";
@@ -76,7 +77,13 @@ export const loadMatchableDeputies = async (db: Db): Promise<MatchableDeputy[]> 
       .select({ id: deputies.id, partyId: deputies.partyId, name: deputies.name })
       .from(deputies)
       .where(eq(deputies.active, true))
-  ).map(({ id, partyId, name }) => ({ id, partyId, terms: [name] }));
+  ).map(({ id, partyId, name }) => {
+    const aliases = DEPUTY_ALIASES[id];
+    const terms = [name, ...(aliases?.standalone ?? [])];
+    return aliases?.withContext
+      ? { id, partyId, terms, contextTerms: [...terms, ...aliases.withContext] }
+      : { id, partyId, terms };
+  });
 
 /** Drops tracking parameters and fragments so one article has one identity. */
 export const canonicalUrl = (url: string) => {

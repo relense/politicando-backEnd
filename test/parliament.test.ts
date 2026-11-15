@@ -112,6 +112,32 @@ describe("GET /deputies/:id", () => {
   });
 });
 
+describe("GET /deputies/:id/votes", () => {
+  it("lists their votes with how each is known, only while they sat", async () => {
+    const { status, body } = await get("/deputies/7341/votes");
+    expect(status).toBe(200);
+    // v2: PS abstained as a group (the 3 for are not all named). v1, v4: no breakdown.
+    expect(body.items.map((i: { vote: { id: string }; position: string | null; basis: string }) => [i.vote.id, i.position, i.basis])).toEqual([
+      ["v2", null, "unknown"],
+      ["v4", "favor", "unanimous"],
+      ["v3", null, "unknown"],
+      ["v1", null, "unknown"],
+    ]);
+    expect(body.summary).toEqual({ favor: 1, against: 0, abstention: 0, absent: 0, unknown: 3, brokeRanks: 0 });
+  });
+
+  it("skips votes from before a deputy sat, and pages", async () => {
+    const pcp = await get("/deputies/817/votes?limit=1");
+    expect(pcp.body.items).toHaveLength(1);
+    const next = await get(`/deputies/817/votes?limit=1&cursor=${pcp.body.nextCursor}`);
+    expect(next.body.items[0].vote.id).not.toBe(pcp.body.items[0].vote.id);
+    // Ana Saída sat until 2025-09-01; all fixture votes are later.
+    expect((await get("/deputies/9001/votes")).body.items).toEqual([]);
+    expect((await get("/deputies/1/votes")).status).toBe(404);
+    expect((await get("/deputies/817/votes?cursor=nope")).status).toBe(400);
+  });
+});
+
 describe("GET /initiatives", () => {
   it("lists newest activity first with authors and the last vote", async () => {
     const { body } = await get("/initiatives");
@@ -163,6 +189,7 @@ describe("GET /initiatives/:id", () => {
       favor: [{ party: "psd", count: null }, { party: "ps", count: 3 }],
       against: [{ party: "chega", count: null }],
       abstention: [{ party: "ps", count: null }, { party: "pcp", count: null }],
+      absent: [],
       named: [{ name: "Pedro Vaz", group: "PS", position: "favor" }],
     });
     expect((await get("/initiatives/999")).status).toBe(404);

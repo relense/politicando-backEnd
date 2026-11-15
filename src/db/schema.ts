@@ -107,6 +107,8 @@ export const deputies = pgTable(
     situation: text().notNull(),
     /** Sitting in the chamber right now. */
     active: boolean().notNull(),
+    /** When they sat this legislature; `to` is null while still sitting. */
+    sittingPeriods: jsonb("sitting_periods").$type<{ from: string; to: string | null }[]>().notNull().default([]),
     /** Seat number from the official map, once known. See src/parliament/seatAssignments.ts. */
     seat: smallint(),
     /** Role in the parliament itself, such as "Vice-Presidente". */
@@ -145,6 +147,8 @@ export interface VoteRecord {
   favor: PartyVote[];
   against: PartyVote[];
   abstention: PartyVote[];
+  /** Groups recorded as absent from the vote (party slugs, or the parliament's acronym). */
+  absent: string[];
   /** Deputies named because they voted differently from their group. */
   named: { name: string; group: string; position: "favor" | "against" | "abstention" }[];
 }

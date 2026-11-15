@@ -9,8 +9,8 @@ import {
   parties,
 } from "../db/schema.js";
 import { partySlugForGroup } from "./groups.js";
-import type { Dataset } from "./openData.js";
-import { parseDeputies, parseInitiatives, type ParsedDeputy } from "./parse.js";
+import type { OpenDataLoader } from "./openData.js";
+import { parseDeputies, parseInitiative, type ParsedDeputy, type ParsedInitiative } from "./parse.js";
 import { SEAT_ASSIGNMENTS } from "./seatAssignments.js";
 import { SEATS } from "./seatMap.js";
 
@@ -79,15 +79,17 @@ const checkSeatMap = (parsed: ParsedDeputy[], warnings: string[]) => {
  */
 export const syncParliament = async (
   db: Db,
-  load: (dataset: Dataset) => Promise<unknown>,
+  load: OpenDataLoader,
   assignments: Readonly<Record<number, number>> = SEAT_ASSIGNMENTS,
 ): Promise<SyncStats> => {
-  const parsedDeputies = parseDeputies(await load("deputies"), await load("biographies"));
+  const parsedDeputies = parseDeputies(await load.json("deputies"), await load.json("biographies"));
   if (parsedDeputies.filter((d) => d.active).length < 200) {
     // A half-empty file would wipe the chamber; better to fail and keep yesterday's data.
     throw new Error(`Only ${parsedDeputies.length} deputies in the parliament data, refusing to sync`);
   }
-  const parsedInitiatives = parseInitiatives(await load("initiatives"));
+  // Over 100 MB: read one initiative at a time and keep only the parsed fields.
+  const parsedInitiatives: ParsedInitiative[] = [];
+  for await (const item of load.items("initiatives")) parsedInitiatives.push(...parseInitiative(item));
 
   const warnings: string[] = [];
   checkSeatMap(parsedDeputies, warnings);
