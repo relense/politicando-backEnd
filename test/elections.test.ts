@@ -291,6 +291,24 @@ describe("election endpoints", () => {
     expect((await get("/parties?sort=bogus")).status).toBe(400);
   });
 
+  it("recomputes a district's seats with d'Hondt, and simulates other sizes", async () => {
+    const real = await get("/elections/legislativas-2025/dhondt?place=LOCAL-010000");
+    expect(real.status).toBe(200);
+    expect(real.body).toMatchObject({ seats: 3, simulated: false, matchesOfficial: true, lastSeat: { list: "PPD/PSD.CDS-PP", quotient: 237.5 } });
+    expect(real.body.lists.map((l: { list: string; seats: number; officialSeats: number }) => [l.list, l.seats, l.officialSeats])).toEqual([
+      ["PPD/PSD.CDS-PP", 2, 2], ["PS", 1, 1], ["B.E.", 0, 0],
+    ]);
+    expect(real.body.lists[0]).toMatchObject({ name: "AD - COLIGAÇÃO PSD/CDS", quotients: [475, 237.5, 158.33] });
+
+    const simulated = await get("/elections/legislativas-2025/dhondt?place=LOCAL-010000&seats=1");
+    expect(simulated.body).toMatchObject({ seats: 1, simulated: true, matchesOfficial: null });
+
+    // A municipality elects no deputies.
+    expect((await get("/elections/legislativas-2025/dhondt?place=LOCAL-010100")).status).toBe(400);
+    expect((await get("/elections/legislativas-2025/dhondt?place=LOCAL-010100&seats=2")).status).toBe(200);
+    expect((await get("/elections/legislativas-2025/dhondt?place=LOCAL-010000&seats=0")).status).toBe(400);
+  });
+
   it("describes places with parent and children", async () => {
     const { body } = await get("/places/LOCAL-010100");
     expect(body).toMatchObject({ name: "Águeda", level: "municipality", dicofre: "0101", parent: { name: "Aveiro" } });

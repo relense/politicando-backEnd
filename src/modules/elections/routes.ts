@@ -3,6 +3,7 @@ import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
 import type { Db } from "../../db/client.js";
 import { electionLists, electionResults, electionTurnout, elections, places } from "../../db/schema.js";
+import { dhondt } from "../../elections/dhondt.js";
 import { ApiError, notFound } from "../../errors.js";
 import { errorSchema } from "../shared.js";
 
@@ -283,6 +284,87 @@ export const electionRoutes =
         },
       },
       async (request) => placeResult(request.params.id, request.query.organ, request.params.key),
+    );
+
+    app.get(
+      "/elections/:id/dhondt",
+      {
+        schema: {
+          tags: ["elections"],
+          summary: "Seats recomputed from the votes with the d'Hondt method, in one place that elects seats",
+          params: z.object({ id: z.string().regex(/^[a-z]+-\d{4}$/) }),
+          querystring: organQuery.extend({
+            place: placeKeySchema
+              .optional()
+              .describe("A place that elects seats: a district (legislativas), the top level (europeias), a municipality (câmara)"),
+            seats: z.coerce
+              .number()
+              .int()
+              .min(1)
+              .max(250)
+              .optional()
+              .describe("Simulate with this many seats instead of the real number"),
+          }),
+          response: {
+            200: z.object({
+              election: electionSummarySchema,
+              organ: z.string(),
+              place: placeSchema,
+              seats: z.number(),
+              simulated: z.boolean().describe("True when `seats` was given"),
+              matchesOfficial: z.boolean().nullable().describe("Whether the recomputed seats equal the official ones; null when simulated"),
+              lastSeat: z.object({ list: z.string(), quotient: z.number() }).nullable(),
+              firstLoser: z.object({ list: z.string(), quotient: z.number() }).nullable().describe("The first quotient that missed out"),
+              lists: z.array(
+                listResultSchema.pick({ list: true, name: true, partySlugs: true, votes: true }).extend({
+                  seats: z.number(),
+                  officialSeats: z.number().nullable(),
+                  quotients: z.array(z.number()).describe("votes / 1, 2, 3… (up to 6), for the quotient table"),
+                  votesShortOfNextSeat: z.number().nullable().describe("Extra votes needed, all else equal, for one more seat"),
+                }),
+              ),
+            }),
+            400: errorSchema,
+            404: errorSchema,
+          },
+        },
+      },
+      async (request) => {
+        const election = await findElection(request.params.id);
+        const organ = request.query.organ ?? election.organs[0]!;
+        if (!election.organs.includes(organ)) throw new ApiError(400, "bad_request", `This election has no body ${organ}`);
+        const key = request.query.place ?? (await topPlace(election.id, organ));
+        if (!key) throw notFound("Results");
+        const turnout = await turnoutOf(election.id, organ, key);
+        if (!turnout) throw notFound("Results for this place");
+        const seats = request.query.seats ?? turnout.totalMandates;
+        if (!seats) {
+          throw new ApiError(400, "bad_request", "No seats are elected at this level; pick a district (or a municipality), or pass seats");
+        }
+        const [place] = await db
+          .select({ key: places.key, name: places.name, level: places.level, dicofre: places.dicofre })
+          .from(places)
+          .where(eq(places.key, key));
+        if (!place) throw notFound("Place");
+
+        const rows = await listRows(election.id, organ, key);
+        const result = dhondt(
+          rows.map((r) => ({ list: r.list, name: r.name, partySlugs: r.partySlugs, votes: r.votes, officialSeats: r.mandates })),
+          seats,
+        );
+        const simulated = request.query.seats !== undefined;
+        return {
+          election,
+          organ,
+          place,
+          seats,
+          simulated,
+          matchesOfficial: simulated ? null : result.lists.every((l) => (l.officialSeats ?? 0) === l.seats),
+          lastSeat: result.lastSeat,
+          firstLoser: result.firstLoser,
+          lists: result.lists,
+        };
+      },
     );
 
     app.get(

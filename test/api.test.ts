@@ -334,6 +334,7 @@ describe("platform", () => {
       "/api/v2/deputies/{id}/votes",
       "/api/v2/elections",
       "/api/v2/elections/{id}",
+      "/api/v2/elections/{id}/dhondt",
       "/api/v2/elections/{id}/places/{key}",
       "/api/v2/government",
       "/api/v2/government/members/{id}",

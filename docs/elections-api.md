@@ -106,6 +106,40 @@ boundaries (GeoJSON from DGT), so `children[].dicofre` can colour a map by winne
 - In legislativas, seats are won per district (*círculo*): `mandates` at district level
   and in the total, not at municipality level.
 
+## `GET /elections/:id/dhondt?place=&organ=&seats=`
+
+The seats recomputed from the votes with the d'Hondt method, which Portugal uses for
+parliament, the European Parliament and câmaras municipais. Use it for a "how seats are
+won" explainer, and to show how close each list came to one more seat.
+
+`place` must elect seats: a district (*círculo*) or `FOREIGN-800000`/`FOREIGN-900000` in
+legislativas, the top level in europeias, a municipality for `organ=CM`. Pass `seats` to
+simulate a different number (1-250), for "what if this district had 10 deputies?".
+
+```jsonc
+{
+  "election": { /* … */ }, "organ": "AR",
+  "place": { "key": "LOCAL-110000", "name": "Lisboa", "level": "district", "dicofre": "11" },
+  "seats": 48,
+  "simulated": false,
+  "matchesOfficial": true,             // always true on real data so far; null when simulated
+  "lastSeat": { "list": "PAN", "quotient": 23369 },        // the quotient that won the 48th seat
+  "firstLoser": { "list": "PS", "quotient": 23191.69 },    // the first one that missed out
+  "lists": [{                          // most seats first
+    "list": "PS", "name": "Partido Socialista", "partySlugs": ["ps"], "votes": 301492,
+    "seats": 12, "officialSeats": 12,
+    "quotients": [301492, 150746, 100497.33, 75373, 60298.4, 50248.67],  // votes ÷ 1…6
+    "votesShortOfNextSeat": 2306       // all else equal; null if it won every seat
+  }]
+}
+```
+
+How to explain it: each list's votes are divided by 1, 2, 3…, and the seats go to the
+largest results, one by one. A tie for the last seat goes to the list with fewer votes
+(Lei Eleitoral da AR, art. 16.º). That is why small parties need many more votes per seat
+in small districts: in Portalegre (2 seats) a list needs about a third of the votes, while
+in Lisboa (48 seats) about 2% can be enough.
+
 ## `GET /places/:key`
 
 A place with its parent and children (names only, no results): for search and navigation.
