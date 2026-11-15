@@ -59,6 +59,10 @@ empty.
 
 ## What isn't there (yet)
 
+- **Parishes restored in 2025:** about 300 parishes were split back out in 2025. They have
+  results and pages, but `dicofre` is null (no code in our older data), so they can't be
+  joined to boundary files by code yet.
+
 - **Junta presidents (parishes):** the results site publishes candidates only for the câmaras,
   so we know which list won each junta (`elections`, organ `AF`) but not who leads it.
 - **Councillors' names:** the same; we have each list's seats, not the people.

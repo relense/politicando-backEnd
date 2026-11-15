@@ -53,10 +53,11 @@ export const placeRoutes =
             and exists (select 1 from election_candidates c where c.election_id = e.id)
           order by e.date desc limit 1
         )
-        select c.place_key, c.name, c.list, r.label, c.election_id
+        select c.place_key, c.name, c.list, coalesce(r.label, l.name) as label, c.election_id
         from election_candidates c
         join latest on latest.id = c.election_id
         left join election_results r on r.election_id = c.election_id and r.organ = 'CM' and r.place_key = c.place_key and r.list = c.list
+        left join election_lists l on l.election_id = c.election_id and l.list = c.list
         where c.elected ${keys ? sql`and c.place_key in (${sql.join(keys.map((k) => sql`${k}`), sql`, `)})` : sql``}`);
       return new Map(
         rows.rows.map((r) => [
