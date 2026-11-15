@@ -17,6 +17,7 @@ import {
   sortPath,
 } from "../../people/path.js";
 import { BIOGRAPHY_URL, PRESIDENTS, currentPresident } from "../../presidency/presidents.js";
+import { CASE_STATUSES, PERSON_STATUSES } from "../../cases/model.js";
 import { photoUrl } from "../parliament/routes.js";
 import { errorSchema } from "../shared.js";
 
@@ -90,6 +91,35 @@ export const peopleRoutes =
       return { ...member, posts };
     };
 
+    const label = (list: readonly { key: string; label: string }[], key: string) => ({ key, label: list.find((t) => t.key === key)?.label ?? key });
+
+    /** Published cases and declared interests recorded for this person. */
+    const recordsOf = async (deputyId: number | null, memberId: string | null) => {
+      if (deputyId === null && memberId === null) return { cases: [], interests: 0 };
+      const personMatch = (alias: "p" | "i") =>
+        sql.join(
+          [
+            ...(deputyId !== null ? [sql`${sql.raw(alias)}.deputy_id = ${deputyId}`] : []),
+            ...(memberId !== null ? [sql`${sql.raw(alias)}.government_member_id = ${memberId}`] : []),
+          ],
+          sql` or `,
+        );
+      const [caseRows, interestRows] = await Promise.all([
+        db.execute<{ id: number; title: string; status: string; person_status: string; final: boolean }>(sql`
+          select distinct on (c.id) c.id, c.title, c.status, p.status as person_status, p.final
+          from cases c join case_people p on p.case_id = c.id
+          where c.published and (${personMatch("p")})
+          order by c.id desc, p.position`),
+        db.execute<{ n: number }>(sql`select count(*)::int as n from interests i where i.published and (${personMatch("i")})`),
+      ]);
+      return {
+        cases: caseRows.rows.map((r) => ({
+          id: r.id, title: r.title, status: label(CASE_STATUSES, r.status), personStatus: label(PERSON_STATUSES, r.person_status), final: r.final,
+        })),
+        interests: interestRows.rows[0]?.n ?? 0,
+      };
+    };
+
     const build = async (kind: z.infer<typeof kindSchema>, id: string) => {
       let deputy: Awaited<ReturnType<typeof deputyById>> = null;
       let member: Awaited<ReturnType<typeof memberBy>> = null;
@@ -127,7 +157,9 @@ export const peopleRoutes =
         const [row] = await db.select({ photoUrl: presidents.photoUrl }).from(presidents).where(eq(presidents.id, president.id));
         presidentPhoto = row?.photoUrl ?? null;
       }
+      const records = await recordsOf(deputy?.id ?? null, member?.id ?? null);
       return {
+        records,
         person: {
           name: president?.name ?? member?.name ?? deputy!.name,
           photoUrl: presidentPhoto ?? member?.photoUrl ?? (deputy ? photoUrl(deputy.id) : null),
@@ -149,6 +181,20 @@ export const peopleRoutes =
           params: z.object({ kind: kindSchema, id: z.string().regex(/^[a-z0-9-]{1,64}$/) }),
           response: {
             200: z.object({
+              records: z
+                .object({
+                  cases: z.array(
+                    z.object({
+                      id: z.number(),
+                      title: z.string(),
+                      status: z.object({ key: z.string(), label: z.string() }),
+                      personStatus: z.object({ key: z.string(), label: z.string() }),
+                      final: z.boolean(),
+                    }),
+                  ),
+                  interests: z.number().describe("Published declared interests: GET /interests?deputy= or ?member="),
+                })
+                .describe("Published entries in the corruption record (GET /cases/:id) and declared interests"),
               person: personSchema,
               path: z.array(stepSchema).describe("Dated steps, ongoing first, then newest"),
               currentRoles: z.array(stepSchema).describe("Positions held now that the sources don't date"),

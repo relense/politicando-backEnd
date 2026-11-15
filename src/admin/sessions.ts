@@ -1,7 +1,9 @@
 import { createHash, randomBytes } from "node:crypto";
+import type { FastifyRequest } from "fastify";
 import { and, eq, gt, isNull, lt } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import { adminSessions, admins, auditLog } from "../db/schema.js";
+import { ApiError } from "../errors.js";
 
 export const SESSION_COOKIE = "politicando_admin";
 export const SESSION_DAYS = 14;
@@ -49,3 +51,14 @@ export const audit = (
   before: unknown = null,
   after: unknown = null,
 ) => db.insert(auditLog).values({ adminId, action, entity, entityId: String(entityId), before, after });
+
+/** Returns a check for protected handlers: the signed-in admin with at least `role`, or a 401/403. */
+export const adminGuard =
+  (db: Db) =>
+  async (request: FastifyRequest, role: Role = "author"): Promise<Admin> => {
+    const token = request.cookies[SESSION_COOKIE];
+    const admin = token ? await sessionAdmin(db, token) : null;
+    if (!admin) throw new ApiError(401, "unauthenticated", "Sign in first");
+    if (!hasRole(admin.role, role)) throw new ApiError(403, "forbidden", "Your role can't do this");
+    return admin;
+  };

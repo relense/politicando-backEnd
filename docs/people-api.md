@@ -74,3 +74,9 @@ A person who is both a deputy and a Government member gets the same answer from 
   past legislatures and past Governments (planned) will fill these in.
 - Party leaders are kept by hand (`src/parliament/leadership.ts`), since no open data says who
   leads each party.
+
+## Records
+
+Every path response also has `records`: the person's published cases in the corruption record
+and how many declared interests we have. See `docs/cases-api.md` for the fields and for the
+wording rules (presumption of innocence) that apply wherever these appear.

@@ -127,6 +127,14 @@ dados.gov.pt: one zip per year, regenerated weekly, public domain) and serves th
 - Places of execution are matched to our municipalities and districts, so import the
   autárquicas first (`npm run elections:import`).
 
+## Corruption record and declared interests
+
+Curated by hand in the admin (`docs/admin-api.md`), never scraped: judicial cases involving
+officeholders (`/cases`) and their declared interests (`/interests`), each entry sourced and
+audited. Interests with a NIF link to public contracts. Drafts stay private; publishing
+checks the sources (`src/cases/model.ts`). See `docs/cases-api.md`, including the wording
+rules for the frontend.
+
 ## News scanner
 
 `npm run ingest` scans once and exits. It uses no paid API. The sources are in `src/ingestion/sources.ts`.

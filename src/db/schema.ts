@@ -640,3 +640,125 @@ export const auditLog = pgTable(
   },
   (table) => [index("audit_log_entity_idx").on(table.entity, table.entityId), index("audit_log_at_idx").on(table.at.desc())],
 );
+
+/*
+ * The corruption record: judicial cases involving political officeholders, curated by hand
+ * through the admin, each with sources. Only published cases are public. Status is the
+ * stage the case has reached, never a judgement of our own: see docs/cases-api.md.
+ */
+export const cases = pgTable(
+  "cases",
+  {
+    id: integer().primaryKey().generatedAlwaysAsIdentity(),
+    /** The name it is known by, e.g. "Operação Influencer". */
+    title: text().notNull(),
+    summary: text().notNull(),
+    /** Crimes at stake, e.g. ["corruption", "influence_peddling"]: see CASE_CRIMES in src/cases/model.ts. */
+    crimes: text().array().notNull(),
+    /** The stage reached: see CASE_STATUSES. */
+    status: text().notNull(),
+    statusDate: date("status_date"),
+    startedAt: date("started_at"),
+    published: boolean().notNull().default(false),
+    /** When an editor last checked it against the sources. */
+    reviewedAt: date("reviewed_at"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("cases_published_idx").on(table.published, table.statusDate.desc())],
+);
+
+/** People involved in a case, each with their own situation in it. */
+export const casePeople = pgTable(
+  "case_people",
+  {
+    caseId: integer("case_id")
+      .notNull()
+      .references(() => cases.id, { onDelete: "cascade" }),
+    position: smallint().notNull(),
+    name: text().notNull(),
+    /** What they were when it happened, e.g. "Ministro das Infraestruturas". */
+    roleAtTime: text("role_at_time"),
+    partyId: integer("party_id").references(() => parties.id),
+    deputyId: integer("deputy_id").references(() => deputies.id, { onDelete: "set null" }),
+    governmentMemberId: text("government_member_id").references(() => governmentMembers.id, { onDelete: "set null" }),
+    /** Their own stage: suspect, arguido, accused, convicted, acquitted, cleared... see PERSON_STATUSES. */
+    status: text().notNull(),
+    /** For convictions: the sentence, and whether it is final (transitou em julgado). */
+    outcome: text(),
+    final: boolean().notNull().default(false),
+  },
+  (table) => [
+    primaryKey({ columns: [table.caseId, table.position] }),
+    index("case_people_deputy_idx").on(table.deputyId),
+    index("case_people_member_idx").on(table.governmentMemberId),
+    index("case_people_party_idx").on(table.partyId),
+  ],
+);
+
+/** What happened, when: searches, accusations, trial, verdicts, appeals. */
+export const caseEvents = pgTable(
+  "case_events",
+  {
+    caseId: integer("case_id")
+      .notNull()
+      .references(() => cases.id, { onDelete: "cascade" }),
+    position: smallint().notNull(),
+    date: date().notNull(),
+    description: text().notNull(),
+    /** Positions in case_sources backing this event. */
+    sources: smallint().array().notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.caseId, table.position] })],
+);
+
+export const caseSources = pgTable(
+  "case_sources",
+  {
+    caseId: integer("case_id")
+      .notNull()
+      .references(() => cases.id, { onDelete: "cascade" }),
+    position: smallint().notNull(),
+    url: text().notNull(),
+    title: text().notNull(),
+    publisher: text().notNull(),
+    publishedAt: date("published_at"),
+    /** court: a ruling or court document; official: Ministério Público, police or other official statement; news. */
+    kind: text().$type<"court" | "official" | "news">().notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.caseId, table.position] })],
+);
+
+/**
+ * Officeholders' declared interests (companies, shareholdings, other jobs, clients), curated by
+ * hand from their declarations, each with its source. With a NIF, they link to public contracts.
+ */
+export const interests = pgTable(
+  "interests",
+  {
+    id: integer().primaryKey().generatedAlwaysAsIdentity(),
+    personName: text("person_name").notNull(),
+    deputyId: integer("deputy_id").references(() => deputies.id, { onDelete: "set null" }),
+    governmentMemberId: text("government_member_id").references(() => governmentMembers.id, { onDelete: "set null" }),
+    /** company (owns or founded), shareholding, role (manager, board member...), activity (paid work), client. */
+    kind: text().$type<"company" | "shareholding" | "role" | "activity" | "client">().notNull(),
+    entityName: text("entity_name").notNull(),
+    /** The entity's NIF, when declared or verifiable; links it to contract_parties. */
+    nif: text(),
+    description: text(),
+    startDate: date("start_date"),
+    endDate: date("end_date"),
+    /** The declaration's date. */
+    declaredAt: date("declared_at"),
+    sourceUrl: text("source_url").notNull(),
+    sourceTitle: text("source_title").notNull(),
+    published: boolean().notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("interests_deputy_idx").on(table.deputyId),
+    index("interests_member_idx").on(table.governmentMemberId),
+    index("interests_nif_idx").on(table.nif),
+  ],
+);

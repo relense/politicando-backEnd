@@ -35,7 +35,7 @@ Base path: `/api/v2/admin`. Errors use the usual `{ error: { code, message } }`.
 | role | can |
 | --- | --- |
 | `author` | sign in, change their password (editorial posts come later) |
-| `moderator` | everything an author can, plus moderate comments and read the audit log (curated records come later) |
+| `moderator` | everything an author can, plus moderate comments, curate the corruption record and declared interests (`docs/cases-api.md`), and read the audit log |
 | `admin` | everything, plus invite, edit and disable admins |
 
 ## Admins (role admin)
@@ -84,7 +84,8 @@ The very first admin is created on the server: `npm run admin:create -- <email> 
 ```
 
 - Actions so far: `admin.create`, `admin.update`, `admin.password`, `comment.hide`,
-  `comment.unhide`.
+  `comment.unhide`, `case.create`, `case.update`, `case.publish`, `case.unpublish`,
+  `interest.create`, `interest.update`, `interest.delete`.
 - `admin` is null if that admin was deleted.
 - Show it as a history panel next to any record (`?entity=comment&entityId=345`), and as a
   full log page for admins.

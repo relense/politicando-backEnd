@@ -15,7 +15,9 @@ import {
 } from "fastify-type-provider-zod";
 import type { Db } from "./db/client.js";
 import { ApiError } from "./errors.js";
+import { adminRecordRoutes } from "./modules/admin/records.js";
 import { adminRoutes } from "./modules/admin/routes.js";
+import { caseRoutes } from "./modules/cases/routes.js";
 import { articleRoutes } from "./modules/articles/routes.js";
 import type { RecaptchaVerifier } from "./modules/comments/recaptcha.js";
 import { commentRoutes } from "./modules/comments/routes.js";
@@ -118,6 +120,8 @@ export const buildApp = async ({
       await api.register(historyRoutes(db));
       await api.register(contractRoutes(db));
       await api.register(adminRoutes({ db, secureCookies, loginLimitPerMinute }));
+      await api.register(adminRecordRoutes(db));
+      await api.register(caseRoutes(db));
       await api.register(
         commentRoutes({ db, verifyRecaptcha, createLimitPerMinute: commentLimitPerMinute }),
       );

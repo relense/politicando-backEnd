@@ -1,18 +1,15 @@
 import { and, desc, eq, isNotNull, isNull, lt, sql } from "drizzle-orm";
-import type { FastifyReply, FastifyRequest } from "fastify";
+import type { FastifyReply } from "fastify";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { DUMMY_HASH, MIN_PASSWORD_LENGTH, hashPassword, verifyPassword } from "../../admin/password.js";
 import {
-  type Admin,
-  type Role,
   SESSION_COOKIE,
+  adminGuard,
   audit,
   createSession,
   endAllSessions,
   endSession,
-  hasRole,
-  sessionAdmin,
 } from "../../admin/sessions.js";
 import type { Db } from "../../db/client.js";
 import { admins, auditLog, comments } from "../../db/schema.js";
@@ -42,14 +39,7 @@ export const adminRoutes =
       secure: secureCookies,
     };
 
-    /** The signed-in admin, or a 401/403. Call it first in every protected handler. */
-    const requireAdmin = async (request: FastifyRequest, role: Role = "author"): Promise<Admin> => {
-      const token = request.cookies[SESSION_COOKIE];
-      const admin = token ? await sessionAdmin(db, token) : null;
-      if (!admin) throw new ApiError(401, "unauthenticated", "Sign in first");
-      if (!hasRole(admin.role, role)) throw new ApiError(403, "forbidden", "Your role can't do this");
-      return admin;
-    };
+    const requireAdmin = adminGuard(db);
 
     const startSession = async (reply: FastifyReply, adminId: number) => {
       const { token, expiresAt } = await createSession(db, adminId);
