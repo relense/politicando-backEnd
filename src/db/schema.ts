@@ -385,3 +385,94 @@ export const articlePresidents = pgTable(
     index("article_presidents_president_idx").on(table.presidentId),
   ],
 );
+
+/** Places as the electoral administration codes them: "LOCAL-010100" (Águeda), "GLOBAL-990000"... */
+export const places = pgTable(
+  "places",
+  {
+    key: text().primaryKey(),
+    name: text().notNull(),
+    level: text().$type<"global" | "national" | "foreign" | "district" | "municipality" | "parish">().notNull(),
+    parentKey: text("parent_key"),
+    /** DICOFRE code (6 digits) for places in Portugal: district 01, municipality 0101, parish 010103. */
+    dicofre: text(),
+  },
+  (table) => [index("places_parent_idx").on(table.parentKey)],
+);
+
+/** An election, from the electoral administration's results site (see src/elections/catalog.ts). */
+export const elections = pgTable("elections", {
+  id: text().primaryKey(),
+  type: text().$type<"legislativas" | "autarquicas" | "europeias" | "presidenciais">().notNull(),
+  name: text().notNull(),
+  date: date().notNull(),
+  /** Bodies elected: AR, CM (câmara), AM (assembleia municipal), AF (assembleia de freguesia), PE, PR. */
+  organs: text().array().notNull(),
+  sourceUrl: text("source_url").notNull(),
+  importedAt: timestamp("imported_at", { withTimezone: true }),
+});
+
+/** Turnout for one body in one place. */
+export const electionTurnout = pgTable(
+  "election_turnout",
+  {
+    electionId: text("election_id")
+      .notNull()
+      .references(() => elections.id, { onDelete: "cascade" }),
+    organ: text().notNull(),
+    placeKey: text("place_key")
+      .notNull()
+      .references(() => places.key),
+    registered: integer(),
+    voters: integer().notNull(),
+    turnoutPct: real("turnout_pct"),
+    blank: integer().notNull(),
+    null: integer().notNull(),
+    /** Seats at stake here (AR círculo, câmara...), when the place elects them. */
+    totalMandates: integer("total_mandates"),
+  },
+  (table) => [primaryKey({ columns: [table.electionId, table.organ, table.placeKey] })],
+);
+
+/** Votes for one list (party, coalition, citizens' group or presidential candidate) in one place. */
+export const electionResults = pgTable(
+  "election_results",
+  {
+    electionId: text("election_id")
+      .notNull()
+      .references(() => elections.id, { onDelete: "cascade" }),
+    organ: text().notNull(),
+    placeKey: text("place_key")
+      .notNull()
+      .references(() => places.key),
+    /** As the ballot shows it: "PPD/PSD.CDS-PP", "B.E.", or a candidate's name. */
+    list: text().notNull(),
+    votes: integer().notNull(),
+    pct: real().notNull(),
+    validPct: real("valid_pct"),
+    mandates: integer(),
+    /** Autárquicas: presidencies (câmaras or juntas) won, summed over the area. */
+    presidents: integer(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.electionId, table.organ, table.placeKey, table.list] }),
+    index("election_results_place_idx").on(table.placeKey),
+  ],
+);
+
+/** The lists that ran in an election, with their full names and our party slugs. */
+export const electionLists = pgTable(
+  "election_lists",
+  {
+    electionId: text("election_id")
+      .notNull()
+      .references(() => elections.id, { onDelete: "cascade" }),
+    list: text().notNull(),
+    name: text().notNull(),
+    coalition: boolean().notNull().default(false),
+    citizens: boolean().notNull().default(false),
+    /** Our parties in it: ["psd", "cds-pp"] for "PPD/PSD.CDS-PP". Empty for others. */
+    partySlugs: text("party_slugs").array().notNull().default([]),
+  },
+  (table) => [primaryKey({ columns: [table.electionId, table.list] })],
+);

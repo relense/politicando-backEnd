@@ -10,7 +10,8 @@ export const resetDb = async (db: Db) => {
   await db.execute(
     sql`truncate comments, article_parties, article_deputies, article_initiatives, articles, seen_source_uris,
       initiative_parties, initiative_deputies, initiatives, article_government_members, government_positions,
-      government_members, governments, article_presidents, presidents, deputies restart identity cascade`,
+      government_members, governments, article_presidents, presidents, election_results, election_turnout,
+      election_lists, elections, places, deputies restart identity cascade`,
   );
   await seedParties(db);
 };

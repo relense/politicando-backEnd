@@ -25,6 +25,7 @@ The API docs are at `/docs` and the OpenAPI spec is at `/docs/json`.
 | `npm run typecheck`, `npm run lint` | Static checks |
 | `npm run ingest` | Scan news sources once |
 | `npm run parliament:sync` | Load deputies and initiatives from the parliament's open data |
+| `npm run elections:import` | Import election results since 2011 (one-off; add ids to import only some) |
 | `npm run parliament:link-news` | Link stored articles to deputies and initiatives. Add `-- --replace` after changing matching rules |
 | `npm run db:generate` | Create a migration after changing `src/db/schema.ts` |
 | `npm run db:seed` | Create or update parties. Safe to re-run |
@@ -67,6 +68,22 @@ posts the portal dropped when every page was read.
   site's biography stops naming the President listed there, the job warns you to update it.
 - What the President did with each law (promulgated, vetoed, pending) comes from the
   parliament's own data, in the parliament sync. See `docs/presidency-api.md`.
+
+## Elections
+
+`npm run elections:import` downloads official results since 2011 from the MAI results site
+(www.eleicoes.mai.gov.pt): every body, from the whole country down to municipalities
+(parishes for juntas de freguesia). It's a one-off, not a daily job: run it once, and again
+for a new election once the count is final, after adding it to `src/elections/catalog.ts`.
+It takes a few hours at one request per second. If it stops, run it again: places already
+stored are skipped (`-- --refresh` re-downloads them, `-- --parishes` goes to parishes for
+every body).
+
+- Endpoints: `GET /elections`, `GET /elections/:id`, `GET /elections/:id/places/:key`,
+  `GET /places/:key`. See `docs/elections-api.md`.
+- Code: `src/elections/catalog.ts` (which elections), `src/elections/mai.ts` (file formats),
+  `src/elections/import.ts`.
+- Not yet: autárquicas 2025 (the site's newer format) and presidenciais 2026.
 
 ## News scanner
 

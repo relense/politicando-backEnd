@@ -330,12 +330,16 @@ describe("platform", () => {
       "/api/v2/articles/{id}/comments",
       "/api/v2/deputies/{id}",
       "/api/v2/deputies/{id}/votes",
+      "/api/v2/elections",
+      "/api/v2/elections/{id}",
+      "/api/v2/elections/{id}/places/{key}",
       "/api/v2/government",
       "/api/v2/government/members/{id}",
       "/api/v2/initiatives",
       "/api/v2/initiatives/{id}",
       "/api/v2/parliament",
       "/api/v2/parties",
+      "/api/v2/places/{key}",
       "/api/v2/president",
     ]);
   });

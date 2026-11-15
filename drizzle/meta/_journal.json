@@ -71,6 +71,13 @@
       "when": 1794733889546,
       "tag": "0009_presidency",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1794735094855,
+      "tag": "0010_elections",
+      "breakpoints": true
     }
   ]
 }
