@@ -1,6 +1,7 @@
 import { and, asc, count, desc, eq, gt, max, sql, type SQL } from "drizzle-orm";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
+import { TOPICS, plainStatus, plainTitle, plainType, type PlainStatusInput } from "../../parliament/plain.js";
 import type { Db } from "../../db/client.js";
 import { articles, deputies, initiatives, parties } from "../../db/schema.js";
 import { ApiError, notFound } from "../../errors.js";
@@ -71,6 +72,37 @@ export const initiativeSummarySchema = z.object({
       lastAt: z.string().nullable().describe("Latest article about it"),
     })
     .describe("News about it, found by keywords among the outlets we scan. Approximate"),
+  topics: z
+    .array(z.object({ slug: z.string(), label: z.string() }))
+    .describe("Topics found in the title by keyword; see GET /initiatives/topics. Empty when none fits"),
+  plain: z
+    .object({
+      title: z.string().describe("The title without legal boilerplate (laws cited, \"procedendo à n.ª alteração…\")"),
+      type: z.object({
+        label: z.string().describe('e.g. "Recomendação" for a Projeto de Resolução'),
+        explainer: z.string().describe("One or two sentences on what this kind of initiative is"),
+        makesLaw: z.boolean().describe("False for recommendations and internal decisions"),
+      }),
+      status: z.object({
+        label: z.string().describe('e.g. "Aprovada, à espera do Presidente da República"'),
+        stage: z.enum([
+          "submitted", "committee", "consultation", "debate", "approved_in_principle", "approved",
+          "awaiting_president", "vetoed", "promulgated", "published", "rejected", "not_admitted", "withdrawn",
+        ]),
+      }),
+    })
+    .describe("Plain-language reading, by fixed rules (no AI)"),
+});
+
+const TOPIC_LABELS = new Map(TOPICS.map((t) => [t.slug, t.label]));
+
+/** Adds the plain-language reading and topic labels to a summary row. */
+export const withPlain = <
+  T extends PlainStatusInput & { title: string; topics: string[] },
+>({ topics, ...row }: T) => ({
+  ...row,
+  topics: topics.map((slug) => ({ slug, label: TOPIC_LABELS.get(slug) ?? slug })),
+  plain: { title: plainTitle(row.title), type: plainType(row.type), status: plainStatus(row) },
 });
 
 const partyVoteSchema = z.object({
@@ -175,6 +207,7 @@ export const initiativeColumns = {
   lastVote: lastVoteSql,
   presidency: presidencySql,
   coverage: coverageSql,
+  topics: initiatives.topics,
 };
 
 const deputyColumns = {
@@ -357,7 +390,8 @@ export const parliamentRoutes =
           .from(initiatives)
           .where(authored)
           .orderBy(desc(initiatives.phaseDate), desc(initiatives.id))
-          .limit(10);
+          .limit(10)
+          .then((rows) => rows.map(withPlain));
         const news = await db
           .select(articleColumns)
           .from(articles)
@@ -496,6 +530,10 @@ export const parliamentRoutes =
               .enum(["pending", "promulgated", "vetoed"])
               .optional()
               .describe("What the President did: pending (in Belém), promulgated or vetoed"),
+            topic: z
+              .enum(TOPICS.map((t) => t.slug) as [string, ...string[]])
+              .optional()
+              .describe("Topic slug; see GET /initiatives/topics"),
             coverage: z
               .enum(["none", "some"])
               .optional()
@@ -511,8 +549,9 @@ export const parliamentRoutes =
         },
       },
       async (request) => {
-        const { status, party, deputy, type, presidency, coverage, cursor, limit } = request.query;
+        const { status, party, deputy, type, presidency, topic, coverage, cursor, limit } = request.query;
         const conditions: SQL[] = [];
+        if (topic) conditions.push(sql`${initiatives.topics} @> array[${topic}]::text[]`);
         if (coverage) {
           const covered = sql`exists (select 1 from article_initiatives ai where ai.initiative_id = initiatives.id)`;
           conditions.push(coverage === "some" ? covered : sql`not ${covered}`);
@@ -548,8 +587,37 @@ export const parliamentRoutes =
         const page = rows.slice(0, limit);
         const last = page.at(-1);
         return {
-          items: page,
+          items: page.map(withPlain),
           nextCursor: rows.length > limit && last ? encodeCursor({ phaseDate: last.phaseDate, id: last.id }) : null,
+        };
+      },
+    );
+
+    app.get(
+      "/initiatives/topics",
+      {
+        schema: {
+          tags: ["parliament"],
+          summary: "Topics initiatives are filed under, with how many of each",
+          response: {
+            200: z.object({
+              items: z.array(z.object({ slug: z.string(), label: z.string(), count: z.number() })),
+              untagged: z.number().describe("Initiatives that fit no topic"),
+            }),
+          },
+        },
+      },
+      async () => {
+        const rows = await db.execute<{ slug: string; count: number }>(sql`
+          select slug, count(*)::int as count from initiatives, unnest(initiatives.topics) as slug group by slug`);
+        const counts = new Map(rows.rows.map((r) => [r.slug, r.count]));
+        const [untagged] = await db
+          .select({ n: count() })
+          .from(initiatives)
+          .where(sql`cardinality(${initiatives.topics}) = 0`);
+        return {
+          items: TOPICS.map((t) => ({ slug: t.slug, label: t.label, count: counts.get(t.slug) ?? 0 })),
+          untagged: untagged?.n ?? 0,
         };
       },
     );
@@ -585,7 +653,7 @@ export const parliamentRoutes =
           )`)
           .orderBy(desc(articles.publishedAt), desc(articles.id))
           .limit(10);
-        return { ...row, articles: news.map((a) => ({ ...a, publishedAt: a.publishedAt.toISOString() })) };
+        return { ...withPlain(row), articles: news.map((a) => ({ ...a, publishedAt: a.publishedAt.toISOString() })) };
       },
     );
   };

@@ -101,6 +101,7 @@ The "diplomas" section. Newest activity first, paginated like `/articles`.
 Query: `status` (`approved` | `in_progress` | `rejected` | `withdrawn`), `party`
 (author party slug), `deputy` (author deputy ID), `type` (e.g. `Projeto de Lei`),
 `presidency` (`pending` | `promulgated` | `vetoed`: what the President did),
+`topic` (a slug from `GET /initiatives/topics`),
 `coverage` (`none` | `some`: whether any news was found about it), `cursor`, `limit`
 (1-50, default 10). Returns `{ items, nextCursor }`.
 
@@ -132,7 +133,13 @@ Query: `status` (`approved` | `in_progress` | `rejected` | `withdrawn`), `party`
     "sentAt": "2025-12-18", "promulgatedAt": "2025-12-22", "vetoedAt": null,
     "by": "Marcelo Rebelo de Sousa"                // President who decided (or is deciding)
   },
-  "coverage": { "articles": 8, "sources": 6, "lastAt": "2026-11-14T20:20:00.000Z" }
+  "coverage": { "articles": 8, "sources": 6, "lastAt": "2026-11-14T20:20:00.000Z" },
+  "topics": [{ "slug": "impostos", "label": "Impostos" }],   // [] when none fits
+  "plain": {                                       // plain-language reading, see below
+    "title": "Orçamento do Estado para 2026",
+    "type": { "label": "Proposta de lei do Governo", "explainer": "Uma lei nova…", "makesLaw": true },
+    "status": { "label": "Aprovada e publicada", "stage": "published" }
+  }
 }
 ```
 
@@ -151,6 +158,50 @@ What the statuses mean:
 - `in_progress`: everything else, including bills approved "na generalidade" that are
   still in committee.
 - `withdrawn`: the authors withdrew it.
+
+### Easy to understand: `plain` and `topics`
+
+Every initiative summary, here and on deputy and President pages, has a `plain` reading
+for readers who don't know parliamentary jargon. It comes from fixed rules, with no AI, so
+it is predictable but never smarter than the title.
+
+- `plain.title`: the title without the legal boilerplate. Parentheses citing the laws it
+  changes are dropped, and so are trailing ", alterando a Lei n.º…" / ", procedendo à
+  terceira alteração…" clauses. "Procede à alteração do Decreto-Lei n.º X, que define Y"
+  becomes "Altera a lei que define Y". Show it as the headline, with `title` as the full
+  official title underneath or on the detail page.
+- `plain.type`: what this kind of initiative is. `label` replaces the official type name
+  ("Projeto de Resolução" → "Recomendação"). Put `explainer` in a tooltip or an info box.
+  `makesLaw: false` means approving it changes no law: a recommendation to the Government
+  or an internal decision. Worth a visible hint, because approved recommendations are
+  often mistaken for laws.
+- `plain.status`: where it stands, in one phrase. `stage` is for icons or a progress bar:
+
+| `stage` | Meaning |
+|---|---|
+| `submitted` | Entered, waiting to be debated |
+| `committee` | Being examined by a committee |
+| `consultation` | Public consultation, or waiting for an opinion (e.g. the autonomous regions) |
+| `debate` | Scheduled or being debated in plenary |
+| `approved_in_principle` | Passed the first vote (*generalidade*); the details are being worked out |
+| `approved` | Passed its final vote |
+| `awaiting_president` | Sent to the President, who hasn't decided yet |
+| `vetoed` | Vetoed by the President |
+| `promulgated` | Promulgated, waiting for publication |
+| `published` | Published in the Diário da República (for recommendations: approved) |
+| `rejected` / `not_admitted` / `withdrawn` | Ended without approval |
+
+- `topics`: subjects found in the title by keyword, such as Habitação, Saúde or Impostos.
+  About one in five initiatives fits none: show them under "Outros".
+
+## `GET /initiatives/topics`
+
+```jsonc
+{ "items": [{ "slug": "habitacao", "label": "Habitação e urbanismo", "count": 105 }, …],  // fixed order
+  "untagged": 492 }
+```
+
+Use it for topic chips. Then `GET /initiatives?topic=habitacao`.
 
 ## `GET /initiatives/:id`
 

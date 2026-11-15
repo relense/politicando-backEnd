@@ -338,6 +338,7 @@ describe("platform", () => {
       "/api/v2/government",
       "/api/v2/government/members/{id}",
       "/api/v2/initiatives",
+      "/api/v2/initiatives/topics",
       "/api/v2/initiatives/{id}",
       "/api/v2/parliament",
       "/api/v2/parties",

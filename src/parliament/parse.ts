@@ -1,3 +1,4 @@
+import { topicsOf } from "./plain.js";
 import type { InitiativeStatus, PartyVote, PresidencyRecord, VoteRecord } from "../db/schema.js";
 import { partySlugForGroup } from "./groups.js";
 
@@ -163,6 +164,7 @@ export interface ParsedInitiative {
   textUrl: string | null;
   votes: VoteRecord[];
   presidency: PresidencyRecord | null;
+  topics: string[];
   authorGroups: string[];
   authorDeputyIds: number[];
 }
@@ -326,6 +328,7 @@ export const parseInitiative = (raw: unknown): ParsedInitiative[] => {
       textUrl: str(item.IniLinkTexto)?.replace(/^http:/, "https:") ?? null,
       votes,
       presidency: presidencyOf(events),
+      topics: topicsOf(title),
       authorGroups: [
         ...new Set(asArray(item.IniAutorGruposParlamentares).map((g) => str(g.GP)).filter((g): g is string => !!g)),
       ],

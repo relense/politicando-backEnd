@@ -194,11 +194,14 @@ export const initiatives = pgTable(
     votes: jsonb().$type<VoteRecord[]>().notNull().default([]),
     /** Null until parliament sends it to the President. */
     presidency: jsonb().$type<PresidencyRecord>(),
+    /** Topic slugs from the title (src/parliament/plain.ts), e.g. ["habitacao", "impostos"]. */
+    topics: text().array().notNull().default([]),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
     index("initiatives_feed_idx").on(table.phaseDate.desc(), table.id.desc()),
     index("initiatives_status_idx").on(table.status),
+    index("initiatives_topics_idx").using("gin", table.topics),
   ],
 );
 

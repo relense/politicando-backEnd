@@ -7,7 +7,7 @@ import { SEATS } from "../src/parliament/seatMap.js";
 import { rowOfSeat, seatsFrontToBack } from "../src/parliament/seating.js";
 import { syncParliament } from "../src/parliament/sync.js";
 import { createTestDb, insertArticle, resetDb } from "./helpers.js";
-import { chamber, initiative, loaderFor } from "./parliamentFixtures.js";
+import { chamber, event, initiative, initiativesFile, loaderFor } from "./parliamentFixtures.js";
 
 const { db, pool } = createTestDb();
 const app = await buildApp({ db, corsOrigins: [], verifyRecaptcha: async () => true });
@@ -210,6 +210,42 @@ describe("GET /initiatives", () => {
     // 11-13 share a date, so the id breaks the tie.
     expect(all).toEqual([5, 3, 13, 12]);
     expect((await get("/initiatives?cursor=bad")).status).toBe(400);
+  });
+});
+
+describe("plain language and topics", () => {
+  it("adds a plain reading to every summary", async () => {
+    const { body } = await get("/initiatives");
+    const byId = new Map(body.items.map((i: { id: number }) => [i.id, i]));
+    expect((byId.get(1) as { plain: unknown }).plain).toEqual({
+      title: "Lei aprovada e publicada",
+      type: expect.objectContaining({ label: "Proposta de lei dos deputados", makesLaw: true }),
+      status: { label: "Aprovada e publicada", stage: "published" },
+    });
+    const stages = [2, 3, 4, 5].map((id) => (byId.get(id) as { plain: { status: { stage: string } } }).plain.status.stage);
+    expect(stages).toEqual(["rejected", "approved_in_principle", "withdrawn", "submitted"]);
+    expect((await get("/initiatives/1")).body.plain.status.stage).toBe("published");
+  });
+
+  it("files initiatives under topics and filters by them", async () => {
+    await syncParliament(db, loaderFor({
+      initiatives: [
+        ...initiativesFile(),
+        initiative(20, "Reduz o IVA nas obras de habitação, alterando a Lei n.º 1/2000, de 1 de janeiro", [event("Entrada", "2025-12-01")]),
+      ],
+    }));
+    const { body } = await get("/initiatives?topic=habitacao");
+    expect(body.items.map((i: { id: number }) => i.id)).toEqual([20]);
+    expect(body.items[0].topics).toEqual([
+      { slug: "habitacao", label: "Habitação e urbanismo" },
+      { slug: "impostos", label: "Impostos" },
+    ]);
+    expect(body.items[0].plain.title).toBe("Reduz o IVA nas obras de habitação");
+    expect((await get("/initiatives?topic=nope")).status).toBe(400);
+
+    const topics = await get("/initiatives/topics");
+    expect(topics.body.items.find((t: { slug: string }) => t.slug === "impostos")).toEqual({ slug: "impostos", label: "Impostos", count: 1 });
+    expect(topics.body.untagged).toBe(5);
   });
 });
 

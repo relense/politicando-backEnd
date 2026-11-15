@@ -6,7 +6,7 @@ import { articles, initiatives, presidents } from "../../db/schema.js";
 import { notFound } from "../../errors.js";
 import { currentPresident } from "../../presidency/presidents.js";
 import { articleColumns, articleSchema } from "../articles/routes.js";
-import { initiativeColumns, initiativeSummarySchema } from "../parliament/routes.js";
+import { initiativeColumns, initiativeSummarySchema, withPlain } from "../parliament/routes.js";
 import { errorSchema } from "../shared.js";
 
 const LATEST = 10;
@@ -68,7 +68,8 @@ export const presidencyRoutes =
             .from(initiatives)
             .where(where)
             .orderBy(sql`(initiatives.presidency->>${field})::date desc nulls last`, desc(initiatives.id))
-            .limit(LATEST);
+            .limit(LATEST)
+            .then((rows) => rows.map(withPlain));
         const [latestVetoes, latestPromulgated, pendingNow] = await Promise.all([
           list(inTerm("vetoedAt"), "vetoedAt"),
           list(inTerm("promulgatedAt"), "promulgatedAt"),
