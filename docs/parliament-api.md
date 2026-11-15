@@ -94,7 +94,8 @@ The "diplomas" section. Newest activity first, paginated like `/articles`.
 
 Query: `status` (`approved` | `in_progress` | `rejected` | `withdrawn`), `party`
 (author party slug), `deputy` (author deputy ID), `type` (e.g. `Projeto de Lei`),
-`cursor`, `limit` (1-50, default 10). Returns `{ items, nextCursor }`.
+`coverage` (`none` | `some`: whether any news was found about it), `cursor`, `limit`
+(1-50, default 10). Returns `{ items, nextCursor }`.
 
 - "Up for discussion" = `status=in_progress`.
 - "Approved" = `status=approved`. `publishedAt` is set once it's published in the
@@ -118,9 +119,13 @@ Query: `status` (`approved` | `in_progress` | `rejected` | `withdrawn`), `party`
     "other": "Governo"                             // or a regional assembly, citizens...
   },
   "lastVote": { "date": "2025-11-28", "phase": "Votação final global",
-                "result": "Aprovado", "unanimous": false }   // null if never voted
+                "result": "Aprovado", "unanimous": false },  // null if never voted
+  "coverage": { "articles": 8, "sources": 6, "lastAt": "2026-11-14T20:20:00.000Z" }
 }
 ```
+
+`coverage` is how much news we found about it. See "News about an initiative" below
+for how approximate that is.
 
 What the statuses mean:
 - `approved`: passed its final vote, or published.
@@ -131,7 +136,8 @@ What the statuses mean:
 
 ## `GET /initiatives/:id`
 
-The summary above plus `legislature` and every vote:
+The summary above plus `legislature`, `articles` (the 10 latest news articles about it)
+and every vote:
 
 ```jsonc
 "votes": [{
@@ -189,3 +195,17 @@ Articles are linked when they mention the deputy's full parliamentary name
 ("Francisco César"), or a short name the press uses for party leaders ("Ventura",
 "Carneiro", "Aguiar-Branco"). Common surnames only count when the article also names the
 deputy's party. Other surname-only mentions aren't linked.
+
+## News about an initiative
+
+- Every article in `/articles` has `initiatives: [{ id, type, number, title }]`.
+- `GET /articles?initiative=377352` returns the news about one initiative (404 if unknown).
+- Initiatives carry `coverage`, and `GET /initiatives?status=approved&coverage=none` lists
+  approved initiatives nobody wrote about.
+
+**This is approximate, so label it in the UI** (e.g. "notícias relacionadas"). The press
+almost never cites an initiative's number, so links come from shared keywords between
+the article and the official title. On the first 218 articles it linked 14, about 12 of
+them correctly. It misses stories that describe a law in very different words from its
+title, and it only sees the 20 outlets we scan. "No coverage" means "no articles found
+in our sources", not "the media ignored it".

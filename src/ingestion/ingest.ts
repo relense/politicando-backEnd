@@ -1,10 +1,12 @@
-import { eq, inArray } from "drizzle-orm";
+import { eq, gte, inArray } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import {
   articleDeputies,
+  articleInitiatives,
   articleParties,
   articles,
   deputies,
+  initiatives,
   parties,
   seenSourceUris,
 } from "../db/schema.js";
@@ -16,6 +18,13 @@ import {
   type MatchableParty,
   type PartyMatch,
 } from "../matching/matchParties.js";
+import {
+  ACTIVITY_WINDOW_DAYS,
+  buildInitiativeIndex,
+  matchInitiatives,
+  type InitiativeIndex,
+  type InitiativeMatch,
+} from "../matching/matchInitiatives.js";
 import { PARTY_DEFINITIONS } from "../matching/parties.js";
 import { DEPUTY_ALIASES } from "../parliament/aliases.js";
 import { extractArticle } from "./extractArticle.js";
@@ -59,7 +68,29 @@ export interface IngestOptions {
 export interface Matchable {
   parties: MatchableParty[];
   deputies: MatchableDeputy[];
+  initiatives: InitiativeIndex;
 }
+
+/**
+ * Initiatives active recently enough to be in the news. Rarity is still measured over
+ * these titles only, which is plenty: a few hundred to a few thousand.
+ */
+export const loadInitiativeIndex = async (db: Db, now = new Date()): Promise<InitiativeIndex> => {
+  const since = new Date(now.getTime() - (ACTIVITY_WINDOW_DAYS + 7) * 24 * 60 * 60 * 1000);
+  const rows = await db
+    .select({
+      id: initiatives.id,
+      title: initiatives.title,
+      activityDate: initiatives.phaseDate,
+      submittedAt: initiatives.submittedAt,
+    })
+    .from(initiatives)
+    .where(gte(initiatives.phaseDate, since.toISOString().slice(0, 10)));
+  return buildInitiativeIndex(rows);
+};
+
+/** How much of an article the initiative matcher reads: more text finds more, but less precisely. */
+export const INITIATIVE_TEXT_CHARS = 1500;
 
 export const loadMatchableParties = async (db: Db): Promise<MatchableParty[]> => {
   const rows = await db.select().from(parties);
@@ -124,7 +155,7 @@ const markSeen = (db: Db, url: string) =>
 const saveArticle = (
   db: Db,
   article: typeof articles.$inferInsert,
-  matches: { parties: PartyMatch[]; deputies: DeputyMatch[] },
+  matches: { parties: PartyMatch[]; deputies: DeputyMatch[]; initiatives: InitiativeMatch[] },
 ) =>
   db.transaction(async (tx) => {
     const [inserted] = await tx
@@ -146,6 +177,15 @@ const saveArticle = (
           articleId: inserted.id,
           deputyId: match.deputyId,
           mentionCount: match.mentions,
+        })),
+      );
+    }
+    if (matches.initiatives.length > 0) {
+      await tx.insert(articleInitiatives).values(
+        matches.initiatives.map((match) => ({
+          articleId: inserted.id,
+          initiativeId: match.initiativeId,
+          score: match.score,
         })),
       );
     }
@@ -235,6 +275,10 @@ const scanSource = async (
         matchable.deputies,
       );
       if (matches.parties.length > 0) {
+        const initiativeMatches = matchInitiatives(matchable.initiatives, {
+          text: `${item.title}\n${description}\n${bodyText}`.slice(0, INITIATIVE_TEXT_CHARS),
+          publishedAt: item.publishedAt,
+        });
         await saveArticle(
           db,
           {
@@ -246,7 +290,7 @@ const scanSource = async (
             imageUrl,
             publishedAt: item.publishedAt,
           },
-          matches,
+          { ...matches, initiatives: initiativeMatches },
         );
         stats.matched++;
       } else if (pageUnavailable) {
@@ -268,6 +312,7 @@ export const ingest = async (options: IngestOptions): Promise<SourceStats[]> => 
   const matchable: Matchable = {
     parties: await loadMatchableParties(options.db),
     deputies: await loadMatchableDeputies(options.db),
+    initiatives: await loadInitiativeIndex(options.db, options.now),
   };
   if (matchable.parties.length === 0) throw new Error("No parties found: run the seed first");
   return Promise.all(options.sources.map((source) => scanSource(source, matchable, options)));

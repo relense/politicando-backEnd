@@ -51,6 +51,13 @@ const initiativeSummarySchema = z.object({
   lastVote: z
     .object({ date: z.string(), phase: z.string(), result: z.string(), unanimous: z.boolean() })
     .nullable(),
+  coverage: z
+    .object({
+      articles: z.number(),
+      sources: z.number().describe("Distinct news outlets"),
+      lastAt: z.string().nullable().describe("Latest article about it"),
+    })
+    .describe("News about it, found by keywords among the outlets we scan. Approximate"),
 });
 
 const partyVoteSchema = z.object({
@@ -107,6 +114,16 @@ const lastVoteSql = sql<z.infer<typeof initiativeSummarySchema>["lastVote"]>`(
   order by n desc limit 1
 )`;
 
+const coverageSql = sql<z.infer<typeof initiativeSummarySchema>["coverage"]>`(
+  select json_build_object(
+    'articles', count(*)::int,
+    'sources', count(distinct a.source)::int,
+    'lastAt', to_char(max(a.published_at) at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+  )
+  from article_initiatives ai join articles a on a.id = ai.article_id
+  where ai.initiative_id = initiatives.id
+)`;
+
 const initiativeColumns = {
   id: initiatives.id,
   type: initiatives.type,
@@ -120,6 +137,7 @@ const initiativeColumns = {
   textUrl: initiatives.textUrl,
   authors: authorsSql,
   lastVote: lastVoteSql,
+  coverage: coverageSql,
 };
 
 const deputyColumns = {
@@ -433,6 +451,10 @@ export const parliamentRoutes =
             party: z.string().optional().describe("Author party slug"),
             deputy: z.coerce.number().int().positive().max(MAX_POSTGRES_INT).optional().describe("Author deputy ID"),
             type: z.string().optional().describe('Exact type, e.g. "Projeto de Lei"'),
+            coverage: z
+              .enum(["none", "some"])
+              .optional()
+              .describe("none: no news found about it; some: at least one article"),
             cursor: z.string().optional().describe("The nextCursor of the previous page"),
             limit: z.coerce.number().int().min(1).max(50).default(10),
           }),
@@ -444,8 +466,12 @@ export const parliamentRoutes =
         },
       },
       async (request) => {
-        const { status, party, deputy, type, cursor, limit } = request.query;
+        const { status, party, deputy, type, coverage, cursor, limit } = request.query;
         const conditions: SQL[] = [];
+        if (coverage) {
+          const covered = sql`exists (select 1 from article_initiatives ai where ai.initiative_id = initiatives.id)`;
+          conditions.push(coverage === "some" ? covered : sql`not ${covered}`);
+        }
         if (status) conditions.push(eq(initiatives.status, status));
         if (type) conditions.push(eq(initiatives.type, type));
         if (cursor !== undefined) {
@@ -489,7 +515,11 @@ export const parliamentRoutes =
           tags: ["parliament"],
           params: idParams,
           response: {
-            200: initiativeSummarySchema.extend({ legislature: z.string(), votes: z.array(voteSchema) }),
+            200: initiativeSummarySchema.extend({
+              legislature: z.string(),
+              votes: z.array(voteSchema),
+              articles: z.array(articleSchema).describe("Latest 10 news articles about it (approximate)"),
+            }),
             400: errorSchema,
             404: errorSchema,
           },
@@ -501,7 +531,15 @@ export const parliamentRoutes =
           .from(initiatives)
           .where(eq(initiatives.id, request.params.id));
         if (!row) throw notFound("Initiative");
-        return row;
+        const news = await db
+          .select(articleColumns)
+          .from(articles)
+          .where(sql`exists (
+            select 1 from article_initiatives ai where ai.article_id = articles.id and ai.initiative_id = ${row.id}
+          )`)
+          .orderBy(desc(articles.publishedAt), desc(articles.id))
+          .limit(10);
+        return { ...row, articles: news.map((a) => ({ ...a, publishedAt: a.publishedAt.toISOString() })) };
       },
     );
   };

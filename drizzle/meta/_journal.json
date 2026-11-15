@@ -43,6 +43,13 @@
       "when": 1794728930109,
       "tag": "0005_deputy_sitting_periods",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1794730477265,
+      "tag": "0006_article_initiatives",
+      "breakpoints": true
     }
   ]
 }

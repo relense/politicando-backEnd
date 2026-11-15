@@ -8,7 +8,7 @@ export const createTestDb = () => createDb(testDatabaseUrl());
 
 export const resetDb = async (db: Db) => {
   await db.execute(
-    sql`truncate comments, article_parties, article_deputies, articles, seen_source_uris,
+    sql`truncate comments, article_parties, article_deputies, article_initiatives, articles, seen_source_uris,
       initiative_parties, initiative_deputies, initiatives, deputies restart identity cascade`,
   );
   await seedParties(db);

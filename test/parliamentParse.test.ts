@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { buildInitiativeIndex, matchInitiatives, termsOf } from "../src/matching/matchInitiatives.js";
 import { matchArticle, matchDeputies } from "../src/matching/matchParties.js";
 import { Readable } from "node:stream";
 import { deputyVote, wasSitting } from "../src/parliament/deputyVotes.js";
@@ -256,5 +257,47 @@ describe("streamJsonArray", () => {
     const items: unknown[] = [];
     for await (const item of streamJsonArray(body)) items.push(item);
     expect(items).toEqual([{ a: 1 }, { a: 2 }]);
+  });
+});
+
+describe("matchInitiatives", () => {
+  const filler = Array.from({ length: 300 }, (_, i) => ({
+    id: 1000 + i,
+    title: `Recomenda ao Governo medidas para o setor ${i} e apoio às famílias`,
+    activityDate: "2026-10-01",
+  }));
+  const index = buildInitiativeIndex([
+    { id: 1, title: "Orçamento do Estado para 2027", activityDate: "2026-10-29", submittedAt: "2026-10-09" },
+    { id: 2, title: "Orçamento do Estado para 2026", activityDate: "2025-11-28", submittedAt: "2025-10-09" },
+    { id: 3, title: "Pelo fim das nomeações partidárias de altos quadros da Administração Pública", activityDate: "2026-10-01" },
+    { id: 4, title: "Deslocação do Presidente da República a Cabo Verde", activityDate: "2026-10-20" },
+    ...filler,
+  ]);
+  const match = (text: string, date = "2026-11-14") =>
+    matchInitiatives(index, { text, publishedAt: new Date(`${date}T12:00:00Z`) }).map((m) => m.initiativeId);
+
+  it("expands OE2027 and picks the budget active at the time", () => {
+    expect(match("OE2027: Chega apresenta propostas")).toEqual([1]);
+    expect(match("PS ameaça chumbar o Orçamento do Estado")).toEqual([1]);
+    expect(match("PS ameaça chumbar o Orçamento do Estado", "2025-12-01")).toEqual([2]);
+  });
+
+  it("matches distinctive phrases from long titles", () => {
+    expect(match("PS quer terminar com nomeações partidárias na saúde, numa proposta")).toEqual([3]);
+  });
+
+  it("ignores articles that aren't about legislation, and generic political words", () => {
+    expect(match("Nomeações partidárias voltam a gerar polémica")).toEqual([]);
+    expect(match("O Presidente da República falou ao país sobre a lei")).toEqual([]);
+  });
+
+  it("skips initiatives inactive for months", () => {
+    expect(match("Proposta sobre nomeações partidárias", "2027-06-01")).toEqual([]);
+  });
+
+  it("builds pairs across stop words but not from two generic words", () => {
+    const terms = termsOf("Orçamento do Estado e o primeiro-ministro");
+    expect(terms.has("orcame estado")).toBe(true);
+    expect(terms.has("primei minist")).toBe(false);
   });
 });

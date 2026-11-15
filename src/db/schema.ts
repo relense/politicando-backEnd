@@ -5,6 +5,7 @@ import {
   index,
   boolean,
   integer,
+  real,
   jsonb,
   pgTable,
   primaryKey,
@@ -229,5 +230,26 @@ export const articleDeputies = pgTable(
   (table) => [
     primaryKey({ columns: [table.articleId, table.deputyId] }),
     index("article_deputies_deputy_idx").on(table.deputyId),
+  ],
+);
+
+/** News articles about an initiative, found by keywords (see src/matching/matchInitiatives.ts). */
+export const articleInitiatives = pgTable(
+  "article_initiatives",
+  {
+    articleId: integer("article_id")
+      .notNull()
+      .references(() => articles.id, { onDelete: "cascade" }),
+    initiativeId: integer("initiative_id")
+      .notNull()
+      .references(() => initiatives.id, { onDelete: "cascade" }),
+    /** Match strength, to filter or review weak links. Null for manual links. */
+    score: real(),
+    /** "auto" from keyword matching, "manual" when someone linked it by hand. Relinking keeps manual links. */
+    linkedBy: text("linked_by").$type<"auto" | "manual">().notNull().default("auto"),
+  },
+  (table) => [
+    primaryKey({ columns: [table.articleId, table.initiativeId] }),
+    index("article_initiatives_initiative_idx").on(table.initiativeId),
   ],
 );

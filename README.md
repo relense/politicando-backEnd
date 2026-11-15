@@ -25,7 +25,7 @@ The API docs are at `/docs` and the OpenAPI spec is at `/docs/json`.
 | `npm run typecheck`, `npm run lint` | Static checks |
 | `npm run ingest` | Scan news sources once |
 | `npm run parliament:sync` | Load deputies and initiatives from the parliament's open data |
-| `npm run parliament:link-news` | Link stored articles to deputies (run once after the first sync) |
+| `npm run parliament:link-news` | Link stored articles to deputies and initiatives. Add `-- --replace` after changing matching rules |
 | `npm run db:generate` | Create a migration after changing `src/db/schema.ts` |
 | `npm run db:seed` | Create or update parties. Safe to re-run |
 
@@ -79,6 +79,10 @@ longer fits the seat map.
 - Who sits where: `src/parliament/seatAssignments.ts`, empty until a reliable source exists.
 - New legislature: set `PARLIAMENT_LEGISLATURE` and replace the seat map.
 - New party in parliament: add its acronym to `src/parliament/groups.ts`.
+- After syncing, it links the last 30 days of news to any new initiatives or deputies.
+- News ↔ initiatives is by keywords (`src/matching/matchInitiatives.ts`) and approximate.
+  Each link keeps its score; tune the thresholds there and re-run
+  `npm run parliament:link-news -- --replace`.
 - The news scanner links articles to sitting deputies by their parliamentary name, plus
   the short names in `src/parliament/aliases.ts` ("Ventura" counts only next to Chega). A
   deputy's mentions also count for their party, but an article still needs one direct

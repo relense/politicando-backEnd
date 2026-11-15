@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { buildApp } from "../src/app.js";
-import { articleDeputies, deputies } from "../src/db/schema.js";
+import { articleDeputies, articleInitiatives, deputies } from "../src/db/schema.js";
 import { linkStoredArticles } from "../src/parliament/linkNews.js";
 import { SEATS } from "../src/parliament/seatMap.js";
 import { syncParliament } from "../src/parliament/sync.js";
@@ -211,13 +211,69 @@ describe("news and deputies", () => {
     const b = await insertArticle(db, { sourceUri: "b", title: "Sem deputados", excerpt: "Nada." });
     await db.insert(articleDeputies).values({ articleId: b.id, deputyId: 817, mentionCount: 1, linkedBy: "manual" });
 
-    expect(await linkStoredArticles(db)).toEqual({ scanned: 2, linked: 2 });
+    expect(await linkStoredArticles(db)).toEqual({ scanned: 2, deputyLinks: 2, initiativeLinks: 0 });
     const links = await db.select().from(articleDeputies);
     expect(links.map((l) => [l.articleId, l.deputyId, l.linkedBy]).sort()).toEqual(
       [[a.id, 7341, "auto"], [a.id, 817, "auto"], [b.id, 817, "manual"]].sort(),
     );
-    // Re-running replaces automatic links instead of duplicating them.
-    await linkStoredArticles(db);
+    // Re-running adds nothing new, and --replace recomputes without duplicating.
+    expect(await linkStoredArticles(db)).toMatchObject({ deputyLinks: 0 });
+    await linkStoredArticles(db, { replace: true });
     expect(await db.select().from(articleDeputies)).toHaveLength(3);
+  });
+
+  it("by default keeps automatic links it wouldn't find itself, and replaces them on request", async () => {
+    const a = await insertArticle(db, { sourceUri: "a", title: "Sem nomes", excerpt: "Nada." });
+    await db.insert(articleDeputies).values({ articleId: a.id, deputyId: 7341, mentionCount: 1 });
+    await linkStoredArticles(db);
+    expect(await db.select().from(articleDeputies)).toHaveLength(1);
+    await linkStoredArticles(db, { replace: true });
+    expect(await db.select().from(articleDeputies)).toHaveLength(0);
+  });
+});
+
+describe("news and initiatives", () => {
+  const budget = () =>
+    initiative(377352, "Orçamento do Estado para 2027", [{ Fase: "Entrada", DataFase: "2026-10-10", Votacao: null }], {
+      other: "Governo",
+    });
+
+  it("links stored articles to initiatives and reports coverage", async () => {
+    // Rarity needs a realistic number of titles to compare against.
+    const others = Array.from({ length: 300 }, (_, i) =>
+      initiative(500_000 + i, `Recomenda ao Governo medidas para o setor ${i}`, [{ Fase: "Entrada", DataFase: "2026-10-01", Votacao: null }]),
+    );
+    await syncParliament(db, loaderFor({ initiatives: [budget(), ...others] }));
+    const a = await insertArticle(db, {
+      sourceUri: "a", source: "publico.pt", title: "OE2027: Chega apresenta 22 propostas",
+      excerpt: "O partido entregou propostas de alteração.", publishedAt: new Date("2026-11-10T10:00:00Z"),
+    });
+    await insertArticle(db, {
+      sourceUri: "b", source: "expresso.pt", title: "PS viabiliza Orçamento do Estado",
+      excerpt: "Abstenção na votação do orçamento.", publishedAt: new Date("2026-11-12T10:00:00Z"),
+    });
+    await insertArticle(db, { sourceUri: "c", title: "Futebol", excerpt: "Jogo.", publishedAt: new Date("2026-11-12T10:00:00Z") });
+
+    expect(await linkStoredArticles(db)).toMatchObject({ initiativeLinks: 2 });
+    const detail = await get("/initiatives/377352");
+    expect(detail.body.coverage).toEqual({ articles: 2, sources: 2, lastAt: "2026-11-12T10:00:00.000Z" });
+    expect(detail.body.articles).toHaveLength(2);
+
+    const { body } = await get("/articles?initiative=377352");
+    expect(body.items.map((i: { id: number }) => i.id)).toContain(a.id);
+    expect(body.items[0].initiatives).toEqual([
+      { id: 377352, type: "Projeto de Lei", number: "352", title: "Orçamento do Estado para 2027" },
+    ]);
+    expect((await get("/articles?initiative=999")).status).toBe(404);
+  });
+
+  it("filters initiatives by coverage", async () => {
+    const a = await insertArticle(db, { sourceUri: "a" });
+    await db.insert(articleInitiatives).values({ articleId: a.id, initiativeId: 2, score: 20 });
+    const ids = async (q: string) => (await get(`/initiatives?${q}`)).body.items.map((i: { id: number }) => i.id);
+    expect(await ids("coverage=some")).toEqual([2]);
+    expect(await ids("coverage=none")).toEqual([5, 1, 3, 4]);
+    const [item] = (await get("/initiatives?coverage=some")).body.items;
+    expect(item.coverage).toEqual({ articles: 1, sources: 1, lastAt: "2026-10-01T10:00:00.000Z" });
   });
 });
