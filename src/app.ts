@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
@@ -15,9 +16,12 @@ import {
 } from "fastify-type-provider-zod";
 import type { Db } from "./db/client.js";
 import { ApiError } from "./errors.js";
+import { adminForumRoutes } from "./modules/admin/forums.js";
 import { adminRecordRoutes } from "./modules/admin/records.js";
 import { adminRoutes } from "./modules/admin/routes.js";
 import { caseRoutes } from "./modules/cases/routes.js";
+import { forumRoutes } from "./modules/forums/routes.js";
+import { editorialRoutes } from "./modules/editorial/routes.js";
 import { articleRoutes } from "./modules/articles/routes.js";
 import type { RecaptchaVerifier } from "./modules/comments/recaptcha.js";
 import { commentRoutes } from "./modules/comments/routes.js";
@@ -41,6 +45,8 @@ export interface AppOptions {
   /** Admin session cookie over HTTPS only (default true; turn off for local HTTP). */
   secureCookies?: boolean;
   loginLimitPerMinute?: number;
+  /** Keys anonymous poster IDs. Keep it stable: changing it changes everyone's IDs. */
+  forumSecret?: string;
 }
 
 const errorBody = (code: string, message: string) => ({ error: { code, message } });
@@ -54,6 +60,7 @@ export const buildApp = async ({
   commentLimitPerMinute = 5,
   secureCookies = true,
   loginLimitPerMinute = 5,
+  forumSecret = randomBytes(32).toString("hex"),
 }: AppOptions) => {
   const app = Fastify({ logger, trustProxy, bodyLimit: 64 * 1024 });
   app.setValidatorCompiler(validatorCompiler);
@@ -121,6 +128,9 @@ export const buildApp = async ({
       await api.register(contractRoutes(db));
       await api.register(adminRoutes({ db, secureCookies, loginLimitPerMinute }));
       await api.register(adminRecordRoutes(db));
+      await api.register(adminForumRoutes(db));
+      await api.register(editorialRoutes(db));
+      await api.register(forumRoutes({ db, verifyRecaptcha, forumSecret, createLimitPerMinute: commentLimitPerMinute }));
       await api.register(caseRoutes(db));
       await api.register(
         commentRoutes({ db, verifyRecaptcha, createLimitPerMinute: commentLimitPerMinute }),

@@ -27,6 +27,8 @@ const apiSchema = baseSchema.extend({
     .string()
     .default("")
     .transform((value) => value.split(",").map((h) => h.trim().toLowerCase()).filter(Boolean)),
+  /** Keys anonymous forum poster IDs and reporter hashes. Long and random; never change it in production. */
+  FORUM_SECRET: z.string().min(32),
   /** Send the admin session cookie over HTTPS only. Set to false for local HTTP. */
   COOKIE_SECURE: z.enum(["true", "false"]).default("true").transform((value) => value === "true"),
 });

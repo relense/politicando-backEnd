@@ -12,6 +12,7 @@ const app = await buildApp({
   trustProxy: config.TRUST_PROXY,
   verifyRecaptcha: createRecaptchaVerifier(config.RECAPTCHA_SECRET, fetch, config.RECAPTCHA_HOSTNAMES),
   secureCookies: config.COOKIE_SECURE,
+  forumSecret: config.FORUM_SECRET,
   logger: true,
 });
 

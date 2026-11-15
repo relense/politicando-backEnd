@@ -120,6 +120,20 @@
       "when": 1794740875851,
       "tag": "0016_cases_interests",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1794741234176,
+      "tag": "0017_forums",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1794741425864,
+      "tag": "0018_editorial",
+      "breakpoints": true
     }
   ]
 }

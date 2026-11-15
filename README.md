@@ -135,6 +135,13 @@ audited. Interests with a NIF link to public contracts. Drafts stay private; pub
 checks the sources (`src/cases/model.ts`). See `docs/cases-api.md`, including the wording
 rules for the frontend.
 
+## Forums and editorial
+
+Anonymous party forums (`/forums`, `docs/forums-api.md`): no accounts, reCAPTCHA and rate
+limits on posting, a per-thread poster ID keyed by `FORUM_SECRET` (set it once and never
+change it), and reports that feed the moderation queue. Our own posts and podcasts live
+under `/editorial` (`docs/editorial-api.md`), written in the admin.
+
 ## News scanner
 
 `npm run ingest` scans once and exits. It uses no paid API. The sources are in `src/ingestion/sources.ts`.
@@ -200,6 +207,7 @@ Build the `Dockerfile` and set the variables from `.env.example`, using a real `
 Production checklist:
 
 - `RECAPTCHA_HOSTNAMES=politicando.pt,www.politicando.pt` (our real hostnames), so tokens solved on other sites are rejected.
+- `FORUM_SECRET`: `openssl rand -hex 32`, set once. Changing it changes every poster ID.
 - `COOKIE_SECURE=true` (the default): the admin session cookie only travels over HTTPS.
 - `CORS_ORIGINS` lists only our frontends: the API allows credentials for them, for the admin.
 - Database roles: run `deploy/db-roles.sql` once. Migrations run as `politicando_owner`; the API and jobs connect as `politicando_app`, which can't change the schema or rewrite the audit log.

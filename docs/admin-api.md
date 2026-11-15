@@ -34,8 +34,8 @@ Base path: `/api/v2/admin`. Errors use the usual `{ error: { code, message } }`.
 
 | role | can |
 | --- | --- |
-| `author` | sign in, change their password (editorial posts come later) |
-| `moderator` | everything an author can, plus moderate comments, curate the corruption record and declared interests (`docs/cases-api.md`), and read the audit log |
+| `author` | sign in, change their password, write and publish their own editorial posts (`docs/editorial-api.md`) |
+| `moderator` | everything an author can, plus edit and feature any editorial post, moderate comments and forums, handle reports, curate the corruption record and declared interests (`docs/cases-api.md`), and read the audit log |
 | `admin` | everything, plus invite, edit and disable admins |
 
 ## Admins (role admin)
@@ -62,6 +62,35 @@ The very first admin is created on the server: `npm run admin:create -- <email> 
 - `POST /admin/comments/:id/unhide` returns 204.
 - Hiding something already hidden is a no-op 204. An unknown id is a 404.
 
+## Reports queue (role moderator)
+
+Readers report threads, replies and comments (`POST /reports`, see `docs/forums-api.md`).
+
+- `GET /admin/reports?status=open|resolved&limit=` returns one item per reported thing, most
+  reported first:
+
+  ```json
+  { "items": [{
+    "kind": "thread", "targetId": 7, "reports": 2, "reasons": ["hate", "insult"], "details": ["Ataque a um grupo"],
+    "firstReportedAt": "…", "resolution": null,
+    "target": { "text": "Título\n\nTexto…", "hidden": false, "threadId": 7, "articleId": null }
+  }] }
+  ```
+
+  `target` is what was reported, so you can judge without leaving the queue. Link to the
+  thread (`threadId`) or article (`articleId`). It is null if the thing no longer exists.
+- `POST /admin/reports/resolve` with `{ "kind": "thread", "targetId": 7, "action": "hide" | "dismiss" }`
+  returns `{ resolved: 2 }`, closing every open report on that item. `hide` also hides it.
+
+## Forum moderation (role moderator)
+
+All return 204 (404 if unknown):
+
+- `POST /admin/forum/threads/:id/hide` and `/unhide`: hidden threads disappear from the board.
+- `POST /admin/forum/threads/:id/lock` and `/unlock`: locked threads take no replies.
+- `POST /admin/forum/threads/:id/pin` and `/unpin`: pinned threads come first on their board.
+- `POST /admin/forum/posts/:id/hide` and `/unhide`: hidden replies show as removed.
+
 ## Audit log (role moderator)
 
 `GET /admin/audit?entity=&entityId=&before=&limit=` returns every change, newest first:
@@ -85,7 +114,10 @@ The very first admin is created on the server: `npm run admin:create -- <email> 
 
 - Actions so far: `admin.create`, `admin.update`, `admin.password`, `comment.hide`,
   `comment.unhide`, `case.create`, `case.update`, `case.publish`, `case.unpublish`,
-  `interest.create`, `interest.update`, `interest.delete`.
+  `interest.create`, `interest.update`, `interest.delete`, `report.hide`, `report.dismiss`,
+  `thread.hide`, `thread.unhide`, `thread.lock`, `thread.unlock`, `thread.pin`, `thread.unpin`,
+  `post.hide`, `post.unhide`, `editorial.create`, `editorial.update`, `editorial.publish`,
+  `editorial.unpublish`, `editorial.feature`, `editorial.unfeature`, `editorial.delete`.
 - `admin` is null if that admin was deleted.
 - Show it as a history panel next to any record (`?entity=comment&entityId=345`), and as a
   full log page for admins.

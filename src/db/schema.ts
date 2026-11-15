@@ -13,6 +13,7 @@ import {
   smallint,
   text,
   timestamp,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 
 export const parties = pgTable("parties", {
@@ -761,4 +762,103 @@ export const interests = pgTable(
     index("interests_member_idx").on(table.governmentMemberId),
     index("interests_nif_idx").on(table.nif),
   ],
+);
+
+/*
+ * Anonymous forums: one board per party plus a general one. No accounts: posters get an ID
+ * per thread derived from their IP and a server secret (like 4chan), so replies can be
+ * followed without anyone signing in. See src/forums/ and docs/forums-api.md.
+ */
+export const forumThreads = pgTable(
+  "forum_threads",
+  {
+    id: integer().primaryKey().generatedAlwaysAsIdentity(),
+    /** A party slug, or "geral". */
+    board: text().notNull(),
+    title: text().notNull(),
+    body: text().notNull(),
+    nickname: text(),
+    posterId: text("poster_id").notNull(),
+    /** Optional link to what the thread is about. */
+    articleId: integer("article_id").references(() => articles.id, { onDelete: "set null" }),
+    initiativeId: integer("initiative_id").references(() => initiatives.id, { onDelete: "set null" }),
+    replyCount: integer("reply_count").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    /** Last reply, for "active" sorting. */
+    bumpedAt: timestamp("bumped_at", { withTimezone: true }).notNull().defaultNow(),
+    pinned: boolean().notNull().default(false),
+    lockedAt: timestamp("locked_at", { withTimezone: true }),
+    hiddenAt: timestamp("hidden_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("forum_threads_board_bumped_idx").on(table.board, table.bumpedAt.desc()),
+    index("forum_threads_board_created_idx").on(table.board, table.createdAt.desc()),
+  ],
+);
+
+export const forumPosts = pgTable(
+  "forum_posts",
+  {
+    id: integer().primaryKey().generatedAlwaysAsIdentity(),
+    threadId: integer("thread_id")
+      .notNull()
+      .references(() => forumThreads.id, { onDelete: "cascade" }),
+    body: text().notNull(),
+    nickname: text(),
+    posterId: text("poster_id").notNull(),
+    /** The post it quotes, in the same thread. */
+    replyTo: integer("reply_to"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    hiddenAt: timestamp("hidden_at", { withTimezone: true }),
+  },
+  (table) => [index("forum_posts_thread_idx").on(table.threadId, table.id)],
+);
+
+/** Readers' reports of threads, posts and comments, for moderators. */
+export const reports = pgTable(
+  "reports",
+  {
+    id: integer().primaryKey().generatedAlwaysAsIdentity(),
+    kind: text().$type<"thread" | "post" | "comment">().notNull(),
+    targetId: integer("target_id").notNull(),
+    reason: text().notNull(),
+    details: text(),
+    /** Hash of the reporter's IP, so one person reporting twice counts once. */
+    reporter: text().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    resolvedBy: integer("resolved_by").references(() => admins.id, { onDelete: "set null" }),
+    resolution: text().$type<"hidden" | "dismissed">(),
+  },
+  (table) => [
+    index("reports_open_idx").on(table.resolvedAt, table.createdAt),
+    uniqueIndex("reports_once_idx").on(table.kind, table.targetId, table.reporter),
+  ],
+);
+
+/** Our own editorial: articles, opinion, podcasts and interviews, written in the admin. */
+export const editorialPosts = pgTable(
+  "editorial_posts",
+  {
+    id: integer().primaryKey().generatedAlwaysAsIdentity(),
+    slug: text().notNull().unique(),
+    kind: text().$type<"article" | "opinion" | "podcast" | "interview" | "video">().notNull(),
+    title: text().notNull(),
+    subtitle: text(),
+    /** Markdown. */
+    body: text().notNull(),
+    authorId: integer("author_id").references(() => admins.id, { onDelete: "set null" }),
+    /** The byline shown; can differ from the admin's name (e.g. a guest). */
+    authorName: text("author_name").notNull(),
+    coverImageUrl: text("cover_image_url"),
+    /** A YouTube, Vimeo, Spotify, SoundCloud or Apple Podcasts link (src/editorial/media.ts). */
+    mediaUrl: text("media_url"),
+    tags: text().array().notNull().default(sql`'{}'::text[]`),
+    status: text().$type<"draft" | "published">().notNull().default("draft"),
+    featured: boolean().notNull().default(false),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("editorial_published_idx").on(table.status, table.publishedAt.desc())],
 );
