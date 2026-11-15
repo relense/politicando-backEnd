@@ -99,6 +99,13 @@
       "when": 1794737273710,
       "tag": "0013_election_candidates",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1794738688254,
+      "tag": "0014_contracts",
+      "breakpoints": true
     }
   ]
 }

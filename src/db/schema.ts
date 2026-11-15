@@ -4,6 +4,7 @@ import {
   date,
   index,
   boolean,
+  doublePrecision,
   integer,
   real,
   jsonb,
@@ -510,3 +511,84 @@ export const electionCandidates = pgTable(
     index("election_candidates_deputy_idx").on(table.deputyId),
   ],
 );
+
+/**
+ * Public contracts, from the BASE portal's open data (IMPIC, on dados.gov.pt). One row per
+ * contract; the parties to it are in contract_parties. See src/contracts/base.ts.
+ */
+export const contracts = pgTable(
+  "contracts",
+  {
+    /** BASE's contract id (idcontrato): base.gov.pt/Base4/pt/detalhe/?type=contratos&id=<id>. */
+    id: text().primaryKey(),
+    procedureId: text("procedure_id"),
+    /** The procedure as published, e.g. "Ajuste Direto Regime Geral". */
+    procedure: text().notNull(),
+    /** The procedure, grouped: see PROCEDURES in src/contracts/base.ts. */
+    procedureKind: text("procedure_kind").notNull(),
+    contractTypes: text("contract_types").array().notNull(),
+    object: text().notNull(),
+    description: text(),
+    /** Contract price in euros, without VAT. */
+    price: doublePrecision().notNull(),
+    /** The procedure's base price, when published. */
+    basePrice: doublePrecision("base_price"),
+    /** What was actually paid, once the contract closed; null until then. */
+    effectivePrice: doublePrecision("effective_price"),
+    publishedAt: date("published_at").notNull(),
+    signedAt: date("signed_at"),
+    /** Main CPV code (the EU procurement vocabulary), e.g. "33600000-6". */
+    cpv: text(),
+    cpvDescription: text("cpv_description"),
+    deadlineDays: integer("deadline_days"),
+    /** Where it is carried out, as published: "Portugal, Coimbra, Coimbra". */
+    places: text().array().notNull(),
+    /** Municipalities and districts those places match (places.key). */
+    placeKeys: text("place_keys").array().notNull(),
+    legalBasis: text("legal_basis"),
+    /** For direct awards: the legal ground given for not opening it to competition. */
+    directAwardReason: text("direct_award_reason"),
+    frameworkAgreement: text("framework_agreement"),
+    centralized: boolean(),
+    /** Companies invited to bid, when the procedure lists them. */
+    invited: smallint(),
+    documentsUrl: text("documents_url"),
+    status: text(),
+    importedAt: timestamp("imported_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("contracts_published_idx").on(table.publishedAt.desc(), table.id.desc()),
+    index("contracts_price_idx").on(table.price.desc(), table.id.desc()),
+    index("contracts_procedure_idx").on(table.procedureKind, table.publishedAt.desc()),
+    index("contracts_place_keys_idx").using("gin", table.placeKeys),
+    index("contracts_search_idx").using("gin", sql`to_tsvector('portuguese', ${table.object})`),
+  ],
+);
+
+/** The public bodies that awarded a contract (entity) and the companies or people it went to (supplier). */
+export const contractParties = pgTable(
+  "contract_parties",
+  {
+    contractId: text("contract_id")
+      .notNull()
+      .references(() => contracts.id, { onDelete: "cascade" }),
+    role: text().$type<"entity" | "supplier">().notNull(),
+    position: smallint().notNull(),
+    /** Tax number (NIF/NIPC; foreign suppliers may have their own country's); "" when not published. */
+    nif: text().notNull(),
+    name: text().notNull(),
+    country: text(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.contractId, table.role, table.position] }),
+    index("contract_parties_nif_idx").on(table.nif, table.role),
+  ],
+);
+
+/** Which yearly BASE files were imported, so the weekly job skips files that haven't changed. */
+export const contractImports = pgTable("contract_imports", {
+  year: smallint().primaryKey(),
+  sourceModified: text("source_modified").notNull(),
+  contracts: integer().notNull(),
+  importedAt: timestamp("imported_at", { withTimezone: true }).notNull().defaultNow(),
+});

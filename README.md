@@ -26,6 +26,7 @@ The API docs are at `/docs` and the OpenAPI spec is at `/docs/json`.
 | `npm run ingest` | Scan news sources once |
 | `npm run parliament:sync` | Load deputies and initiatives from the parliament's open data |
 | `npm run elections:import` | Import election results since 2011 (one-off; add ids to import only some) |
+| `npm run contracts:import` | Import public contracts from BASE for this year and last (weekly; `-- --from=2012` for history) |
 | `npm run parliament:link-news` | Link stored articles to deputies and initiatives. Add `-- --replace` after changing matching rules |
 | `npm run db:generate` | Create a migration after changing `src/db/schema.ts` |
 | `npm run db:seed` | Create or update parties. Safe to re-run |
@@ -110,6 +111,20 @@ changes. See `docs/become-deputy-api.md`.
 records above (parliament, Government, Presidency), so they need no job of their own. See
 `docs/people-api.md`. Legislature dates are in `src/parliament/legislatures.ts`: add the next
 one after each general election.
+
+## Public contracts
+
+`npm run contracts:import` downloads public contracts from BASE (IMPIC's open data on
+dados.gov.pt: one zip per year, regenerated weekly, public domain) and serves them under
+`/contracts`. See `docs/contracts-api.md`.
+
+- Run it weekly from the host's cron, e.g. `0 6 * * 1 npm run contracts:import`. It
+  re-imports this year and last year, since contracts are often published months late, and
+  skips files that haven't changed. The host needs the `unzip` command.
+- History: `npm run contracts:import -- --from=2012` (about 2 million contracts; each year
+  takes a minute or two).
+- Places of execution are matched to our municipalities and districts, so import the
+  autárquicas first (`npm run elections:import`).
 
 ## News scanner
 
