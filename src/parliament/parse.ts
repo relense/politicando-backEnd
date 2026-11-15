@@ -170,7 +170,7 @@ export interface ParsedInitiative {
 }
 
 /** Votes that decide an initiative's fate, as opposed to procedural ones. */
-const DECIDING_VOTES = new Set([
+export const DECIDING_VOTES: ReadonlySet<string> = new Set([
   "Votação na generalidade",
   "Votação final global",
   "Votação final",

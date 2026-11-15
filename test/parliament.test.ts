@@ -172,6 +172,36 @@ describe("GET /deputies/:id/votes", () => {
   });
 });
 
+describe("GET /parties/:slug/votes", () => {
+  it("lists the party's votes with totals, splits and agreement", async () => {
+    const { status, body } = await get("/parties/ps/votes");
+    expect(status).toBe(200);
+    // v2: PS abstained as a group, with 3 voting for. v4: unanimous. v3, v1: PS not in the record.
+    expect(body.items.map((i: { vote: { id: string }; position: string | null; split: boolean; basis: string }) => [i.vote.id, i.position, i.split, i.basis])).toEqual([
+      ["v2", "abstention", true, "group"],
+      ["v4", "favor", false, "unanimous"],
+      ["v3", null, false, "unknown"],
+      ["v1", null, false, "unknown"],
+    ]);
+    expect(body.items[0].initiative).toMatchObject({ id: 1, title: "Lei aprovada e publicada" });
+    expect(body.summary).toEqual({ total: 4, favor: 1, against: 0, abstention: 1, absent: 0, unknown: 2, split: 1 });
+    expect(body.legislature).toBe("XVII");
+    expect(body.agreement[0]).toEqual({ party: { slug: "pcp", acronym: "PCP" }, compared: 1, same: 1, pct: 100 });
+  });
+
+  it("compares only votes where both took a position, and filters", async () => {
+    const { body } = await get("/parties/psd/votes");
+    const pct = (slug: string) => body.agreement.find((a: { party: { slug: string } }) => a.party.slug === slug);
+    expect(pct("chega")).toMatchObject({ compared: 2, same: 1, pct: 50 });
+    expect(pct("pcp")).toMatchObject({ compared: 2, same: 0, pct: 0 });
+    expect(pct("livre")).toMatchObject({ compared: 0, pct: null });
+    expect((await get("/parties/psd/votes?position=against")).body.items.map((i: { vote: { id: string } }) => i.vote.id)).toEqual(["v3"]);
+    expect((await get("/parties/ps/votes?position=split")).body.total).toBe(1);
+    expect((await get("/parties/ps/votes?limit=1&page=2")).body.items[0].vote.id).toBe("v4");
+    expect((await get("/parties/nope/votes")).status).toBe(404);
+  });
+});
+
 describe("GET /initiatives", () => {
   it("lists newest activity first with authors and the last vote", async () => {
     const { body } = await get("/initiatives");

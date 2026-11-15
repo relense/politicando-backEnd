@@ -65,7 +65,16 @@ describe("parties", () => {
       seatsAsOf: "2026-10-08",
       governmentMembers: 0,
       lastElection: null,
+      leader: {
+        name: "Luís Montenegro",
+        title: "Presidente do PSD",
+        deputyId: null,
+        governmentMemberId: "6d6019aee9774dde80cc8342401a7065",
+        photoUrl: null,
+        asOf: "2026-11-15",
+      },
     });
+    expect(body.find((party: { slug: string }) => party.slug === "ppm").leader).toBeNull();
   });
 });
 
@@ -394,6 +403,7 @@ describe("platform", () => {
       "/api/v2/interests/contracts",
       "/api/v2/parliament",
       "/api/v2/parties",
+      "/api/v2/parties/{slug}/votes",
       "/api/v2/people/featured",
       "/api/v2/people/{kind}/{id}/path",
       "/api/v2/places",

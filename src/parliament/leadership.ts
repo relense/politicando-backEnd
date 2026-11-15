@@ -4,6 +4,8 @@
  * score only orders deputies within their own party, to estimate who sits in front.
  */
 
+import { PARTY_LEADERS_LIST } from "../parties/leaders.js";
+
 type Json = Record<string, unknown>;
 
 const asArray = (value: unknown): Json[] =>
@@ -14,18 +16,10 @@ const int = (value: unknown) => {
   return Number.isInteger(n) && n > 0 ? n : null;
 };
 
-/**
- * Party leaders who sit as deputies. The parliament's data doesn't say who leads each
- * party (only each parliamentary group), so this is kept by hand. Checked 2026-11-15;
- * update it when a party changes leader.
- */
-export const PARTY_LEADERS: Readonly<Record<number, string>> = {
-  6535: "Presidente do CHEGA", // André Ventura
-  2105: "Secretário-Geral do Partido Socialista", // José Luís Carneiro
-  8719: "Secretário-Geral do PCP", // Paulo Raimundo
-  7337: "Porta-voz do LIVRE", // Rui Tavares
-  7973: "Presidente da Iniciativa Liberal", // Mariana Leitão
-};
+/** Party leaders who sit as deputies (from the curated list), with their title. */
+export const PARTY_LEADERS: Readonly<Record<number, string>> = Object.fromEntries(
+  PARTY_LEADERS_LIST.flatMap((l) => (l.deputyId === null ? [] : [[l.deputyId, l.title]])),
+);
 
 const WEIGHTS = {
   partyLeader: 110,
