@@ -76,7 +76,11 @@ longer fits the seat map.
 - Seat map: `src/parliament/seatMap.ts`, measured from the map annexed to Deliberação
   n.º 5-PL/2025. It says which group owns each seat, not who sits where. Regenerate it
   when a deliberation changes the map.
-- Who sits where: `src/parliament/seatAssignments.ts`, empty until a reliable source exists.
+- Who sits where isn't published. Sync estimates it from the "Composição dos Órgãos" file:
+  within each party's block, the most important deputies take the front rows
+  (`src/parliament/leadership.ts`, `src/parliament/seating.ts`), flagged `seatEstimated`.
+  Party leaders are kept by hand in `PARTY_LEADERS`. Real assignments go in
+  `src/parliament/seatAssignments.ts` and always win.
 - New legislature: set `PARLIAMENT_LEGISLATURE` and replace the seat map.
 - New party in parliament: add its acronym to `src/parliament/groups.ts`.
 - After syncing, it links the last 30 days of news to any new initiatives or deputies.

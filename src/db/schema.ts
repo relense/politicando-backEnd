@@ -110,8 +110,14 @@ export const deputies = pgTable(
     active: boolean().notNull(),
     /** When they sat this legislature; `to` is null while still sitting. */
     sittingPeriods: jsonb("sitting_periods").$type<{ from: string; to: string | null }[]>().notNull().default([]),
-    /** Seat number from the official map, once known. See src/parliament/seatAssignments.ts. */
+    /** Seat number on the official map. See src/parliament/seating.ts. */
     seat: smallint(),
+    /** True when the seat is estimated (by importance within the party), not known. */
+    seatEstimated: boolean("seat_estimated").notNull().default(false),
+    /** Official positions, most important first: "Líder do grupo parlamentar", "Presidente da Comissão de…". */
+    positions: text().array().notNull().default([]),
+    /** Rough importance within their party, used to estimate seats. Higher is more prominent. */
+    importance: smallint().notNull().default(0),
     /** Role in the parliament itself, such as "Vice-Presidente". */
     parliamentRole: text("parliament_role"),
     gender: text(),

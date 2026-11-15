@@ -27,7 +27,9 @@ const deputySummarySchema = z.object({
   group: z.string().nullable().describe("Parliamentary group as the parliament writes it, e.g. CH"),
   party: z.string().nullable().describe("Party slug"),
   constituency: z.string(),
-  seat: z.number().nullable().describe("Seat number in seatMap, or null while unknown"),
+  seat: z.number().nullable().describe("Seat number in seatMap"),
+  seatEstimated: z.boolean().describe("True when the seat is estimated by importance within the party, not known"),
+  positions: z.array(z.string()).describe('Official positions, most important first, e.g. "Líder do grupo parlamentar"'),
   parliamentRole: z.string().nullable(),
   photoUrl: z.string(),
 });
@@ -147,6 +149,8 @@ const deputyColumns = {
   party: parties.slug,
   constituency: deputies.constituency,
   seat: deputies.seat,
+  seatEstimated: deputies.seatEstimated,
+  positions: deputies.positions,
   parliamentRole: deputies.parliamentRole,
 };
 
@@ -183,7 +187,8 @@ export const parliamentRoutes =
                     party: z.string().nullable(),
                     x: z.number(),
                     y: z.number(),
-                    deputyId: z.number().nullable().describe("Null while who sits where is unknown"),
+                    deputyId: z.number().nullable(),
+                    estimated: z.boolean().describe("True when the deputy in this seat is estimated, not known"),
                   }),
                 ),
               }),
@@ -213,7 +218,7 @@ export const parliamentRoutes =
           .from(initiatives)
           .where(eq(initiatives.legislature, SEAT_MAP_LEGISLATURE))
           .groupBy(initiatives.status);
-        const bySeat = new Map(rows.filter((r) => r.seat !== null).map((r) => [r.seat, r.id]));
+        const bySeat = new Map(rows.filter((r) => r.seat !== null).map((r) => [r.seat, r]));
 
         return {
           legislature: SEAT_MAP_LEGISLATURE,
@@ -228,7 +233,8 @@ export const parliamentRoutes =
               party: partySlugForGroup(group),
               x,
               y,
-              deputyId: bySeat.get(number) ?? null,
+              deputyId: bySeat.get(number)?.id ?? null,
+              estimated: bySeat.get(number)?.seatEstimated ?? false,
             })),
           },
           groups: GROUP_ORDER.map(({ group, seats }) => {

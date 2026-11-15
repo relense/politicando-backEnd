@@ -9,16 +9,19 @@ import {
   parties,
 } from "../db/schema.js";
 import { partySlugForGroup } from "./groups.js";
+import { importanceOf, parseLeadership, type Leadership } from "./leadership.js";
 import type { OpenDataLoader } from "./openData.js";
 import { parseDeputies, parseInitiative, type ParsedDeputy, type ParsedInitiative } from "./parse.js";
 import { SEAT_ASSIGNMENTS } from "./seatAssignments.js";
 import { SEATS } from "./seatMap.js";
+import { estimateSeats } from "./seating.js";
 
 export interface SyncStats {
   deputies: number;
   activeDeputies: number;
   initiatives: number;
   seatsAssigned: number;
+  seatsEstimated: number;
   warnings: string[];
 }
 
@@ -95,6 +98,21 @@ export const syncParliament = async (
   checkSeatMap(parsedDeputies, warnings);
   const seats = resolveSeats(parsedDeputies, assignments, warnings);
 
+  // Positions and importance; without the file, everyone ranks by seniority alone.
+  let leadership: Map<number, Leadership> = new Map();
+  try {
+    leadership = parseLeadership(await load.json("organs"));
+  } catch (error) {
+    warnings.push(`Could not read the composition of bodies, so seats are estimated by seniority only: ${String(error)}`);
+  }
+  const ranked = new Map(parsedDeputies.map((d) => [d.id, importanceOf(d, leadership)]));
+  const estimated = estimateSeats(
+    parsedDeputies
+      .filter((d) => d.active)
+      .map((d) => ({ id: d.id, group: d.parliamentaryGroup, name: d.name, importance: ranked.get(d.id)!.score })),
+    seats,
+  );
+
   const partyRows = await db.select({ id: parties.id, slug: parties.slug }).from(parties);
   const partyBySlug = new Map(partyRows.map((p) => [p.slug, p.id]));
   for (const deputy of parsedDeputies) {
@@ -112,7 +130,10 @@ export const syncParliament = async (
           batch.map(({ partySlug, ...deputy }) => ({
             ...deputy,
             partyId: partySlug ? (partyBySlug.get(partySlug) ?? null) : null,
-            seat: seats.get(deputy.id) ?? null,
+            seat: seats.get(deputy.id) ?? estimated.get(deputy.id) ?? null,
+            seatEstimated: !seats.has(deputy.id) && estimated.has(deputy.id),
+            positions: ranked.get(deputy.id)!.positions,
+            importance: ranked.get(deputy.id)!.score,
             updatedAt: now,
           })),
         )
@@ -122,7 +143,10 @@ export const syncParliament = async (
         });
     }
     const ids = parsedDeputies.map((d) => d.id);
-    await tx.update(deputies).set({ active: false, seat: null }).where(notInArray(deputies.id, ids));
+    await tx
+      .update(deputies)
+      .set({ active: false, seat: null, seatEstimated: false })
+      .where(notInArray(deputies.id, ids));
 
     const knownDeputies = new Set(ids);
     for (const batch of chunks(parsedInitiatives)) {
@@ -158,6 +182,7 @@ export const syncParliament = async (
     activeDeputies: parsedDeputies.filter((d) => d.active).length,
     initiatives: parsedInitiatives.length,
     seatsAssigned: seats.size,
+    seatsEstimated: estimated.size,
     warnings,
   };
 };

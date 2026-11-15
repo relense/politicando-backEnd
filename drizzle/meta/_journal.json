@@ -50,6 +50,13 @@
       "when": 1794730477265,
       "tag": "0006_article_initiatives",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1794731826746,
+      "tag": "0007_estimated_seats",
+      "breakpoints": true
     }
   ]
 }

@@ -4,16 +4,20 @@ Base URL: `/api/v2` (locally `http://localhost:4000/api/v2`). The live OpenAPI s
 All data comes from the Assembleia da República's open data and is refreshed daily.
 Text fields are stored as received: escape them when rendering.
 
-## Seats: what is and isn't known
+## Seats: official blocks, estimated chairs
 
 - **Known, official:** which party owns each of the 230 seats. The map is in
-  Deliberação n.º 5-PL/2025 (approved 18 June 2025). `GET /parliament` returns every
-  seat with its position and party.
+  Deliberação n.º 5-PL/2025 (approved 18 June 2025).
 - **Not published:** which deputy sits in which chair. Each group decides that
-  internally. `seat` on a deputy and `deputyId` on a seat are `null` until a reliable
-  source exists. Don't invent a mapping. Suggested UI: clicking a seat opens that
-  party's block (its list of deputies), and clicking a deputy opens their profile.
-  When the data arrives, the fields fill in and no API change is needed.
+  internally, so the backend **estimates** it. Within each party's official block the most
+  important deputies take the front rows, nearest the middle of the block. Importance comes
+  from party leaders, parliamentary group leaders, Mesa and committee posts, the Comissão
+  Permanente and seniority. Every seat has a deputy.
+- Estimated seats have `estimated: true` on the seat and `seatEstimated: true` on the deputy.
+  Say so in the UI, e.g. "Lugar aproximado". If real seating data arrives, those flags turn
+  `false` and no API change is needed.
+- `positions` lists a deputy's official posts, most important first (e.g. "Líder do grupo
+  parlamentar", "Presidente da Comissão de Saúde"). These are good for the seat tooltip.
 
 ## `GET /parliament`
 
@@ -28,7 +32,7 @@ One call with everything the hemicycle needs.
     "width": 1,
     "height": 0.6223,                              // x is 0..1, y is 0..height
     "seats": [
-      { "number": 1, "group": "PCP", "party": "pcp", "x": 0.2809, "y": 0.6186, "deputyId": null }
+      { "number": 1, "group": "PCP", "party": "pcp", "x": 0.2809, "y": 0.6186, "deputyId": 817, "estimated": true }
       // 230 seats
     ]
   },
@@ -42,7 +46,9 @@ One call with everything the hemicycle needs.
       "group": "PS",                               // as the parliament writes it
       "party": "ps",                               // our party slug (null for independents)
       "constituency": "Açores",
-      "seat": null,
+      "seat": 19,
+      "seatEstimated": true,                       // seat estimated by importance, not official
+      "positions": ["Líder do grupo parlamentar"], // official posts, most important first
       "parliamentRole": null,                      // e.g. "Vice-Presidente"
       "photoUrl": "https://app.parlamento.pt/webutils/getimage.aspx?id=7341&type=deputado"
     }

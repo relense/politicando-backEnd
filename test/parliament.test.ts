@@ -4,6 +4,7 @@ import { buildApp } from "../src/app.js";
 import { articleDeputies, articleInitiatives, deputies } from "../src/db/schema.js";
 import { linkStoredArticles } from "../src/parliament/linkNews.js";
 import { SEATS } from "../src/parliament/seatMap.js";
+import { rowOfSeat, seatsFrontToBack } from "../src/parliament/seating.js";
 import { syncParliament } from "../src/parliament/sync.js";
 import { createTestDb, insertArticle, resetDb } from "./helpers.js";
 import { chamber, initiative, loaderFor } from "./parliamentFixtures.js";
@@ -56,6 +57,25 @@ describe("syncParliament", () => {
     expect((await db.select().from(deputies)).filter((d) => d.active)).toHaveLength(230);
   });
 
+  it("estimates seats by importance: the group leader takes the PS front row", async () => {
+    const stats = await syncParliament(db, loaderFor());
+    expect(stats.seatsEstimated).toBe(230);
+    const { body } = await get("/parliament");
+    const leader = body.deputies.find((d: { id: number }) => d.id === 7341);
+    expect(leader).toMatchObject({ seat: seatsFrontToBack("PS")[0], seatEstimated: true, positions: ["Líder do grupo parlamentar"] });
+    expect(rowOfSeat(leader.seat)).toBe(0);
+  });
+
+  it("still estimates seats when the organs file can't be read", async () => {
+    const load = { ...loaderFor(), json: async (dataset: string) => {
+      if (dataset === "organs") throw new Error("down");
+      return loaderFor().json(dataset as "deputies");
+    } };
+    const stats = await syncParliament(db, load);
+    expect(stats.seatsEstimated).toBe(230);
+    expect(stats.warnings.some((w: string) => /composition of bodies/.test(w))).toBe(true);
+  });
+
   it("stores seats only when they are valid", async () => {
     const psSeat = SEATS.find(([, group]) => group === "PS")![0];
     await syncParliament(db, loaderFor(), { 7341: psSeat });
@@ -72,14 +92,16 @@ describe("GET /parliament", () => {
     expect(body.legislature).toBe("XVII");
     expect(body.seatMap.seats).toHaveLength(230);
     expect(body.seatMap.seats[0]).toEqual({
-      number: 1, group: expect.any(String), party: expect.any(String), x: expect.any(Number), y: expect.any(Number), deputyId: null,
+      number: 1, group: expect.any(String), party: expect.any(String), x: expect.any(Number), y: expect.any(Number),
+      deputyId: expect.any(Number), estimated: true,
     });
+    expect(body.seatMap.seats.every((s: { deputyId: number | null }) => s.deputyId !== null)).toBe(true);
     expect(body.groups.at(0).group).toBe("PS");
     expect(body.groups.at(-1)).toEqual({ group: "CH", party: { slug: "chega", acronym: "CH", name: "CHEGA" }, seats: 60 });
     expect(body.deputies).toHaveLength(230);
     expect(body.deputies.find((d: { id: number }) => d.id === 7341)).toEqual({
-      id: 7341, name: "Francisco César", group: "PS", party: "ps", constituency: "Lisboa", seat: null,
-      parliamentRole: null, photoUrl: "https://app.parlamento.pt/webutils/getimage.aspx?id=7341&type=deputado",
+      id: 7341, name: "Francisco César", group: "PS", party: "ps", constituency: "Lisboa", seat: expect.any(Number),
+      seatEstimated: true, positions: ["Líder do grupo parlamentar"], parliamentRole: null, photoUrl: "https://app.parlamento.pt/webutils/getimage.aspx?id=7341&type=deputado",
     });
     expect(body.initiativeCounts).toEqual({ approved: 1, rejected: 1, in_progress: 2, withdrawn: 1 });
   });

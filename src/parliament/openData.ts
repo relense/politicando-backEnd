@@ -14,6 +14,7 @@ export const DATASETS = {
   deputies: "DAInformacaoBase",
   biographies: "DARegistoBiografico",
   initiatives: "DAIniciativas",
+  organs: "DAComposicaoOrgaos",
 } as const;
 
 export type Dataset = keyof typeof DATASETS;

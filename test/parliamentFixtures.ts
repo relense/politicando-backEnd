@@ -119,17 +119,33 @@ export const initiativesFile = () => [
   initiative(5, "Proposta do Governo em discussão", [event("Entrada", "2025-11-01")], { other: "Governo" }),
 ];
 
+/** A minimal "Composição dos Órgãos" file: Francisco César leads the PS group. */
+export const organs = () => ({
+  ConferenciaLideres: {
+    HistoricoComposicao: [
+      {
+        depCadId: 7341,
+        depSituacao: [{ sioDes: "Efetivo", sioDtInicio: "2025-06-03", sioDtFim: null }],
+        depCargo: [{ carDes: "Líder de Grupo Parlamentar", carDtInicio: "2025-06-03", carDtFim: null }],
+      },
+    ],
+  },
+});
+
+type Dataset = "deputies" | "biographies" | "initiatives" | "organs";
+
 /** A loader for syncParliament that serves the given files. */
-export const loaderFor = (files: { deputies?: unknown; biographies?: unknown; initiatives?: unknown } = {}) => {
-  const data = (dataset: "deputies" | "biographies" | "initiatives") =>
+export const loaderFor = (files: { deputies?: unknown; biographies?: unknown; initiatives?: unknown; organs?: unknown } = {}) => {
+  const data = (dataset: Dataset) =>
     ({
       deputies: files.deputies ?? chamber(),
       biographies: files.biographies ?? biographies(),
       initiatives: files.initiatives ?? initiativesFile(),
+      organs: files.organs ?? organs(),
     })[dataset];
   return {
-    json: async (dataset: "deputies" | "biographies" | "initiatives") => data(dataset),
-    items: async function* (dataset: "deputies" | "biographies" | "initiatives") {
+    json: async (dataset: Dataset) => data(dataset),
+    items: async function* (dataset: Dataset) {
       yield* data(dataset) as unknown[];
     },
   };
