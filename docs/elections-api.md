@@ -43,8 +43,9 @@ The elections menu, newest first.
 
 - `deepestLevel`: `country`, `district`, `municipality` or `parish`: the most detailed level
   with results. Show the map and the drill-down only to that level.
-- `round`: presidenciais only, `1` or `2`. Second rounds will have ids ending in
-  `-2a-volta`. Every presidential election we hold had a single round.
+- `round`: presidenciais only, `1` or `2`. Second rounds have ids ending in `-2a-volta`:
+  2026 is `presidenciais-2026` (18 January) and `presidenciais-2026-2a-volta` (8 February,
+  Seguro against Ventura). Earlier presidential elections had a single round.
 - `upcoming: [{ type, name, year, date, confirmed, imported: false, window, basis }]`: the next
   election of each kind, soonest first, including regionais in the Açores and Madeira. None has
   an official date yet (`date: null`, `confirmed: false`). `window` says when the law requires

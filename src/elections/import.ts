@@ -112,7 +112,7 @@ const v3Site = async (db: Db, source: ElectionSource, election: ElectionDef): Pr
   const urls = v3Urls(election);
   const electionId = parseV3Settings(await json(source, urls.settings));
   if (electionId === null) throw new Error(`${election.id}: no app-settings.json`);
-  const { organs, topTerritory } = parseV3Election(await json(source, urls.election(electionId)));
+  const { organs, topTerritory, abroad, global } = parseV3Election(await json(source, urls.election(electionId)));
   if (topTerritory === null || organs.length === 0) throw new Error(`${election.id}: the election file has changed shape`);
   const organIds = new Map(organs.map((o) => [o.key, o.id]));
   const options = parseV3Options(await json(source, urls.options(electionId)));
@@ -134,7 +134,11 @@ const v3Site = async (db: Db, source: ElectionSource, election: ElectionDef): Pr
 
   const site: Site = {
     lists,
-    root: node("LOCAL-500000", "Território nacional", null, topTerritory),
+    // Elections with votes abroad (presidenciais) start from the global total.
+    root:
+      global !== null && abroad !== null
+        ? node("GLOBAL-990000", "Total", null, global)
+        : node("LOCAL-500000", "Território nacional", null, topTerritory),
     results: async (place, organ) => {
       const organId = organIds.get(organ);
       if (place.ref === null || organId === undefined) return null;
@@ -142,6 +146,10 @@ const v3Site = async (db: Db, source: ElectionSource, election: ElectionDef): Pr
     },
     children: async (place) => {
       if (place.ref === null) return [];
+      if (place.key === "GLOBAL-990000") {
+        return [node("LOCAL-500000", "Território nacional", place.key, topTerritory), node("FOREIGN-600000", "Estrangeiro", place.key, abroad)];
+      }
+      if (place.key === "FOREIGN-600000") return []; // Continents and consulates: not imported.
       // Official keys win over ones we made up, should both carry the same name.
       const known = new Map<string, string>();
       const stored = await db.select({ key: places.key, name: places.name }).from(places).where(eq(places.parentKey, place.key));
@@ -158,7 +166,7 @@ const v3Site = async (db: Db, source: ElectionSource, election: ElectionDef): Pr
         const key = known.get(placeNameKey(child.name));
         if (key) return node(key, child.name, place.key, child.id);
         site.unmatched++;
-        return { key: `${election.site.toUpperCase()}-${child.id}`, name: child.name, level: child.level, dicofre: null, parent: place.key, ref: child.id };
+        return { key: `${election.type.toUpperCase()}${election.date.slice(0, 4)}-${child.id}`, name: child.name, level: child.level, dicofre: null, parent: place.key, ref: child.id };
       });
     },
     label: (optionId) => {

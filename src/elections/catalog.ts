@@ -2,8 +2,8 @@
  * Elections we import from the electoral administration's results site
  * (www.eleicoes.mai.gov.pt, run by the Secretaria-Geral do MAI). Sites up to 2019 serve
  * files under static-data/ ("old"); 2021-2025 under assets/static/ ("new"); autárquicas 2025
- * uses a newer platform with numeric place ids ("v3", see maiV3.ts). Presidenciais 2026
- * isn't on the site.
+ * and presidenciais 2026 use a newer platform with numeric place ids ("v3", see maiV3.ts).
+ * The two rounds of a presidential election are separate sites and separate elections.
  */
 export interface ElectionDef {
   id: string;
@@ -48,6 +48,12 @@ export const ELECTIONS: readonly ElectionDef[] = [
   e("autarquicas", 2021, "2021-09-26", "new", AUTARQUICAS, "Autárquicas 2021"),
   // After 2021: its places are matched by name to the ones earlier elections stored.
   e("autarquicas", 2025, "2025-10-12", "v3", AUTARQUICAS, "Autárquicas 2025"),
+  { ...e("presidenciais", 2026, "2026-01-18", "v3", ["PR"], "Presidenciais 2026 (1.ª volta)"), site: "presidenciais2026_1S" },
+  {
+    ...e("presidenciais", 2026, "2026-02-08", "v3", ["PR"], "Presidenciais 2026 (2.ª volta)"),
+    id: "presidenciais-2026-2a-volta",
+    site: "presidenciais2026_2S",
+  },
 ];
 
 export const sourceUrl = (election: ElectionDef) => `${MAI_ORIGIN}/${election.site}/`;

@@ -41,8 +41,10 @@ export const parseV3Election = (raw: unknown) => {
     const key = str(obj(o).key);
     return id !== null && key ? [{ id, key }] : [];
   });
-  const top = obj((Array.isArray(election.mainTerritories) ? election.mainTerritories : [])[0]);
-  return { organs, topTerritory: num(top.id) };
+  const main = (Array.isArray(election.mainTerritories) ? election.mainTerritories : []).map(obj);
+  // 201: Portugal; 200: abroad; 10: both. Autárquicas list only Portugal.
+  const byType = (typeId: number) => num(main.find((t) => num(t.typeId) === typeId)?.id);
+  return { organs, topTerritory: byType(201) ?? num(main[0]?.id), abroad: byType(200), global: byType(10) };
 };
 
 const LIST_TYPES: Record<number, "party" | "coalition" | "citizens"> = { 1: "party", 2: "coalition", 3: "citizens" };

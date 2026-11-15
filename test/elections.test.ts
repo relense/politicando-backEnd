@@ -3,7 +3,7 @@ import { buildApp } from "../src/app.js";
 import type { ElectionDef } from "../src/elections/catalog.js";
 import { importElection, type ElectionSource } from "../src/elections/import.js";
 import { dicofreOf, levelOf, maiUrls, parseResults, partiesInList } from "../src/elections/mai.js";
-import { placeNameKey, v3Urls } from "../src/elections/maiV3.js";
+import { parseV3Election, parseV3Options, placeNameKey, v3Urls } from "../src/elections/maiV3.js";
 import { importMayors } from "../src/elections/mayors.js";
 import { candidatesUrl, importCandidates, looselySame, parseCandidates, properName } from "../src/elections/candidates.js";
 import { deputies, parties } from "../src/db/schema.js";
@@ -101,6 +101,26 @@ describe("results files", () => {
     expect(placeNameKey("ÁGUEDA")).toBe(placeNameKey("Águeda"));
     expect(placeNameKey("Lagoa (R.A.A)")).toBe("lagoa");
     expect(placeNameKey("Calheta (R.A.M.)")).toBe(placeNameKey("Calheta"));
+  });
+
+  it("finds the global, national and abroad territories on the newest platform", () => {
+    const organs = [{ id: 3, key: "PR" }];
+    expect(
+      parseV3Election({
+        data: {
+          organs,
+          mainTerritories: [{ id: 65609, typeId: 200 }, { id: 65611, typeId: 201 }, { id: 65608, typeId: 10 }],
+        },
+      }),
+    ).toEqual({ organs, topTerritory: 65611, abroad: 65609, global: 65608 });
+    // Autárquicas: Portugal only.
+    expect(parseV3Election({ data: { organs, mainTerritories: [{ id: 1, typeId: 201 }] } })).toMatchObject({ topTerritory: 1, abroad: null, global: null });
+  });
+
+  it("uses the acronym for lists named \"-\"", () => {
+    const options = parseV3Options({ data: [{ id: 1, typeId: 3, name: "AFE", description: "-" }, { id: 2, typeId: 1, name: "PS", description: "Partido Socialista" }] });
+    expect(options.get(1)?.name).toBe("AFE");
+    expect(options.get(2)?.name).toBe("Partido Socialista");
   });
 
   it("knows our parties in ballot lists, including coalitions", () => {
