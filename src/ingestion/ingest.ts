@@ -17,6 +17,7 @@ import {
   matchArticle,
   matchNames,
   type DeputyMatch,
+  type MatchablePerson,
   type MatchableDeputy,
   type MatchableParty,
   type PartyMatch,
@@ -29,6 +30,7 @@ import {
   type InitiativeMatch,
 } from "../matching/matchInitiatives.js";
 import { PARTY_DEFINITIONS } from "../matching/parties.js";
+import { GOVERNMENT_ALIASES } from "../government/aliases.js";
 import { DEPUTY_ALIASES } from "../parliament/aliases.js";
 import { extractArticle, pickHeadline } from "./extractArticle.js";
 import { parseNewsSitemap, parseRss, type ListingItem } from "./parseListing.js";
@@ -72,25 +74,26 @@ export interface Matchable {
   parties: MatchableParty[];
   deputies: MatchableDeputy[];
   initiatives: InitiativeIndex;
-  government: MatchablePerson[];
+  government: MatchablePerson<string>[];
 }
 
-export interface MatchablePerson {
-  id: string;
-  terms: string[];
-}
 
 /**
  * Members of the Government, current and past, matched by their full name. A name shared
  * with a sitting deputy is left out: the news would mostly be about the deputy.
  */
-export const loadMatchableGovernment = async (db: Db): Promise<MatchablePerson[]> => {
+export const loadMatchableGovernment = async (db: Db): Promise<MatchablePerson<string>[]> => {
   const sitting = new Set(
     (await db.select({ name: deputies.name }).from(deputies).where(eq(deputies.active, true))).map((d) => simpleName(d.name)),
   );
   return (await db.select({ id: governmentMembers.id, name: governmentMembers.name }).from(governmentMembers))
     .filter(({ name }) => name.trim().split(/\s+/).length >= 2 && !sitting.has(simpleName(name)))
-    .map(({ id, name }) => ({ id, terms: [name] }));
+    .map(({ id, name }) => {
+      const alias = GOVERNMENT_ALIASES[name];
+      return alias
+        ? { id, terms: [name], contextTerms: [name, ...alias.withContext], context: alias.context, exclude: alias.exclude }
+        : { id, terms: [name] };
+    });
 };
 
 const simpleName = (name: string) =>

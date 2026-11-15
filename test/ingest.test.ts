@@ -1,6 +1,6 @@
 import { asc, eq } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { articleParties, articles, parties, seenSourceUris } from "../src/db/schema.js";
+import { articleGovernmentMembers, articleParties, articles, governmentMembers, parties, seenSourceUris } from "../src/db/schema.js";
 import { canonicalUrl, ingest, toExcerpt } from "../src/ingestion/ingest.js";
 import { createPoliteClient } from "../src/ingestion/politeClient.js";
 import type { NewsSource } from "../src/ingestion/sources.js";
@@ -286,6 +286,23 @@ describe("ingest", () => {
     }, { politics: true });
     const [stored] = await db.select().from(articles);
     expect(stored).toMatchObject({ title: "7h. PS e PSD discutem habitação", excerpt: "O PS e o PSD reuniram." });
+  });
+
+  it("links members of the Government named in the article", async () => {
+    await db.insert(governmentMembers).values([
+      { id: "pm", name: "Luís Montenegro" },
+      { id: "fin", name: "Joaquim Miranda Sarmento" },
+      { id: "other", name: "Maria Ninguém" },
+    ]);
+    await run({
+      [FEED]: [200, feed(item("/1", "Montenegro e o PS discutem o Orçamento"))],
+      "https://a.pt/1": [200, page("O primeiro-ministro e Joaquim Miranda Sarmento reuniram com o PS.")],
+    });
+    const links = await db
+      .select({ id: articleGovernmentMembers.memberId, mentions: articleGovernmentMembers.mentionCount })
+      .from(articleGovernmentMembers)
+      .orderBy(asc(articleGovernmentMembers.memberId));
+    expect(links).toEqual([{ id: "fin", mentions: 1 }, { id: "pm", mentions: 2 }]);
   });
 
   it("requires seeded parties", async () => {

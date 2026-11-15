@@ -2,6 +2,8 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { buildApp } from "../src/app.js";
 import { matchDeputy, nameKey, syncGovernment, type GovernmentSource } from "../src/government/sync.js";
 import { nextData, parsePage, parseSitemap, portalDate } from "../src/government/portal.js";
+import { GOVERNMENT_ALIASES } from "../src/government/aliases.js";
+import { matchNames } from "../src/matching/matchParties.js";
 import { linkStoredArticles } from "../src/parliament/linkNews.js";
 import { syncParliament } from "../src/parliament/sync.js";
 import { createTestDb, insertArticle, resetDb } from "./helpers.js";
@@ -158,6 +160,23 @@ describe("matchDeputy", () => {
     expect(matchDeputy({ name: "Ana Paula Martins", posts: post }, [deputy(3, "Ana Martins", old, "Ana Maria Martins")])).toBeNull();
     expect(matchDeputy({ name: "Ana Paula Martins", posts: post }, [deputy(4, "Ana Martins", old, "Ana Paula Sousa Martins")])).toBe(4);
     expect(matchDeputy({ name: "Ana Martins", posts: post }, [deputy(5, "Ana Martins", old), deputy(6, "Ana Martins", old)])).toBeNull();
+  });
+});
+
+describe("matching the Prime Minister's short name", () => {
+  const alias = GOVERNMENT_ALIASES["Luís Montenegro"]!;
+  const pm = { id: "pm", terms: ["Luís Montenegro"], contextTerms: ["Luís Montenegro", ...alias.withContext], context: alias.context, exclude: alias.exclude };
+  const mentions = (title: string, content = "") => matchNames({ title, content }, [pm])[0]?.mentions ?? 0;
+
+  it("counts \"Montenegro\" in political context", () => {
+    expect(mentions("Montenegro responde ao PS", "O primeiro-ministro falou em São Bento.")).toBe(2);
+    expect(mentions("Luís Montenegro e Montenegro")).toBe(4);
+    expect(mentions("Críticas a Montenegro", "O Governo reage.")).toBe(2);
+  });
+
+  it("ignores the country and stories with no context", () => {
+    expect(mentions("Seleção joga no Montenegro", "O Governo do Montenegro recebeu a equipa.")).toBe(0);
+    expect(mentions("Montenegro vence a Sérvia")).toBe(0);
   });
 });
 

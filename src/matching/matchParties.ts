@@ -110,16 +110,35 @@ export const matchDeputies = (
     .filter(({ mentions }) => mentions > 0)
     .sort((a, b) => b.mentions - a.mentions || a.deputyId - b.deputyId);
 
+/** Someone matched by name: always by `terms`, by `contextTerms` only when `context` fits. */
+export interface MatchablePerson<Id> {
+  id: Id;
+  terms: string[];
+  contextTerms?: string[];
+  /** The article must match this (or use a full term) for `contextTerms` to count. */
+  context?: RegExp;
+  /** Phrases removed before counting `contextTerms`, such as the country "o Montenegro". */
+  exclude?: RegExp;
+}
+
 /**
- * People named in an article by any of their terms (full names), most mentioned first.
- * Used for members of the Government, who are named in full in the news.
+ * People named in an article, most mentioned first. Used for members of the Government,
+ * who are mostly named in full; a few have a short name that needs context.
  */
 export const matchNames = <Id extends string | number>(
   article: { title: string; content: string },
-  people: { id: Id; terms: string[] }[],
+  people: MatchablePerson<Id>[],
 ): { id: Id; mentions: number }[] =>
   people
-    .map((person) => ({ id: person.id, mentions: weighted(article, regexFor(person)) }))
+    .map((person) => {
+      const plain = weighted(article, regexFor(person));
+      if (!person.contextTerms) return { id: person.id, mentions: plain };
+      const all = `${article.title}\n${article.content}`;
+      if (plain === 0 && !person.context?.test(all)) return { id: person.id, mentions: 0 };
+      const strip = (text: string) => (person.exclude ? text.replace(person.exclude, " ") : text);
+      const mentions = weighted({ title: strip(article.title), content: strip(article.content) }, regexFor({ terms: person.contextTerms }));
+      return { id: person.id, mentions: Math.max(plain, mentions) };
+    })
     .filter(({ mentions }) => mentions > 0)
     .sort((a, b) => b.mentions - a.mentions || String(a.id).localeCompare(String(b.id)));
 

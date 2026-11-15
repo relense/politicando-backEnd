@@ -87,6 +87,8 @@ One call for the whole page, ministries in protocol order (the order the portal 
 
 - Every article now has `government: [{ id, name }]`, the members named in it.
 - `GET /articles?governmentMember=<id>` lists their news, with the usual cursor paging.
-- Matching uses the **full name** only ("Luís Montenegro"), so it misses articles that say just
-  "Montenegro" or "o primeiro-ministro". Counts are a lower bound. A name shared with a sitting
-  deputy isn't matched at all, because the news would mostly be about the deputy.
+- Matching uses full names ("Joaquim Miranda Sarmento"). The Prime Minister is also matched
+  as "Montenegro" when the article is political (mentions the Government, the PSD, "primeiro-
+  ministro"...), but not "no Montenegro" (the country). Other short names and "o primeiro-ministro"
+  on its own aren't matched, so counts are a lower bound. A name shared with a sitting deputy
+  isn't matched at all, because the news would mostly be about the deputy.
