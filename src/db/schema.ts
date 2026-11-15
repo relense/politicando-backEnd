@@ -27,7 +27,8 @@ export const articles = pgTable(
     id: integer().primaryKey().generatedAlwaysAsIdentity(),
     sourceUri: text("source_uri").notNull().unique(),
     title: text().notNull(),
-    content: text().notNull(),
+    /** Short summary only. Full article text is read for matching, never stored. */
+    excerpt: text().notNull(),
     url: text().notNull(),
     source: text().notNull(),
     imageUrl: text("image_url"),

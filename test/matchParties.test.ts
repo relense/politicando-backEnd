@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildPartyRegex, matchParties } from "../src/matching/matchParties.js";
-import { PARTY_DEFINITIONS } from "../src/matching/parties.js";
+import { AD_TERMS, CDU_TERMS, PARTY_DEFINITIONS } from "../src/matching/parties.js";
 
 const parties = PARTY_DEFINITIONS.map((party, index) => ({
   id: index + 1,
@@ -37,10 +37,9 @@ describe("thresholds", () => {
     expect(matchParties(text, [...parties].reverse()).map((r) => r.partyId)).toEqual(expected);
   });
 
-  it("counts mentions in the title and the body", () => {
-    expect(match("O PS reagiu.", "PS em debate")).toEqual([
-      { partyId: idOf("ps"), mentions: 2 },
-    ]);
+  it("gives a headline mention double weight, so it alone qualifies", () => {
+    expect(match("", "PS em debate")).toEqual([{ partyId: idOf("ps"), mentions: 2 }]);
+    expect(match("O PS reagiu.", "PS em debate")).toEqual([{ partyId: idOf("ps"), mentions: 3 }]);
   });
 });
 
@@ -113,6 +112,64 @@ describe("names that are also common words", () => {
   });
 });
 
+describe("headlines", () => {
+  const titleMatch = (title: string) => matchParties({ title, content: "" }, parties);
+
+  it.each(["Chega quer novo debate", "Chega: a resposta do partido", "PSD e Chega negoceiam", "PS, Chega e IL", "Moção diz que Chega está pronto"])(
+    "finds the party in %s",
+    (title) => {
+      expect(titleMatch(title).map((r) => r.partyId)).toContain(idOf("chega"));
+    },
+  );
+
+  it.each(["Chega a Lisboa o novo ministro", "Chega de atrasos"])("ignores the verb in %s", (title) => {
+    expect(titleMatch(title).map((r) => r.partyId)).not.toContain(idOf("chega"));
+  });
+
+  it("finds Livre in a headline but not a free market", () => {
+    expect(titleMatch("Livre propõe nova lei").map((r) => r.partyId)).toEqual([idOf("livre")]);
+    expect(titleMatch("Mercado Livre cresce")).toEqual([]);
+  });
+});
+
+describe("coalitions", () => {
+  it("credits CDU to both PCP and PEV", () => {
+    expect(match("A CDU e a CDU reagiram.").map((r) => r.partyId).sort()).toEqual(
+      [idOf("pcp"), idOf("pev")].sort(),
+    );
+  });
+
+  it("credits AD to both PSD and CDS-PP", () => {
+    expect(match("A AD venceu e a Aliança Democrática celebrou.").map((r) => r.partyId).sort()).toEqual(
+      [idOf("psd"), idOf("cds-pp")].sort(),
+    );
+  });
+
+  it("ignores AD without coalition context", () => {
+    expect(match("AD Fundum e AD Astra AD")).toEqual([]);
+  });
+});
+
+describe("foreign parties", () => {
+  it.each([
+    "O Partido Socialista francês e o Partido Socialista espanhol",
+    "O Partido Socialista Europeu e o Partido Socialista Operário Espanhol",
+    "O Partido Social Democrata alemão e o PSD romeno",
+    "A CDU alemã, a CDU de Merz e a CDU/CSU",
+    "O Partido Socialista de Espanha e o Partido Socialista do Brasil",
+  ])("ignores %s", (text) => {
+    expect(match(text)).toEqual([]);
+  });
+
+  it("still counts the Portuguese party in the same article", () => {
+    expect(mentions("ps", "O PS falou. O Partido Socialista francês não. O PS insistiu.")).toBe(2);
+  });
+
+  it("is not confused by a qualifier that only starts the next word", () => {
+    expect(mentions("ps", "O PS belgaço e o PS")).toBe(2);
+  });
+});
+
 describe("party data", () => {
   it("has unique slugs and 230 seats in total", () => {
     expect(new Set(PARTY_DEFINITIONS.map((p) => p.slug)).size).toBe(PARTY_DEFINITIONS.length);
@@ -125,7 +182,8 @@ describe("party data", () => {
   });
 
   it("gives no two parties the same term", () => {
-    const terms = PARTY_DEFINITIONS.flatMap((p) => p.terms);
+    const shared = new Set([...CDU_TERMS, ...AD_TERMS]);
+    const terms = PARTY_DEFINITIONS.flatMap((p) => p.terms).filter((term) => !shared.has(term));
     expect(new Set(terms).size).toBe(terms.length);
   });
 });

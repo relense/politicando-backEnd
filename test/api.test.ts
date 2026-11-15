@@ -74,7 +74,7 @@ describe("article list", () => {
       db,
       {
         sourceUri: "new",
-        content: "x".repeat(1_000),
+        excerpt: "Resumo curto",
         publishedAt: new Date("2026-02-01T00:00:00Z"),
       },
       ["psd", "ps"],
@@ -92,8 +92,7 @@ describe("article list", () => {
       publishedAt: "2026-02-01T00:00:00.000Z",
       parties: [{ slug: "psd" }, { slug: "ps" }],
     });
-    expect(body.items[0].excerpt).toHaveLength(300);
-    expect(body.items[0].content).toBeUndefined();
+    expect(body.items[0].excerpt).toBe("Resumo curto");
     expect(body.items[1].commentCount).toBe(0);
   });
 
@@ -160,11 +159,12 @@ describe("article list", () => {
 });
 
 describe("article detail", () => {
-  it("returns full content and parties", async () => {
-    const article = await insertArticle(db, { content: "y".repeat(1_000) });
+  it("returns the excerpt and parties, with no article text", async () => {
+    const article = await insertArticle(db, { excerpt: "Resumo" });
     const { status, body } = await get(`/articles/${article.id}`);
     expect(status).toBe(200);
-    expect(body.content).toHaveLength(1_000);
+    expect(body.excerpt).toBe("Resumo");
+    expect(body.content).toBeUndefined();
     expect(body.parties).toEqual([{ slug: "ps", acronym: "PS", name: "Partido Socialista" }]);
     expect(body.commentCount).toBe(0);
   });

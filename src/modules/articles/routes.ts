@@ -6,8 +6,6 @@ import { articles, parties } from "../../db/schema.js";
 import { ApiError, notFound } from "../../errors.js";
 import { articleParamsSchema, errorSchema } from "../shared.js";
 
-const EXCERPT_LENGTH = 300;
-
 const cursorSchema = z.object({
   publishedAt: z.iso.datetime(),
   id: z.number().int().positive(),
@@ -31,9 +29,10 @@ const articlePartySchema = z.object({
   name: z.string(),
 });
 
-const articleBaseSchema = z.object({
+const articleSchema = z.object({
   id: z.number(),
   title: z.string(),
+  excerpt: z.string(),
   url: z.string(),
   source: z.string(),
   imageUrl: z.string().nullable(),
@@ -41,8 +40,6 @@ const articleBaseSchema = z.object({
   commentCount: z.number(),
   parties: z.array(articlePartySchema),
 });
-const articleListItemSchema = articleBaseSchema.extend({ excerpt: z.string() });
-const articleDetailSchema = articleBaseSchema.extend({ content: z.string() });
 
 // Written as plain SQL because Drizzle drops table names from columns in
 // single-table selects, which would make these correlated subqueries ambiguous.
@@ -60,9 +57,10 @@ const partiesSql = sql<z.infer<typeof articlePartySchema>[]>`coalesce((
   where ap.article_id = articles.id
 ), '[]'::json)`;
 
-const baseColumns = {
+const columns = {
   id: articles.id,
   title: articles.title,
+  excerpt: articles.excerpt,
   url: articles.url,
   source: articles.source,
   imageUrl: articles.imageUrl,
@@ -86,7 +84,7 @@ export const articleRoutes =
           }),
           response: {
             200: z.object({
-              items: z.array(articleListItemSchema),
+              items: z.array(articleSchema),
               nextCursor: z.string().nullable(),
             }),
             400: errorSchema,
@@ -117,10 +115,7 @@ export const articleRoutes =
         }
 
         const rows = await db
-          .select({
-            ...baseColumns,
-            excerpt: sql<string>`left(articles.content, ${sql.raw(String(EXCERPT_LENGTH))})`,
-          })
+          .select(columns)
           .from(articles)
           .where(and(...conditions))
           .orderBy(desc(articles.publishedAt), desc(articles.id))
@@ -144,12 +139,12 @@ export const articleRoutes =
         schema: {
           tags: ["articles"],
           params: articleParamsSchema,
-          response: { 200: articleDetailSchema, 400: errorSchema, 404: errorSchema },
+          response: { 200: articleSchema, 400: errorSchema, 404: errorSchema },
         },
       },
       async (request) => {
         const [article] = await db
-          .select({ ...baseColumns, content: articles.content })
+          .select(columns)
           .from(articles)
           .where(eq(articles.id, request.params.id));
         if (!article) throw notFound("Article");

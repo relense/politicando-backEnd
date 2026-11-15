@@ -2,7 +2,6 @@ import { sql } from "drizzle-orm";
 import { createDb, type Db } from "../src/db/client.js";
 import { articleParties, articles, parties } from "../src/db/schema.js";
 import { seedParties } from "../src/db/seed.js";
-import type { SourceArticle } from "../src/ingestion/newsSource.js";
 import { testDatabaseUrl } from "./globalSetup.js";
 
 export const createTestDb = () => createDb(testDatabaseUrl());
@@ -14,10 +13,12 @@ export const resetDb = async (db: Db) => {
   await seedParties(db);
 };
 
-export const sourceArticle = (overrides: Partial<SourceArticle> = {}): SourceArticle => ({
+type NewArticle = typeof articles.$inferInsert;
+
+export const sourceArticle = (overrides: Partial<NewArticle> = {}): NewArticle => ({
   sourceUri: "uri-1",
   title: "O PS e o PSD",
-  content: "O PS criticou o Governo.",
+  excerpt: "O PS criticou o Governo.",
   url: "https://example.pt/1",
   source: "publico.pt",
   imageUrl: null,
@@ -27,7 +28,7 @@ export const sourceArticle = (overrides: Partial<SourceArticle> = {}): SourceArt
 
 export const insertArticle = async (
   db: Db,
-  overrides: Partial<SourceArticle> = {},
+  overrides: Partial<NewArticle> = {},
   partySlugs: string[] = ["ps"],
 ) => {
   const [article] = await db.insert(articles).values(sourceArticle(overrides)).returning();

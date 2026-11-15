@@ -28,21 +28,46 @@ const PARTY_PREFIXES = [
 const inContext = (word: string, prefixes = PARTY_PREFIXES) =>
   prefixes.map((prefix) => `${prefix} ${word}`);
 
+/** Verbs that follow a party name in headlines, such as "Chega quer...". */
+const HEADLINE_VERBS = [
+  "acusa", "admite", "alerta", "ameaça", "anuncia", "apresenta", "aprova", "ataca", "avança",
+  "considera", "critica", "defende", "denuncia", "desce", "diz", "exige", "garante", "insiste",
+  "está", "foi", "ganha", "lidera", "pede", "perde", "pode", "propõe", "quer", "questiona", "recusa",
+  "rejeita", "sobe", "tem", "vai", "volta", "vota",
+];
+
+/** A common word used as a name: prefixed, listed with others, or heading a headline. */
+const asPartyName = (word: string) => [
+  ...inContext(word),
+  `e ${word}`,
+  `, ${word}`,
+  `que ${word}`,
+  `${word}:`,
+  ...HEADLINE_VERBS.map((verb) => `${word} ${verb}`),
+];
+
+/** Coalitions count as a mention of each member party. */
+export const CDU_TERMS = ["CDU", "Coligação Democrática Unitária"];
+export const AD_TERMS = [
+  "Aliança Democrática",
+  ...inContext("AD", ["a", "A", "da", "Da", "na", "Na", "à", "À", "pela", "Pela", "coligação", "Coligação"]),
+];
+
 export const PARTY_DEFINITIONS: PartyDefinition[] = [
   {
     slug: "pcp", acronym: "PCP", name: "Partido Comunista Português",
     website: "http://www.pcp.pt/", assemblySeats: 3,
-    terms: ["PCP", "Partido Comunista Português"],
+    terms: ["PCP", "Partido Comunista Português", ...CDU_TERMS],
   },
   {
     slug: "cds-pp", acronym: "CDS-PP", name: "CDS - Partido Popular",
     website: "http://www.cds.pt/", assemblySeats: 2,
-    terms: ["CDS-PP", "CDS", "CDS – Partido Popular", "CDS - Partido Popular", "CDS-Partido Popular"],
+    terms: ["CDS-PP", "CDS", "CDS – Partido Popular", "CDS - Partido Popular", "CDS-Partido Popular", ...AD_TERMS],
   },
   {
     slug: "psd", acronym: "PSD", name: "Partido Social Democrata",
     website: "https://www.psd.pt/", assemblySeats: 89,
-    terms: ["PPD/PSD", "PSD", "Partido Social Democrata"],
+    terms: ["PPD/PSD", "PSD", "Partido Social Democrata", ...AD_TERMS],
   },
   {
     slug: "ps", acronym: "PS", name: "Partido Socialista",
@@ -62,7 +87,7 @@ export const PARTY_DEFINITIONS: PartyDefinition[] = [
   {
     slug: "pev", acronym: "PEV", name: "Partido Ecologista \"Os Verdes\"",
     website: "http://www.osverdes.pt/", assemblySeats: 0,
-    terms: ["PEV", "Os Verdes", "Partido Ecologista Os Verdes"],
+    terms: ["PEV", "Os Verdes", "Partido Ecologista Os Verdes", ...CDU_TERMS],
   },
   {
     slug: "mpt", acronym: "MPT", name: "Partido da Terra",
@@ -95,7 +120,7 @@ export const PARTY_DEFINITIONS: PartyDefinition[] = [
     slug: "livre", acronym: "L", name: "LIVRE",
     website: "https://partidolivre.pt/", assemblySeats: 6,
     // "Livre" alone is common: "Mercado Livre", "Entrada Livre".
-    terms: ["LIVRE", ...inContext("Livre")],
+    terms: ["LIVRE", ...asPartyName("Livre")],
   },
   {
     slug: "jpp", acronym: "JPP", name: "Juntos pelo Povo",
@@ -128,7 +153,7 @@ export const PARTY_DEFINITIONS: PartyDefinition[] = [
     // Site blocks automated requests; address taken from Wikipedia.
     website: "https://partidochega.pt/", assemblySeats: 60,
     // "Chega" alone is also a verb: "Chega a Lisboa".
-    terms: ["CHEGA", ...inContext("Chega")],
+    terms: ["CHEGA", ...asPartyName("Chega")],
   },
   {
     slug: "rir", acronym: "R.I.R.", name: "Reagir Incluir Reciclar",
@@ -138,7 +163,7 @@ export const PARTY_DEFINITIONS: PartyDefinition[] = [
   {
     slug: "volt", acronym: "VP", name: "Volt Portugal",
     website: "https://voltportugal.org/", assemblySeats: 0,
-    terms: ["Volt Portugal", ...inContext("Volt")],
+    terms: ["Volt Portugal", ...asPartyName("Volt")],
   },
   {
     slug: "nova-direita", acronym: "ND", name: "Nova Direita",

@@ -25,8 +25,7 @@ const apiSchema = baseSchema.extend({
 });
 
 const ingestSchema = baseSchema.extend({
-  EVENT_REGISTRY_API_KEY: z.string().min(1),
-  INGEST_MAX_PAGES: z.coerce.number().int().positive().default(1),
+  INGEST_MAX_PAGES_PER_SOURCE: z.coerce.number().int().positive().default(40),
 });
 
 export const loadDatabaseConfig = (env: NodeJS.ProcessEnv = process.env) =>
