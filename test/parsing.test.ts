@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractArticle } from "../src/ingestion/extractArticle.js";
+import { extractArticle, pickHeadline, stripSiteSuffix } from "../src/ingestion/extractArticle.js";
 import { parseNewsSitemap, parseRss, toPlainText } from "../src/ingestion/parseListing.js";
 
 const RSS = `<?xml version="1.0"?><rss version="2.0" xmlns:content="c" xmlns:media="m"><channel>
@@ -110,6 +110,7 @@ describe("extractArticle", () => {
     expect(extractArticle(html)).toEqual({
       text: "Corpo JSON",
       description: "Resumo",
+      headline: "",
       imageUrl: "https://a.pt/i.jpg",
     });
   });
@@ -132,5 +133,28 @@ describe("extractArticle", () => {
     expect(extractArticle(html)).toMatchObject({ text: long, imageUrl: null });
     const folder = `<meta property="og:image" content="https://a.pt/1920/"><p>${long}</p>`;
     expect(extractArticle(folder).imageUrl).toBeNull();
+  });
+});
+
+describe("headlines", () => {
+  it("reads og:title, falling back to the JSON-LD headline", () => {
+    expect(extractArticle(`<meta property="og:title" content="PS &amp; PSD">`).headline).toBe("PS & PSD");
+    expect(extractArticle(`<script type="application/ld+json">{"@type":"NewsArticle","headline":"Do JSON"}</script>`).headline).toBe("Do JSON");
+  });
+
+  it("strips a suffix only when it names the outlet", () => {
+    expect(stripSiteSuffix("Ventura reeleito - 24 Notícias", "24noticias.sapo.pt")).toBe("Ventura reeleito");
+    expect(stripSiteSuffix("Santos Silva admite eleições | Jornal Económico", "jornaleconomico.sapo.pt")).toBe("Santos Silva admite eleições");
+    expect(stripSiteSuffix("Costa responde - e Ventura reage", "publico.pt")).toBe("Costa responde - e Ventura reage");
+  });
+
+  it("keeps the feed headline when the page agrees, and the page's when the feed is generic", () => {
+    expect(pickHeadline("PS quer fundo", "PS quer fundo | Jornal Económico", "jornaleconomico.sapo.pt")).toEqual({ title: "PS quer fundo", fromPage: false });
+    expect(pickHeadline("“Não” ao veto", "\"Não\" ao veto", "publico.pt")).toEqual({ title: "“Não” ao veto", fromPage: false });
+    expect(pickHeadline("PS quer fundo", "", "publico.pt")).toEqual({ title: "PS quer fundo", fromPage: false });
+    expect(pickHeadline("As notícias das 7h", "7h. Acampadas pela Habitação", "observador.pt")).toEqual({
+      title: "7h. Acampadas pela Habitação",
+      fromPage: true,
+    });
   });
 });

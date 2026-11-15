@@ -27,7 +27,7 @@ import {
 } from "../matching/matchInitiatives.js";
 import { PARTY_DEFINITIONS } from "../matching/parties.js";
 import { DEPUTY_ALIASES } from "../parliament/aliases.js";
-import { extractArticle } from "./extractArticle.js";
+import { extractArticle, pickHeadline } from "./extractArticle.js";
 import { parseNewsSitemap, parseRss, type ListingItem } from "./parseListing.js";
 import type { PoliteClient } from "./politeClient.js";
 import type { NewsSource } from "./sources.js";
@@ -246,6 +246,7 @@ const scanSource = async (
       // Only open pages that look relevant, to keep requests to each site low.
       const worthReading =
         politics || POLITICS_SECTION.test(url) || countMentions(listedText, [...matchable.parties, ...matchable.deputies]) > 0;
+      let title = item.title;
       let bodyText = item.fullText;
       let description = item.description;
       let imageUrl = item.imageUrl;
@@ -261,7 +262,10 @@ const scanSource = async (
         if (page.status === "ok") {
           const extracted = extractArticle(page.body);
           bodyText = extracted.text || bodyText;
-          description ||= extracted.description;
+          const headline = pickHeadline(item.title, extracted.headline, source.domain);
+          title = headline.title;
+          // A generic feed headline comes with a generic summary too: use the page's.
+          description = (headline.fromPage && extracted.description) || description || extracted.description;
           // The page's share image is more reliable than the one in the listing.
           imageUrl = extracted.imageUrl ?? imageUrl;
         } else if (page.status === "unavailable") {
@@ -270,20 +274,20 @@ const scanSource = async (
       }
 
       const matches = matchArticle(
-        { title: item.title, content: `${description}\n${bodyText}` },
+        { title, content: `${description}\n${bodyText}` },
         matchable.parties,
         matchable.deputies,
       );
       if (matches.parties.length > 0) {
         const initiativeMatches = matchInitiatives(matchable.initiatives, {
-          text: `${item.title}\n${description}\n${bodyText}`.slice(0, INITIATIVE_TEXT_CHARS),
+          text: `${title}\n${description}\n${bodyText}`.slice(0, INITIATIVE_TEXT_CHARS),
           publishedAt: item.publishedAt,
         });
         await saveArticle(
           db,
           {
             sourceUri: url,
-            title: item.title,
+            title,
             excerpt: toExcerpt(description || bodyText),
             url,
             source: source.domain,

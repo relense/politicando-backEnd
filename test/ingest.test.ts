@@ -276,6 +276,18 @@ describe("ingest", () => {
     ]);
   });
 
+  it("uses the page's headline and summary when the feed's are generic", async () => {
+    await run({
+      [FEED]: [200, feed(item("/noticiario/7h", "As notícias das 7h", "As notícias na Rádio Observador."))],
+      "https://a.pt/noticiario/7h": [
+        200,
+        `<meta property="og:title" content="7h. PS e PSD discutem habitação"><meta property="og:description" content="O PS e o PSD reuniram.">${page("O PS e o PSD")}`,
+      ],
+    }, { politics: true });
+    const [stored] = await db.select().from(articles);
+    expect(stored).toMatchObject({ title: "7h. PS e PSD discutem habitação", excerpt: "O PS e o PSD reuniram." });
+  });
+
   it("requires seeded parties", async () => {
     await db.delete(parties);
     await expect(run({})).rejects.toThrow("run the seed");
