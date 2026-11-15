@@ -1,9 +1,18 @@
-import { inArray } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import type { Db } from "../db/client.js";
-import { articleParties, articles, parties, seenSourceUris } from "../db/schema.js";
+import {
+  articleDeputies,
+  articleParties,
+  articles,
+  deputies,
+  parties,
+  seenSourceUris,
+} from "../db/schema.js";
 import {
   countMentions,
-  matchParties,
+  matchArticle,
+  type DeputyMatch,
+  type MatchableDeputy,
   type MatchableParty,
   type PartyMatch,
 } from "../matching/matchParties.js";
@@ -46,7 +55,12 @@ export interface IngestOptions {
   onArticleError?: (url: string, error: unknown) => void;
 }
 
-const loadMatchableParties = async (db: Db): Promise<MatchableParty[]> => {
+export interface Matchable {
+  parties: MatchableParty[];
+  deputies: MatchableDeputy[];
+}
+
+export const loadMatchableParties = async (db: Db): Promise<MatchableParty[]> => {
   const rows = await db.select().from(parties);
   const termsBySlug = new Map(PARTY_DEFINITIONS.map((party) => [party.slug, party.terms]));
   return rows.flatMap((row) => {
@@ -54,6 +68,15 @@ const loadMatchableParties = async (db: Db): Promise<MatchableParty[]> => {
     return terms ? [{ id: row.id, acronym: row.acronym, terms }] : [];
   });
 };
+
+/** Sitting deputies only: former ones are still in the news, but rarely as deputies. */
+export const loadMatchableDeputies = async (db: Db): Promise<MatchableDeputy[]> =>
+  (
+    await db
+      .select({ id: deputies.id, partyId: deputies.partyId, name: deputies.name })
+      .from(deputies)
+      .where(eq(deputies.active, true))
+  ).map(({ id, partyId, name }) => ({ id, partyId, terms: [name] }));
 
 /** Drops tracking parameters and fragments so one article has one identity. */
 export const canonicalUrl = (url: string) => {
@@ -94,7 +117,7 @@ const markSeen = (db: Db, url: string) =>
 const saveArticle = (
   db: Db,
   article: typeof articles.$inferInsert,
-  matches: PartyMatch[],
+  matches: { parties: PartyMatch[]; deputies: DeputyMatch[] },
 ) =>
   db.transaction(async (tx) => {
     const [inserted] = await tx
@@ -104,17 +127,26 @@ const saveArticle = (
       .returning({ id: articles.id });
     if (!inserted) return;
     await tx.insert(articleParties).values(
-      matches.map((match) => ({
+      matches.parties.map((match) => ({
         articleId: inserted.id,
         partyId: match.partyId,
         mentionCount: match.mentions,
       })),
     );
+    if (matches.deputies.length > 0) {
+      await tx.insert(articleDeputies).values(
+        matches.deputies.map((match) => ({
+          articleId: inserted.id,
+          deputyId: match.deputyId,
+          mentionCount: match.mentions,
+        })),
+      );
+    }
   });
 
 const scanSource = async (
   source: NewsSource,
-  matchable: MatchableParty[],
+  matchable: Matchable,
   { db, client, maxPagesPerSource, now = new Date(), onArticleError }: IngestOptions,
 ): Promise<SourceStats> => {
   const stats: SourceStats = {
@@ -166,7 +198,7 @@ const scanSource = async (
       const listedText = `${item.title}\n${item.description}\n${item.fullText}`;
       // Only open pages that look relevant, to keep requests to each site low.
       const worthReading =
-        politics || POLITICS_SECTION.test(url) || countMentions(listedText, matchable) > 0;
+        politics || POLITICS_SECTION.test(url) || countMentions(listedText, [...matchable.parties, ...matchable.deputies]) > 0;
       let bodyText = item.fullText;
       let description = item.description;
       let imageUrl = item.imageUrl;
@@ -190,11 +222,12 @@ const scanSource = async (
         }
       }
 
-      const matches = matchParties(
+      const matches = matchArticle(
         { title: item.title, content: `${description}\n${bodyText}` },
-        matchable,
+        matchable.parties,
+        matchable.deputies,
       );
-      if (matches.length > 0) {
+      if (matches.parties.length > 0) {
         await saveArticle(
           db,
           {
@@ -225,7 +258,10 @@ const scanSource = async (
 
 /** One failing source never stops the others. Safe to re-run at any time. */
 export const ingest = async (options: IngestOptions): Promise<SourceStats[]> => {
-  const matchable = await loadMatchableParties(options.db);
-  if (matchable.length === 0) throw new Error("No parties found: run the seed first");
+  const matchable: Matchable = {
+    parties: await loadMatchableParties(options.db),
+    deputies: await loadMatchableDeputies(options.db),
+  };
+  if (matchable.parties.length === 0) throw new Error("No parties found: run the seed first");
   return Promise.all(options.sources.map((source) => scanSource(source, matchable, options)));
 };

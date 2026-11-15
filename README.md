@@ -24,6 +24,8 @@ The API docs are at `/docs` and the OpenAPI spec is at `/docs/json`.
 | `npm test` | Run all tests (needs Postgres from `docker compose`) |
 | `npm run typecheck`, `npm run lint` | Static checks |
 | `npm run ingest` | Scan news sources once |
+| `npm run parliament:sync` | Load deputies and initiatives from the parliament's open data |
+| `npm run parliament:link-news` | Link stored articles to deputies (run once after the first sync) |
 | `npm run db:generate` | Create a migration after changing `src/db/schema.ts` |
 | `npm run db:seed` | Create or update parties. Safe to re-run |
 
@@ -34,7 +36,7 @@ Everything is under `/api/v2`.
 | Route | Description |
 |---|---|
 | `GET /parties` | All parties |
-| `GET /articles?party=&cursor=&limit=` | Newest first, returns `{ items, nextCursor }`. `limit` is 1-50, default 10 |
+| `GET /articles?party=&deputy=&cursor=&limit=` | Newest first, returns `{ items, nextCursor }`. `limit` is 1-50, default 10 |
 | `GET /articles/:id` | One article: excerpt, parties and source link |
 | `GET /articles/:id/comments` | Flat list; use `parentId` to build threads |
 | `POST /articles/:id/comments` | `{ username?, body, parentId?, recaptchaToken }` |
@@ -59,6 +61,27 @@ The scanner identifies itself as `PoliticandoBot`, obeys `robots.txt` and `Crawl
 It prints one JSON line per source and exits non-zero if more than half of the sources can't be read. It's safe to re-run. Articles that match no party are recorded in `seen_source_uris` so they aren't scored again; clear that table to re-score after changing terms.
 
 Schedule it hourly next to the API, using the same Docker image with the command `node dist/jobs/ingest.js`. RSS feeds only cover a few hours, so running it less often misses articles.
+
+## Parliament
+
+`npm run parliament:sync` downloads the current legislature's deputies, biographies and
+initiatives from parlamento.pt › Dados Abertos and replaces what's stored. Run it daily,
+using the same Docker image with the command `node dist/jobs/syncParliament.js`. It needs
+about 1 GB of memory, because the initiatives file is over 100 MB. It refuses to sync if
+the file lists fewer than 200 sitting deputies, and prints warnings when the chamber no
+longer fits the seat map.
+
+- Endpoints: `GET /parliament`, `GET /deputies/:id`, `GET /initiatives`,
+  `GET /initiatives/:id`. Shapes and meaning are in `docs/parliament-api.md`.
+- Seat map: `src/parliament/seatMap.ts`, measured from the map annexed to Deliberação
+  n.º 5-PL/2025. It says which group owns each seat, not who sits where. Regenerate it
+  when a deliberation changes the map.
+- Who sits where: `src/parliament/seatAssignments.ts`, empty until a reliable source exists.
+- New legislature: set `PARLIAMENT_LEGISLATURE` and replace the seat map.
+- New party in parliament: add its acronym to `src/parliament/groups.ts`.
+- The news scanner links articles to sitting deputies by their parliamentary name. A
+  deputy's mentions also count for their party, but an article still needs one direct
+  party mention to be kept.
 
 ## Party matching
 

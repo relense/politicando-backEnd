@@ -39,7 +39,9 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx --env-file=.env src/db/migrate.ts",
     "db:seed": "tsx --env-file=.env src/db/seed.ts",
-    "ingest": "tsx --env-file=.env src/jobs/ingest.ts"
+    "ingest": "tsx --env-file=.env src/jobs/ingest.ts",
+    "parliament:sync": "tsx --env-file=.env src/jobs/syncParliament.ts",
+    "parliament:link-news": "tsx --env-file=.env src/jobs/linkDeputies.ts"
   },
   "overrides": {
     "glob": "^14.0.3",

@@ -2,7 +2,7 @@ import { and, desc, eq, sql, type SQL } from "drizzle-orm";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
 import type { Db } from "../../db/client.js";
-import { articles, parties } from "../../db/schema.js";
+import { articles, deputies, parties } from "../../db/schema.js";
 import { ApiError, notFound } from "../../errors.js";
 import { articleParamsSchema, errorSchema } from "../shared.js";
 
@@ -29,7 +29,13 @@ const articlePartySchema = z.object({
   name: z.string(),
 });
 
-const articleSchema = z.object({
+const articleDeputySchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  party: z.string().nullable().describe("Party slug"),
+});
+
+export const articleSchema = z.object({
   id: z.number(),
   title: z.string(),
   excerpt: z.string(),
@@ -39,6 +45,7 @@ const articleSchema = z.object({
   publishedAt: z.string(),
   commentCount: z.number(),
   parties: z.array(articlePartySchema),
+  deputies: z.array(articleDeputySchema),
 });
 
 // Written as plain SQL because Drizzle drops table names from columns in
@@ -57,7 +64,18 @@ const partiesSql = sql<z.infer<typeof articlePartySchema>[]>`coalesce((
   where ap.article_id = articles.id
 ), '[]'::json)`;
 
-const columns = {
+const deputiesSql = sql<z.infer<typeof articleDeputySchema>[]>`coalesce((
+  select json_agg(
+    json_build_object('id', d.id, 'name', d.name, 'party', p.slug)
+    order by ad.mention_count desc, d.name
+  )
+  from article_deputies ad
+  join deputies d on d.id = ad.deputy_id
+  left join parties p on p.id = d.party_id
+  where ad.article_id = articles.id
+), '[]'::json)`;
+
+export const articleColumns = {
   id: articles.id,
   title: articles.title,
   excerpt: articles.excerpt,
@@ -67,6 +85,7 @@ const columns = {
   publishedAt: articles.publishedAt,
   commentCount: commentCountSql,
   parties: partiesSql,
+  deputies: deputiesSql,
 };
 
 export const articleRoutes =
@@ -79,6 +98,7 @@ export const articleRoutes =
           tags: ["articles"],
           querystring: z.object({
             party: z.string().optional().describe("Party slug"),
+            deputy: z.coerce.number().int().positive().max(2_147_483_647).optional().describe("Deputy ID"),
             cursor: z.string().optional().describe("The nextCursor of the previous page"),
             limit: z.coerce.number().int().min(1).max(50).default(10),
           }),
@@ -93,7 +113,7 @@ export const articleRoutes =
         },
       },
       async (request) => {
-        const { party, cursor, limit } = request.query;
+        const { party, deputy, cursor, limit } = request.query;
         const conditions: SQL[] = [];
 
         if (cursor !== undefined) {
@@ -113,9 +133,17 @@ export const articleRoutes =
             where ap.article_id = articles.id and ap.party_id = ${found.id}
           )`);
         }
+        if (deputy !== undefined) {
+          const [found] = await db.select({ id: deputies.id }).from(deputies).where(eq(deputies.id, deputy));
+          if (!found) throw notFound("Deputy");
+          conditions.push(sql`exists (
+            select 1 from article_deputies ad
+            where ad.article_id = articles.id and ad.deputy_id = ${found.id}
+          )`);
+        }
 
         const rows = await db
-          .select(columns)
+          .select(articleColumns)
           .from(articles)
           .where(and(...conditions))
           .orderBy(desc(articles.publishedAt), desc(articles.id))
@@ -144,7 +172,7 @@ export const articleRoutes =
       },
       async (request) => {
         const [article] = await db
-          .select(columns)
+          .select(articleColumns)
           .from(articles)
           .where(eq(articles.id, request.params.id));
         if (!article) throw notFound("Article");

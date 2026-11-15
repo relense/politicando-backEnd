@@ -16,6 +16,7 @@ import { ApiError } from "./errors.js";
 import { articleRoutes } from "./modules/articles/routes.js";
 import type { RecaptchaVerifier } from "./modules/comments/recaptcha.js";
 import { commentRoutes } from "./modules/comments/routes.js";
+import { parliamentRoutes } from "./modules/parliament/routes.js";
 import { partyRoutes } from "./modules/parties/routes.js";
 
 export interface AppOptions {
@@ -86,6 +87,7 @@ export const buildApp = async ({
     async (api) => {
       await api.register(partyRoutes(db));
       await api.register(articleRoutes(db));
+      await api.register(parliamentRoutes(db));
       await api.register(
         commentRoutes({ db, verifyRecaptcha, createLimitPerMinute: commentLimitPerMinute }),
       );
