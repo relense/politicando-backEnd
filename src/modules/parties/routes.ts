@@ -3,6 +3,7 @@ import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
 import type { Db } from "../../db/client.js";
 import { parties } from "../../db/schema.js";
+import { curatedPartiesSql } from "../../government/parties.js";
 
 const lastElectionSchema = z
   .object({
@@ -24,7 +25,7 @@ const partySchema = z.object({
   website: z.string().nullable(),
   assemblySeats: z.number(),
   seatsAsOf: z.string().nullable(),
-  governmentMembers: z.number().describe("Members of the Government in office linked to the party through their deputy record"),
+  governmentMembers: z.number().describe("Members of the Government in office from this party (deputy records, plus our curated list)"),
   lastElection: lastElectionSchema,
 });
 
@@ -65,13 +66,16 @@ export const partyRoutes =
           .from(parties)
           .orderBy(asc(parties.name));
 
+        // Deputies' parties first, then the curated list for members who aren't deputies.
         const government = await db.execute<{ party_id: number; members: number }>(sql`
-          select d.party_id, count(distinct m.id)::int as members
+          select coalesce(d.party_id, cp.id) as party_id, count(distinct m.id)::int as members
           from government_members m
           join government_positions p on p.member_id = m.id and p.end_date is null
-          join deputies d on d.id = m.deputy_id
-          where d.party_id is not null
-          group by d.party_id`);
+          left join deputies d on d.id = m.deputy_id
+          left join ${curatedPartiesSql()} on d.party_id is null and curated.name = m.name
+          left join parties cp on cp.slug = curated.slug
+          where coalesce(d.party_id, cp.id) is not null
+          group by 1`);
         const members = new Map(government.rows.map((r) => [r.party_id, r.members]));
 
         // The whole-country total: with votes abroad if the site has it.

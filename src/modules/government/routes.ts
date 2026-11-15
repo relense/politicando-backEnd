@@ -6,6 +6,7 @@ import { articles, deputies, governmentMembers, governmentPositions, governments
 import { notFound } from "../../errors.js";
 import { articleColumns, articleSchema } from "../articles/routes.js";
 import { errorSchema } from "../shared.js";
+import { memberParty } from "../../government/parties.js";
 
 const kindSchema = z.enum(["prime_minister", "minister", "secretary_of_state"]);
 
@@ -19,7 +20,8 @@ const memberSummarySchema = z.object({
   startDate: z.string().nullable(),
   endDate: z.string().nullable().describe("Null while in office"),
   deputyId: z.number().nullable().describe("Their deputy record, when they were elected to this legislature"),
-  party: z.string().nullable().describe("Party slug, known only through their deputy record"),
+  party: z.string().nullable().describe("Party slug: from their deputy record, or our curated list; null when unknown"),
+  partySource: z.enum(["deputy", "curated"]).nullable().describe("deputy: parliament's record; curated: kept by hand from public record"),
 });
 
 const ministrySchema = z.object({
@@ -45,7 +47,8 @@ const memberColumns = {
 };
 
 type Row = { [K in keyof typeof memberColumns]: unknown } & { area: string; areaName: string };
-const summary = ({ area: _area, areaName: _areaName, ...member }: Row) => member as z.infer<typeof memberSummarySchema>;
+const summary = ({ area: _area, areaName: _areaName, ...member }: Row) =>
+  ({ ...member, ...memberParty(member.name as string, member.party as string | null) }) as z.infer<typeof memberSummarySchema>;
 
 export const governmentRoutes =
   (db: Db): FastifyPluginAsyncZod =>
@@ -140,6 +143,8 @@ export const governmentRoutes =
               photoUrl: z.string().nullable(),
               bio: z.array(z.string()).describe("Official biography, as plain-text paragraphs"),
               links: z.array(z.object({ network: z.string(), url: z.string() })),
+              party: z.string().nullable().describe("Party slug: from their deputy record, or our curated list; null when unknown"),
+              partySource: z.enum(["deputy", "curated"]).nullable(),
               inOffice: z.boolean(),
               deputy: z
                 .object({ id: z.number(), name: z.string(), party: z.string().nullable() })
@@ -211,6 +216,7 @@ export const governmentRoutes =
         const { deputyId, deputyName, party, ...profile } = member;
         return {
           ...profile,
+          ...memberParty(member.name, party),
           inOffice: positions.some((p) => p.endDate === null),
           deputy: deputyId !== null && deputyName !== null ? { id: deputyId, name: deputyName, party } : null,
           positions,

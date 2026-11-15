@@ -42,7 +42,8 @@ One call for the whole page, ministries in protocol order (the order the portal 
         "startDate": "2025-06-05",
         "endDate": null,                            // null while in office
         "deputyId": null,
-        "party": null                               // party slug, only known via deputyId
+        "party": "psd",                             // party slug, or null when unknown
+        "partySource": "curated"                    // "deputy" | "curated" | null
       },
       "secretaries": [ /* members, kind "secretary_of_state", in the portal's order */ ]
     }
@@ -56,7 +57,10 @@ One call for the whole page, ministries in protocol order (the order the portal 
 
 - `minister` can be `null` if a ministry has no minister in office (e.g. between appointments).
 - **Party is often unknown.** The portal doesn't publish party membership, and many members
-  are independents. `party` is filled only when they have a deputy record. Don't infer it.
+  are independents. `party` comes from their deputy record (`partySource: "deputy"`) or from
+  a short list we keep by hand, with only members whose party membership is public record
+  (`"curated"`, e.g. the Prime Minister). `null` means unknown, not independent: don't infer
+  it, and don't label them "Independente".
 - Photos are portraits (about 800×1000) hosted by the portal. They're lighter than deputy
   photos, but still load them lazily.
 

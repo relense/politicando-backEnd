@@ -231,7 +231,7 @@ describe("GET /government", () => {
     const { status, body } = await get("/government");
     expect(status).toBe(200);
     expect(body.government).toMatchObject({ code: "gc25", name: "XXV Governo Constitucional", startDate: "2025-06-05" });
-    expect(body.primeMinister).toMatchObject({ name: "Luís Montenegro", title: "Primeiro-Ministro", party: null });
+    expect(body.primeMinister).toMatchObject({ name: "Luís Montenegro", title: "Primeiro-Ministro", party: "psd", partySource: "curated" });
     expect(body.ministries.map((m: { area: string }) => m.area)).toEqual(["primeiro-ministro", ...MINISTRIES]);
     expect(body.ministries[2]).toMatchObject({
       name: "Finanças",
@@ -269,5 +269,18 @@ describe("GET /government/members/:id", () => {
   it("returns 404 for an unknown member and 400 for a bad id", async () => {
     expect((await get(`/government/members/${hex(999)}`)).status).toBe(404);
     expect((await get("/government/members/nope")).status).toBe(400);
+  });
+});
+
+describe("curated parties", () => {
+  it("fills in the party of well-known members who aren't deputies, and nobody else", async () => {
+    const { curatedParty, memberParty } = await import("../src/government/parties.js");
+    expect(curatedParty("Luís Montenegro")).toBe("psd");
+    expect(curatedParty("LUIS MONTENEGRO")).toBe("psd");
+    expect(curatedParty("Telmo Correia")).toBe("cds-pp");
+    expect(curatedParty("Luís Neves")).toBeNull();
+    expect(memberParty("Luís Montenegro", null)).toEqual({ party: "psd", partySource: "curated" });
+    expect(memberParty("Luís Montenegro", "chega")).toEqual({ party: "chega", partySource: "deputy" });
+    expect(memberParty("Fulano", null)).toEqual({ party: null, partySource: null });
   });
 });

@@ -18,6 +18,7 @@ import {
 } from "../../people/path.js";
 import { BIOGRAPHY_URL, PRESIDENTS, currentPresident } from "../../presidency/presidents.js";
 import { CASE_STATUSES, PERSON_STATUSES } from "../../cases/model.js";
+import { curatedParty } from "../../government/parties.js";
 import { photoUrl } from "../parliament/routes.js";
 import { errorSchema } from "../shared.js";
 
@@ -89,6 +90,14 @@ export const peopleRoutes =
         .from(governmentPositions)
         .where(eq(governmentPositions.memberId, member.id));
       return { ...member, posts };
+    };
+
+    /** A Government member's party from the curated list, for those who aren't deputies. */
+    const curatedPartyRef = async (name: string) => {
+      const slug = curatedParty(name);
+      if (!slug) return null;
+      const [row] = await db.select({ slug: parties.slug, acronym: parties.acronym }).from(parties).where(eq(parties.slug, slug));
+      return row ?? null;
     };
 
     const label = (list: readonly { key: string; label: string }[], key: string) => ({ key, label: list.find((t) => t.key === key)?.label ?? key });
@@ -163,7 +172,7 @@ export const peopleRoutes =
         person: {
           name: president?.name ?? member?.name ?? deputy!.name,
           photoUrl: presidentPhoto ?? member?.photoUrl ?? (deputy ? photoUrl(deputy.id) : null),
-          party: deputy?.slug && deputy.acronym ? { slug: deputy.slug, acronym: deputy.acronym } : null,
+          party: deputy?.slug && deputy.acronym ? { slug: deputy.slug, acronym: deputy.acronym } : member ? await curatedPartyRef(member.name) : null,
           links: { deputyId: deputy?.id ?? null, governmentMemberId: member?.id ?? null, presidentId: president?.id ?? null },
         },
         path: sortPath(steps),
@@ -248,7 +257,7 @@ export const peopleRoutes =
         if (pm) {
           items.push({
             kind: "government", id: pm.id, name: pm.name, role: "Primeiro-Ministro", photoUrl: pm.photoUrl,
-            party: pm.slug && pm.acronym ? { slug: pm.slug, acronym: pm.acronym } : null,
+            party: pm.slug && pm.acronym ? { slug: pm.slug, acronym: pm.acronym } : await curatedPartyRef(pm.name),
           });
         }
 
