@@ -592,3 +592,51 @@ export const contractImports = pgTable("contract_imports", {
   contracts: integer().notNull(),
   importedAt: timestamp("imported_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * People who can sign in to moderate and write: the team and invited authors, never the
+ * public (readers stay anonymous). See src/admin/.
+ */
+export const admins = pgTable("admins", {
+  id: integer().primaryKey().generatedAlwaysAsIdentity(),
+  email: text().notNull().unique(),
+  name: text().notNull(),
+  /** scrypt, as written by src/admin/password.ts. */
+  passwordHash: text("password_hash").notNull(),
+  /** author: writes editorial posts; moderator: also hides content and curates records; admin: also manages admins. */
+  role: text().$type<"author" | "moderator" | "admin">().notNull(),
+  disabledAt: timestamp("disabled_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
+});
+
+/** Signed-in sessions. Only a hash of the cookie's token is stored. */
+export const adminSessions = pgTable(
+  "admin_sessions",
+  {
+    tokenHash: text("token_hash").primaryKey(),
+    adminId: integer("admin_id")
+      .notNull()
+      .references(() => admins.id, { onDelete: "cascade" }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("admin_sessions_admin_idx").on(table.adminId)],
+);
+
+/** Every change made through the admin: who, what, and the record before and after. */
+export const auditLog = pgTable(
+  "audit_log",
+  {
+    id: integer().primaryKey().generatedAlwaysAsIdentity(),
+    adminId: integer("admin_id").references(() => admins.id, { onDelete: "set null" }),
+    /** e.g. "comment.hide", "admin.create". */
+    action: text().notNull(),
+    entity: text().notNull(),
+    entityId: text("entity_id").notNull(),
+    before: jsonb(),
+    after: jsonb(),
+    at: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("audit_log_entity_idx").on(table.entity, table.entityId), index("audit_log_at_idx").on(table.at.desc())],
+);

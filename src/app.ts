@@ -1,4 +1,6 @@
+import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
+import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
@@ -13,6 +15,7 @@ import {
 } from "fastify-type-provider-zod";
 import type { Db } from "./db/client.js";
 import { ApiError } from "./errors.js";
+import { adminRoutes } from "./modules/admin/routes.js";
 import { articleRoutes } from "./modules/articles/routes.js";
 import type { RecaptchaVerifier } from "./modules/comments/recaptcha.js";
 import { commentRoutes } from "./modules/comments/routes.js";
@@ -33,6 +36,9 @@ export interface AppOptions {
   trustProxy?: boolean;
   logger?: boolean;
   commentLimitPerMinute?: number;
+  /** Admin session cookie over HTTPS only (default true; turn off for local HTTP). */
+  secureCookies?: boolean;
+  loginLimitPerMinute?: number;
 }
 
 const errorBody = (code: string, message: string) => ({ error: { code, message } });
@@ -44,6 +50,8 @@ export const buildApp = async ({
   trustProxy = false,
   logger = false,
   commentLimitPerMinute = 5,
+  secureCookies = true,
+  loginLimitPerMinute = 5,
 }: AppOptions) => {
   const app = Fastify({ logger, trustProxy, bodyLimit: 64 * 1024 });
   app.setValidatorCompiler(validatorCompiler);
@@ -70,13 +78,20 @@ export const buildApp = async ({
     reply.status(404).send(errorBody("not_found", "Route not found")),
   );
 
-  await app.register(cors, { origin: corsOrigins, methods: ["GET", "POST"] });
+  // The API serves JSON only; the Swagger UI sets its own policy for /docs.
+  await app.register(helmet, {
+    contentSecurityPolicy: { directives: { defaultSrc: ["'none'"], frameAncestors: ["'none'"] } },
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+  });
+  await app.register(cookie);
+  // credentials: the admin frontend sends its session cookie; only the listed origins may.
+  await app.register(cors, { origin: corsOrigins, methods: ["GET", "POST", "PATCH", "DELETE"], credentials: true });
   await app.register(rateLimit, { max: 300, timeWindow: "1 minute" });
   await app.register(swagger, {
     openapi: { info: { title: "Politicando API", version: "2.0.0" } },
     transform: jsonSchemaTransform,
   });
-  await app.register(swaggerUi, { routePrefix: "/docs" });
+  await app.register(swaggerUi, { routePrefix: "/docs", staticCSP: true });
 
   const typed = app.withTypeProvider<ZodTypeProvider>();
 
@@ -102,6 +117,7 @@ export const buildApp = async ({
       await api.register(explainerRoutes(db));
       await api.register(historyRoutes(db));
       await api.register(contractRoutes(db));
+      await api.register(adminRoutes({ db, secureCookies, loginLimitPerMinute }));
       await api.register(
         commentRoutes({ db, verifyRecaptcha, createLimitPerMinute: commentLimitPerMinute }),
       );

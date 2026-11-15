@@ -327,6 +327,16 @@ describe("platform", () => {
   it("documents every route in OpenAPI", async () => {
     const response = await app.inject({ method: "GET", url: "/docs/json" });
     expect(Object.keys(response.json().paths).sort()).toEqual([
+      "/api/v2/admin/admins",
+      "/api/v2/admin/admins/{id}",
+      "/api/v2/admin/audit",
+      "/api/v2/admin/comments",
+      "/api/v2/admin/comments/{id}/hide",
+      "/api/v2/admin/comments/{id}/unhide",
+      "/api/v2/admin/login",
+      "/api/v2/admin/logout",
+      "/api/v2/admin/me",
+      "/api/v2/admin/password",
       "/api/v2/articles",
       "/api/v2/articles/{id}",
       "/api/v2/articles/{id}/comments",

@@ -26,6 +26,7 @@ The API docs are at `/docs` and the OpenAPI spec is at `/docs/json`.
 | `npm run ingest` | Scan news sources once |
 | `npm run parliament:sync` | Load deputies and initiatives from the parliament's open data |
 | `npm run elections:import` | Import election results since 2011 (one-off; add ids to import only some) |
+| `npm run admin:create -- <email> "<name>" admin` | Create the first admin (prints a one-time password) |
 | `npm run contracts:import` | Import public contracts from BASE for this year and last (weekly; `-- --from=2012` for history) |
 | `npm run parliament:link-news` | Link stored articles to deputies and initiatives. Add `-- --replace` after changing matching rules |
 | `npm run db:generate` | Create a migration after changing `src/db/schema.ts` |
@@ -187,6 +188,14 @@ The file header records where the party list and seat counts came from. Update i
 ## Deploy
 
 Build the `Dockerfile` and set the variables from `.env.example`, using a real `RECAPTCHA_SECRET`. The test secret in the example accepts every token. Set `TRUST_PROXY=true` behind a reverse proxy so rate limits see real client IPs.
+
+Production checklist:
+
+- `RECAPTCHA_HOSTNAMES=politicando.pt,www.politicando.pt` (our real hostnames), so tokens solved on other sites are rejected.
+- `COOKIE_SECURE=true` (the default): the admin session cookie only travels over HTTPS.
+- `CORS_ORIGINS` lists only our frontends: the API allows credentials for them, for the admin.
+- Database roles: run `deploy/db-roles.sql` once. Migrations run as `politicando_owner`; the API and jobs connect as `politicando_app`, which can't change the schema or rewrite the audit log.
+- Create the first admin with `node dist/jobs/createAdmin.js <email> "<name>" admin`, then invite the rest from the admin (`docs/admin-api.md`).
 
 ```sh
 node dist/db/migrate.js   # on each release

@@ -10,7 +10,8 @@ const app = await buildApp({
   db,
   corsOrigins: config.CORS_ORIGINS,
   trustProxy: config.TRUST_PROXY,
-  verifyRecaptcha: createRecaptchaVerifier(config.RECAPTCHA_SECRET),
+  verifyRecaptcha: createRecaptchaVerifier(config.RECAPTCHA_SECRET, fetch, config.RECAPTCHA_HOSTNAMES),
+  secureCookies: config.COOKIE_SECURE,
   logger: true,
 });
 

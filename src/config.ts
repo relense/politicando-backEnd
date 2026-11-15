@@ -22,6 +22,13 @@ const apiSchema = baseSchema.extend({
     ),
   TRUST_PROXY: envBoolean,
   RECAPTCHA_SECRET: z.string().min(1),
+  /** Hostnames of our site; reCAPTCHA tokens solved elsewhere are rejected. Empty: no check (local only). */
+  RECAPTCHA_HOSTNAMES: z
+    .string()
+    .default("")
+    .transform((value) => value.split(",").map((h) => h.trim().toLowerCase()).filter(Boolean)),
+  /** Send the admin session cookie over HTTPS only. Set to false for local HTTP. */
+  COOKIE_SECURE: z.enum(["true", "false"]).default("true").transform((value) => value === "true"),
 });
 
 const ingestSchema = baseSchema.extend({
