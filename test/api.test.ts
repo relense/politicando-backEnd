@@ -342,6 +342,8 @@ describe("platform", () => {
       "/api/v2/initiatives/{id}",
       "/api/v2/parliament",
       "/api/v2/parties",
+      "/api/v2/people/featured",
+      "/api/v2/people/{kind}/{id}/path",
       "/api/v2/places/{key}",
       "/api/v2/president",
     ]);

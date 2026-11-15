@@ -89,6 +89,13 @@ every body).
   in 2025 get keys like `AUTARQUICAS2025-1234` with no DICOFRE code.
 - Not yet: presidenciais 2026 (not on the MAI site).
 
+## People
+
+`GET /people/featured` and `GET /people/:kind/:id/path` build career timelines from the
+records above (parliament, Government, Presidency), so they need no job of their own. See
+`docs/people-api.md`. Legislature dates are in `src/parliament/legislatures.ts`: add the next
+one after each general election.
+
 ## News scanner
 
 `npm run ingest` scans once and exits. It uses no paid API. The sources are in `src/ingestion/sources.ts`.
