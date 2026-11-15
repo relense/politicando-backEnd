@@ -64,6 +64,13 @@
       "when": 1794732418679,
       "tag": "0008_government",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1794733889546,
+      "tag": "0009_presidency",
+      "breakpoints": true
     }
   ]
 }

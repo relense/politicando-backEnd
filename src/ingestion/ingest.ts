@@ -4,12 +4,14 @@ import {
   articleDeputies,
   articleGovernmentMembers,
   articleInitiatives,
+  articlePresidents,
   articleParties,
   articles,
   deputies,
   governmentMembers,
   initiatives,
   parties,
+  presidents,
   seenSourceUris,
 } from "../db/schema.js";
 import {
@@ -31,6 +33,7 @@ import {
 } from "../matching/matchInitiatives.js";
 import { PARTY_DEFINITIONS } from "../matching/parties.js";
 import { GOVERNMENT_ALIASES } from "../government/aliases.js";
+import { PRESIDENT_ALIASES, currentPresident } from "../presidency/presidents.js";
 import { DEPUTY_ALIASES } from "../parliament/aliases.js";
 import { extractArticle, pickHeadline } from "./extractArticle.js";
 import { parseNewsSitemap, parseRss, type ListingItem } from "./parseListing.js";
@@ -75,7 +78,25 @@ export interface Matchable {
   deputies: MatchableDeputy[];
   initiatives: InitiativeIndex;
   government: MatchablePerson<string>[];
+  president: MatchablePerson<string>[];
 }
+
+/**
+ * The President in office, by full name, plus "Seguro" in an article about the presidency.
+ * Empty until the Government job has stored the President, since links point to that row.
+ */
+export const loadMatchablePresident = async (db: Db): Promise<MatchablePerson<string>[]> => {
+  const president = currentPresident();
+  const [stored] = await db.select({ id: presidents.id }).from(presidents).where(eq(presidents.id, president.id));
+  if (!stored) return [];
+  const alias = PRESIDENT_ALIASES[president.id];
+  const terms = [president.name, president.fullName];
+  return [
+    alias
+      ? { id: president.id, terms, contextTerms: [...terms, ...alias.withContext], context: alias.context, exclude: alias.exclude }
+      : { id: president.id, terms },
+  ];
+};
 
 
 /**
@@ -188,6 +209,7 @@ const saveArticle = (
     deputies: DeputyMatch[];
     initiatives: InitiativeMatch[];
     government: { id: string; mentions: number }[];
+    president: { id: string; mentions: number }[];
   },
 ) =>
   db.transaction(async (tx) => {
@@ -218,6 +240,15 @@ const saveArticle = (
         matches.government.map((match) => ({
           articleId: inserted.id,
           memberId: match.id,
+          mentionCount: match.mentions,
+        })),
+      );
+    }
+    if (matches.president.length > 0) {
+      await tx.insert(articlePresidents).values(
+        matches.president.map((match) => ({
+          articleId: inserted.id,
+          presidentId: match.id,
           mentionCount: match.mentions,
         })),
       );
@@ -333,7 +364,9 @@ const scanSource = async (
             imageUrl,
             publishedAt: item.publishedAt,
           },
-          { ...matches, initiatives: initiativeMatches, government: matchNames(text, matchable.government) },
+          { ...matches, initiatives: initiativeMatches, government: matchNames(text, matchable.government),
+            president: matchNames(text, matchable.president),
+          },
         );
         stats.matched++;
       } else if (pageUnavailable) {
@@ -357,6 +390,7 @@ export const ingest = async (options: IngestOptions): Promise<SourceStats[]> => 
     deputies: await loadMatchableDeputies(options.db),
     initiatives: await loadInitiativeIndex(options.db, options.now),
     government: await loadMatchableGovernment(options.db),
+    president: await loadMatchablePresident(options.db),
   };
   if (matchable.parties.length === 0) throw new Error("No parties found: run the seed first");
   return Promise.all(options.sources.map((source) => scanSource(source, matchable, options)));

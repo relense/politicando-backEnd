@@ -85,6 +85,18 @@ describe("syncParliament", () => {
   });
 });
 
+describe("presidency on initiatives", () => {
+  it("says what the President did and who it was, and filters by it", async () => {
+    const { body } = await get("/initiatives?presidency=promulgated");
+    expect(body.items.map((i: { id: number }) => i.id)).toEqual([1]);
+    expect(body.items[0].presidency).toEqual({
+      status: "promulgated", sentAt: "2025-10-05", promulgatedAt: "2025-10-15", vetoedAt: null, by: "Marcelo Rebelo de Sousa",
+    });
+    expect((await get("/initiatives?presidency=vetoed")).body.items).toEqual([]);
+    expect((await get("/initiatives/2")).body.presidency).toBeNull();
+  });
+});
+
 describe("GET /parliament", () => {
   it("returns the seat map, groups left to right, sitting deputies and counts", async () => {
     const { status, body } = await get("/parliament");
@@ -233,7 +245,7 @@ describe("news and deputies", () => {
     const b = await insertArticle(db, { sourceUri: "b", title: "Sem deputados", excerpt: "Nada." });
     await db.insert(articleDeputies).values({ articleId: b.id, deputyId: 817, mentionCount: 1, linkedBy: "manual" });
 
-    expect(await linkStoredArticles(db)).toEqual({ scanned: 2, deputyLinks: 2, governmentLinks: 0, initiativeLinks: 0 });
+    expect(await linkStoredArticles(db)).toEqual({ scanned: 2, deputyLinks: 2, governmentLinks: 0, presidentLinks: 0, initiativeLinks: 0 });
     const links = await db.select().from(articleDeputies);
     expect(links.map((l) => [l.articleId, l.deputyId, l.linkedBy]).sort()).toEqual(
       [[a.id, 7341, "auto"], [a.id, 817, "auto"], [b.id, 817, "manual"]].sort(),

@@ -1,7 +1,19 @@
 import { and, asc, eq, gt, inArray } from "drizzle-orm";
 import type { Db } from "../db/client.js";
-import { articleDeputies, articleGovernmentMembers, articleInitiatives, articles, initiatives } from "../db/schema.js";
-import { loadMatchableDeputies, loadMatchableGovernment, loadMatchableParties } from "../ingestion/ingest.js";
+import {
+  articleDeputies,
+  articleGovernmentMembers,
+  articleInitiatives,
+  articlePresidents,
+  articles,
+  initiatives,
+} from "../db/schema.js";
+import {
+  loadMatchableDeputies,
+  loadMatchableGovernment,
+  loadMatchableParties,
+  loadMatchablePresident,
+} from "../ingestion/ingest.js";
 import { buildInitiativeIndex, matchInitiatives } from "../matching/matchInitiatives.js";
 import { countMentions, matchDeputies, matchNames } from "../matching/matchParties.js";
 
@@ -21,6 +33,7 @@ export const linkStoredArticles = async (
   const deputies = await loadMatchableDeputies(db);
   const parties = await loadMatchableParties(db);
   const government = await loadMatchableGovernment(db);
+  const president = await loadMatchablePresident(db);
   const index = buildInitiativeIndex(
     await db
       .select({
@@ -31,7 +44,7 @@ export const linkStoredArticles = async (
       })
       .from(initiatives),
   );
-  const totals = { scanned: 0, deputyLinks: 0, governmentLinks: 0, initiativeLinks: 0 };
+  const totals = { scanned: 0, deputyLinks: 0, governmentLinks: 0, presidentLinks: 0, initiativeLinks: 0 };
   let lastId = 0;
 
   for (;;) {
@@ -64,6 +77,13 @@ export const linkStoredArticles = async (
         mentionCount: m.mentions,
       })),
     );
+    const presidentLinks = rows.flatMap((row) =>
+      matchNames({ title: row.title, content: row.excerpt }, president).map((m) => ({
+        articleId: row.id,
+        presidentId: m.id,
+        mentionCount: m.mentions,
+      })),
+    );
     const initiativeLinks = rows.flatMap((row) =>
       matchInitiatives(index, { text: `${row.title}\n${row.excerpt}`, publishedAt: row.publishedAt }).map((m) => ({
         articleId: row.id,
@@ -80,6 +100,9 @@ export const linkStoredArticles = async (
           .delete(articleGovernmentMembers)
           .where(and(inArray(articleGovernmentMembers.articleId, ids), eq(articleGovernmentMembers.linkedBy, "auto")));
         await tx
+          .delete(articlePresidents)
+          .where(and(inArray(articlePresidents.articleId, ids), eq(articlePresidents.linkedBy, "auto")));
+        await tx
           .delete(articleInitiatives)
           .where(and(inArray(articleInitiatives.articleId, ids), eq(articleInitiatives.linkedBy, "auto")));
       }
@@ -90,6 +113,10 @@ export const linkStoredArticles = async (
       if (governmentLinks.length > 0) {
         const added = await tx.insert(articleGovernmentMembers).values(governmentLinks).onConflictDoNothing().returning();
         totals.governmentLinks += added.length;
+      }
+      if (presidentLinks.length > 0) {
+        const added = await tx.insert(articlePresidents).values(presidentLinks).onConflictDoNothing().returning();
+        totals.presidentLinks += added.length;
       }
       if (initiativeLinks.length > 0) {
         const added = await tx.insert(articleInitiatives).values(initiativeLinks).onConflictDoNothing().returning();

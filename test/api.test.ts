@@ -336,6 +336,7 @@ describe("platform", () => {
       "/api/v2/initiatives/{id}",
       "/api/v2/parliament",
       "/api/v2/parties",
+      "/api/v2/president",
     ]);
   });
 });

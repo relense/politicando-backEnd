@@ -1,4 +1,4 @@
-import type { InitiativeStatus, PartyVote, VoteRecord } from "../db/schema.js";
+import type { InitiativeStatus, PartyVote, PresidencyRecord, VoteRecord } from "../db/schema.js";
 import { partySlugForGroup } from "./groups.js";
 
 /*
@@ -162,6 +162,7 @@ export interface ParsedInitiative {
   otherAuthor: string | null;
   textUrl: string | null;
   votes: VoteRecord[];
+  presidency: PresidencyRecord | null;
   authorGroups: string[];
   authorDeputyIds: number[];
 }
@@ -236,6 +237,31 @@ const statusOf = (events: Json[]): { status: InitiativeStatus; publishedAt: stri
   return { status, publishedAt };
 };
 
+/**
+ * The President's decision from the stages, latest event winning: a vetoed decree that
+ * parliament passes again ("2ª versão") is sent and promulgated anew.
+ */
+export const presidencyOf = (events: Json[]): PresidencyRecord | null => {
+  const latest = (pattern: RegExp) =>
+    events
+      .filter((event) => pattern.test(str(event.Fase) ?? ""))
+      .map((event) => isoDate(event.DataFase))
+      .filter((date): date is string => date !== null)
+      .sort()
+      .at(-1) ?? null;
+  const sentAt = latest(/^Envio para promulgação/);
+  const promulgatedAt = latest(/^Promulgação/);
+  const vetoedAt = latest(/^Veto/);
+  if (!sentAt && !promulgatedAt && !vetoedAt) return null;
+  const status =
+    promulgatedAt && (!vetoedAt || promulgatedAt >= vetoedAt)
+      ? "promulgated"
+      : vetoedAt && (!sentAt || vetoedAt >= sentAt)
+        ? "vetoed"
+        : "pending";
+  return { status, sentAt, promulgatedAt, vetoedAt };
+};
+
 /** @param data Iniciativas<Leg>_json.txt */
 export const parseInitiatives = (data: unknown): ParsedInitiative[] => asArray(data).flatMap(parseInitiative);
 
@@ -299,6 +325,7 @@ export const parseInitiative = (raw: unknown): ParsedInitiative[] => {
       otherAuthor: otherName && !["Grupos Parlamentares", "Deputados"].includes(otherName) ? otherName : null,
       textUrl: str(item.IniLinkTexto)?.replace(/^http:/, "https:") ?? null,
       votes,
+      presidency: presidencyOf(events),
       authorGroups: [
         ...new Set(asArray(item.IniAutorGruposParlamentares).map((g) => str(g.GP)).filter((g): g is string => !!g)),
       ],

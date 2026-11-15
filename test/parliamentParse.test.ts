@@ -4,7 +4,7 @@ import { matchArticle, matchDeputies } from "../src/matching/matchParties.js";
 import { Readable } from "node:stream";
 import { deputyVote, wasSitting } from "../src/parliament/deputyVotes.js";
 import { findFolderLink, findJsonLink, streamJsonArray } from "../src/parliament/openData.js";
-import { parseDeputies, parseInitiatives, parseVoteDetail } from "../src/parliament/parse.js";
+import { parseDeputies, parseInitiatives, parseVoteDetail, presidencyOf } from "../src/parliament/parse.js";
 import { SEATS } from "../src/parliament/seatMap.js";
 import { resolveSeats } from "../src/parliament/sync.js";
 import { biographies, chamber, deputyEntry, initiativesFile } from "./parliamentFixtures.js";
@@ -299,5 +299,26 @@ describe("matchInitiatives", () => {
     const terms = termsOf("Orçamento do Estado e o primeiro-ministro");
     expect(terms.has("orcame estado")).toBe(true);
     expect(terms.has("primei minist")).toBe(false);
+  });
+});
+
+describe("presidencyOf", () => {
+  const ev = (Fase: string, DataFase: string) => ({ Fase, DataFase });
+  it("follows the decree through Belém, the latest event winning", () => {
+    expect(presidencyOf([ev("Entrada", "2026-01-01")])).toBeNull();
+    expect(presidencyOf([ev("Envio para promulgação", "2026-04-01")])).toEqual({
+      status: "pending", sentAt: "2026-04-01", promulgatedAt: null, vetoedAt: null,
+    });
+    expect(presidencyOf([ev("Envio para promulgação", "2026-04-01"), ev("Promulgação", "2026-04-10")])?.status).toBe("promulgated");
+    expect(presidencyOf([ev("Envio para promulgação", "2026-04-01"), ev("Veto (Receção)", "2026-04-20")])?.status).toBe("vetoed");
+    // Vetoed, passed again and sent back: pending, then promulgated.
+    const second = [
+      ev("Envio para promulgação", "2026-04-01"), ev("Veto (Receção)", "2026-04-20"),
+      ev("Envio para promulgação (2ª versão)", "2026-06-01"),
+    ];
+    expect(presidencyOf(second)).toMatchObject({ status: "pending", vetoedAt: "2026-04-20", sentAt: "2026-06-01" });
+    expect(presidencyOf([...second, ev("Promulgação (2ª versão)", "2026-06-10")])).toMatchObject({
+      status: "promulgated", vetoedAt: "2026-04-20", promulgatedAt: "2026-06-10",
+    });
   });
 });

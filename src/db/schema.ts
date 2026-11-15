@@ -145,6 +145,18 @@ export interface PartyVote {
   count: number | null;
 }
 
+/**
+ * What the President of the Republic did with the decree parliament sent: from the
+ * initiative's own stages ("Envio para promulgação", "Promulgação", "Veto").
+ */
+export interface PresidencyRecord {
+  /** pending: sent and waiting; vetoed: sent back to parliament (it may still pass a new version). */
+  status: "pending" | "promulgated" | "vetoed";
+  sentAt: string | null;
+  promulgatedAt: string | null;
+  vetoedAt: string | null;
+}
+
 export interface VoteRecord {
   id: string;
   date: string;
@@ -180,6 +192,8 @@ export const initiatives = pgTable(
     otherAuthor: text("other_author"),
     textUrl: text("text_url"),
     votes: jsonb().$type<VoteRecord[]>().notNull().default([]),
+    /** Null until parliament sends it to the President. */
+    presidency: jsonb().$type<PresidencyRecord>(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
@@ -336,5 +350,38 @@ export const articleGovernmentMembers = pgTable(
   (table) => [
     primaryKey({ columns: [table.articleId, table.memberId] }),
     index("article_government_members_member_idx").on(table.memberId),
+  ],
+);
+
+/** Presidents of the Republic (see src/presidency/presidents.ts). */
+export const presidents = pgTable("presidents", {
+  id: text().primaryKey(),
+  name: text().notNull(),
+  fullName: text("full_name").notNull(),
+  termStart: date("term_start").notNull(),
+  /** Null while in office. */
+  termEnd: date("term_end"),
+  /** Official biography from presidencia.pt, as plain-text paragraphs. Only kept for the current one. */
+  bio: text().array().notNull().default([]),
+  photoUrl: text("photo_url"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** News articles that name the President of the Republic. */
+export const articlePresidents = pgTable(
+  "article_presidents",
+  {
+    articleId: integer("article_id")
+      .notNull()
+      .references(() => articles.id, { onDelete: "cascade" }),
+    presidentId: text("president_id")
+      .notNull()
+      .references(() => presidents.id, { onDelete: "cascade" }),
+    mentionCount: integer("mention_count").notNull(),
+    linkedBy: text("linked_by").$type<"auto" | "manual">().notNull().default("auto"),
+  },
+  (table) => [
+    primaryKey({ columns: [table.articleId, table.presidentId] }),
+    index("article_presidents_president_idx").on(table.presidentId),
   ],
 );

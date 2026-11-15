@@ -100,6 +100,7 @@ The "diplomas" section. Newest activity first, paginated like `/articles`.
 
 Query: `status` (`approved` | `in_progress` | `rejected` | `withdrawn`), `party`
 (author party slug), `deputy` (author deputy ID), `type` (e.g. `Projeto de Lei`),
+`presidency` (`pending` | `promulgated` | `vetoed`: what the President did),
 `coverage` (`none` | `some`: whether any news was found about it), `cursor`, `limit`
 (1-50, default 10). Returns `{ items, nextCursor }`.
 
@@ -126,9 +127,20 @@ Query: `status` (`approved` | `in_progress` | `rejected` | `withdrawn`), `party`
   },
   "lastVote": { "date": "2025-11-28", "phase": "Votação final global",
                 "result": "Aprovado", "unanimous": false },  // null if never voted
+  "presidency": {                                  // null until parliament sends it to Belém
+    "status": "promulgated",                       // pending | promulgated | vetoed
+    "sentAt": "2025-12-18", "promulgatedAt": "2025-12-22", "vetoedAt": null,
+    "by": "Marcelo Rebelo de Sousa"                // President who decided (or is deciding)
+  },
   "coverage": { "articles": 8, "sources": 6, "lastAt": "2026-11-14T20:20:00.000Z" }
 }
 ```
+
+`presidency` is the President's decision, taken from the parliament's own stages. Status
+is the latest: a law that was vetoed, passed again by parliament and then promulgated
+shows `promulgated`, but keeps `vetoedAt`. Show "vetado e depois promulgado" when both
+dates are set. Only parliament decrees appear here; Government decrees don't pass through
+the parliament's data. More in `docs/presidency-api.md`.
 
 `coverage` is how much news we found about it. See "News about an initiative" below
 for how approximate that is.

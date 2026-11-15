@@ -6,6 +6,7 @@ import { articles, deputies, initiatives, parties } from "../../db/schema.js";
 import { ApiError, notFound } from "../../errors.js";
 import { deputyVote, wasSitting } from "../../parliament/deputyVotes.js";
 import { partySlugForGroup } from "../../parliament/groups.js";
+import { PRESIDENTS } from "../../presidency/presidents.js";
 import { SEAT_MAP_HEIGHT, SEAT_MAP_LEGISLATURE, SEAT_MAP_SOURCE, SEATS } from "../../parliament/seatMap.js";
 import { articleColumns, articleSchema } from "../articles/routes.js";
 import { errorSchema } from "../shared.js";
@@ -34,7 +35,7 @@ const deputySummarySchema = z.object({
   photoUrl: z.string(),
 });
 
-const initiativeSummarySchema = z.object({
+export const initiativeSummarySchema = z.object({
   id: z.number(),
   type: z.string(),
   number: z.string(),
@@ -53,6 +54,16 @@ const initiativeSummarySchema = z.object({
   lastVote: z
     .object({ date: z.string(), phase: z.string(), result: z.string(), unanimous: z.boolean() })
     .nullable(),
+  presidency: z
+    .object({
+      status: z.enum(["pending", "promulgated", "vetoed"]),
+      sentAt: z.string().nullable(),
+      promulgatedAt: z.string().nullable(),
+      vetoedAt: z.string().nullable(),
+      by: z.string().nullable().describe("President who decided (or is deciding, if pending)"),
+    })
+    .nullable()
+    .describe("What the President of the Republic did with it. Null until parliament sends it to Belém"),
   coverage: z
     .object({
       articles: z.number(),
@@ -116,6 +127,29 @@ const lastVoteSql = sql<z.infer<typeof initiativeSummarySchema>["lastVote"]>`(
   order by n desc limit 1
 )`;
 
+/** The President on the decision date: promulgation or veto, else today for pending ones. */
+const presidentOnSql = (date: SQL) =>
+  sql.join(
+    [
+      sql`case`,
+      ...PRESIDENTS.map(
+        (p) =>
+          sql`when ${date} >= ${p.termStart}::date ${p.termEnd ? sql`and ${date} < ${p.termEnd}::date` : sql``} then ${p.name}`,
+      ),
+      sql`end`,
+    ],
+    sql` `,
+  );
+const presidencySql = sql<z.infer<typeof initiativeSummarySchema>["presidency"]>`(
+  case when initiatives.presidency is null then null else
+  initiatives.presidency || jsonb_build_object('by', ${presidentOnSql(sql`coalesce(
+    case initiatives.presidency->>'status'
+      when 'promulgated' then (initiatives.presidency->>'promulgatedAt')::date
+      when 'vetoed' then (initiatives.presidency->>'vetoedAt')::date
+    end, current_date)`)})
+  end
+)`;
+
 const coverageSql = sql<z.infer<typeof initiativeSummarySchema>["coverage"]>`(
   select json_build_object(
     'articles', count(*)::int,
@@ -126,7 +160,7 @@ const coverageSql = sql<z.infer<typeof initiativeSummarySchema>["coverage"]>`(
   where ai.initiative_id = initiatives.id
 )`;
 
-const initiativeColumns = {
+export const initiativeColumns = {
   id: initiatives.id,
   type: initiatives.type,
   number: initiatives.number,
@@ -139,6 +173,7 @@ const initiativeColumns = {
   textUrl: initiatives.textUrl,
   authors: authorsSql,
   lastVote: lastVoteSql,
+  presidency: presidencySql,
   coverage: coverageSql,
 };
 
@@ -457,6 +492,10 @@ export const parliamentRoutes =
             party: z.string().optional().describe("Author party slug"),
             deputy: z.coerce.number().int().positive().max(MAX_POSTGRES_INT).optional().describe("Author deputy ID"),
             type: z.string().optional().describe('Exact type, e.g. "Projeto de Lei"'),
+            presidency: z
+              .enum(["pending", "promulgated", "vetoed"])
+              .optional()
+              .describe("What the President did: pending (in Belém), promulgated or vetoed"),
             coverage: z
               .enum(["none", "some"])
               .optional()
@@ -472,13 +511,14 @@ export const parliamentRoutes =
         },
       },
       async (request) => {
-        const { status, party, deputy, type, coverage, cursor, limit } = request.query;
+        const { status, party, deputy, type, presidency, coverage, cursor, limit } = request.query;
         const conditions: SQL[] = [];
         if (coverage) {
           const covered = sql`exists (select 1 from article_initiatives ai where ai.initiative_id = initiatives.id)`;
           conditions.push(coverage === "some" ? covered : sql`not ${covered}`);
         }
         if (status) conditions.push(eq(initiatives.status, status));
+        if (presidency) conditions.push(sql`initiatives.presidency->>'status' = ${presidency}`);
         if (type) conditions.push(eq(initiatives.type, type));
         if (cursor !== undefined) {
           const c = decodeCursor(cursor);

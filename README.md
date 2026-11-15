@@ -62,6 +62,11 @@ posts the portal dropped when every page was read.
 - Members are linked to their deputy record by name, but never to a deputy who sat in parliament
   while they were in office (a namesake).
 - When a new government takes office, the sync picks up the new portal code (gc26…) by itself.
+- The same job stores the President of the Republic: name and term are kept by hand in
+  `src/presidency/presidents.ts`, and the biography and photo come from presidencia.pt. If the
+  site's biography stops naming the President listed there, the job warns you to update it.
+- What the President did with each law (promulgated, vetoed, pending) comes from the
+  parliament's own data, in the parliament sync. See `docs/presidency-api.md`.
 
 ## News scanner
 

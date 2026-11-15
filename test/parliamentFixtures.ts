@@ -70,8 +70,8 @@ export const biographies = () => [
   },
 ];
 
-const event = (Fase: string, DataFase: string, Votacao: unknown[] | null = null) => ({ Fase, DataFase, Votacao });
-const vote = (id: string, resultado: string, detalhe: string | null = null, unanime: string | null = null) => ({
+export const event = (Fase: string, DataFase: string, Votacao: unknown[] | null = null) => ({ Fase, DataFase, Votacao });
+export const vote = (id: string, resultado: string, detalhe: string | null = null, unanime: string | null = null) => ({
   id, data: null, resultado, detalhe, unanime,
 });
 
@@ -101,6 +101,8 @@ export const initiativesFile = () => [
     event("Votação final global", "2025-10-01", [
       vote("v2", "Aprovado", "A Favor: <I>PSD</I>, <I> 3-PS</I>, <I> Pedro Vaz (PS)</I><BR>Contra:<I>CH</I><BR>Abstenção:<I>PS</I>, <I> PCP</I>"),
     ]),
+    event("Envio para promulgação", "2025-10-05"),
+    event("Promulgação", "2025-10-15"),
     event("Lei (Publicação DR)", "2025-10-20"),
   ], { groups: ["PS"], deputies: [7341] }),
   initiative(2, "Chumbada na generalidade", [

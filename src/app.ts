@@ -18,6 +18,7 @@ import type { RecaptchaVerifier } from "./modules/comments/recaptcha.js";
 import { commentRoutes } from "./modules/comments/routes.js";
 import { governmentRoutes } from "./modules/government/routes.js";
 import { parliamentRoutes } from "./modules/parliament/routes.js";
+import { presidencyRoutes } from "./modules/presidency/routes.js";
 import { partyRoutes } from "./modules/parties/routes.js";
 
 export interface AppOptions {
@@ -90,6 +91,7 @@ export const buildApp = async ({
       await api.register(articleRoutes(db));
       await api.register(parliamentRoutes(db));
       await api.register(governmentRoutes(db));
+      await api.register(presidencyRoutes(db));
       await api.register(
         commentRoutes({ db, verifyRecaptcha, createLimitPerMinute: commentLimitPerMinute }),
       );

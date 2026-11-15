@@ -56,6 +56,7 @@ export const articleSchema = z.object({
   parties: z.array(articlePartySchema),
   deputies: z.array(articleDeputySchema),
   government: z.array(articleGovernmentSchema).describe("Members of the Government named in it"),
+  president: z.object({ id: z.string(), name: z.string() }).nullable().describe("The President of the Republic, if named"),
   initiatives: z
     .array(articleInitiativeSchema)
     .describe("Initiatives it seems to be about. Found by keywords, so approximate"),
@@ -95,6 +96,13 @@ const governmentSql = sql<z.infer<typeof articleGovernmentSchema>[]>`coalesce((
   where agm.article_id = articles.id
 ), '[]'::json)`;
 
+const presidentSql = sql<{ id: string; name: string } | null>`(
+  select json_build_object('id', pr.id, 'name', pr.name)
+  from article_presidents ap join presidents pr on pr.id = ap.president_id
+  where ap.article_id = articles.id
+  order by ap.mention_count desc limit 1
+)`;
+
 const initiativesSql = sql<z.infer<typeof articleInitiativeSchema>[]>`coalesce((
   select json_agg(
     json_build_object('id', i.id, 'type', i.type, 'number', i.number, 'title', i.title)
@@ -117,6 +125,7 @@ export const articleColumns = {
   parties: partiesSql,
   deputies: deputiesSql,
   government: governmentSql,
+  president: presidentSql,
   initiatives: initiativesSql,
 };
 
@@ -133,6 +142,7 @@ export const articleRoutes =
             deputy: z.coerce.number().int().positive().max(2_147_483_647).optional().describe("Deputy ID"),
             initiative: z.coerce.number().int().positive().max(2_147_483_647).optional().describe("Initiative ID"),
             governmentMember: z.string().regex(/^[0-9a-f]{32}$/).optional().describe("Government member ID"),
+            president: z.string().regex(/^[a-z-]+$/).optional().describe('President ID, e.g. "antonio-jose-seguro"'),
             cursor: z.string().optional().describe("The nextCursor of the previous page"),
             limit: z.coerce.number().int().min(1).max(50).default(10),
           }),
@@ -147,7 +157,7 @@ export const articleRoutes =
         },
       },
       async (request) => {
-        const { party, deputy, initiative, governmentMember, cursor, limit } = request.query;
+        const { party, deputy, initiative, governmentMember, president, cursor, limit } = request.query;
         const conditions: SQL[] = [];
 
         if (cursor !== undefined) {
@@ -173,6 +183,12 @@ export const articleRoutes =
           conditions.push(sql`exists (
             select 1 from article_deputies ad
             where ad.article_id = articles.id and ad.deputy_id = ${found.id}
+          )`);
+        }
+        if (president !== undefined) {
+          conditions.push(sql`exists (
+            select 1 from article_presidents ap
+            where ap.article_id = articles.id and ap.president_id = ${president}
           )`);
         }
         if (governmentMember !== undefined) {
