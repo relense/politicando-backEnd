@@ -340,6 +340,7 @@ describe("platform", () => {
       "/api/v2/explainers/become-deputy",
       "/api/v2/government",
       "/api/v2/government/members/{id}",
+      "/api/v2/governments/history",
       "/api/v2/initiatives",
       "/api/v2/initiatives/topics",
       "/api/v2/initiatives/{id}",
@@ -349,6 +350,7 @@ describe("platform", () => {
       "/api/v2/people/{kind}/{id}/path",
       "/api/v2/places/{key}",
       "/api/v2/president",
+      "/api/v2/timeline",
     ]);
   });
 });

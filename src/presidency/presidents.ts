@@ -8,12 +8,40 @@ export interface President {
   id: string;
   name: string;
   fullName: string;
-  /** Inauguration day (9 March after the election). */
+  /** Inauguration day (9 March after the election, since 1986). */
   termStart: string;
   termEnd: string | null;
 }
 
 export const PRESIDENTS: readonly President[] = [
+  {
+    id: "antonio-ramalho-eanes",
+    name: "António Ramalho Eanes",
+    fullName: "António dos Santos Ramalho Eanes",
+    termStart: "1976-07-14",
+    termEnd: "1986-03-09",
+  },
+  {
+    id: "mario-soares",
+    name: "Mário Soares",
+    fullName: "Mário Alberto Nobre Lopes Soares",
+    termStart: "1986-03-09",
+    termEnd: "1996-03-09",
+  },
+  {
+    id: "jorge-sampaio",
+    name: "Jorge Sampaio",
+    fullName: "Jorge Fernando Branco de Sampaio",
+    termStart: "1996-03-09",
+    termEnd: "2006-03-09",
+  },
+  {
+    id: "anibal-cavaco-silva",
+    name: "Aníbal Cavaco Silva",
+    fullName: "Aníbal António Cavaco Silva",
+    termStart: "2006-03-09",
+    termEnd: "2016-03-09",
+  },
   {
     id: "marcelo-rebelo-de-sousa",
     name: "Marcelo Rebelo de Sousa",

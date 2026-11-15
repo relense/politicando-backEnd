@@ -34,7 +34,9 @@ describe("presidents", () => {
   it("knows who was President on a date", () => {
     expect(presidentOn("2025-10-15")?.name).toBe("Marcelo Rebelo de Sousa");
     expect(presidentOn("2026-03-09")?.name).toBe("António José Seguro");
-    expect(presidentOn("2010-01-01")).toBeNull();
+    expect(presidentOn("2010-01-01")?.name).toBe("Aníbal Cavaco Silva");
+    expect(presidentOn("1976-07-14")?.name).toBe("António Ramalho Eanes");
+    expect(presidentOn("1975-01-01")).toBeNull();
   });
 
   it("reads the biography, splitting paragraphs joined by <br>, and the first photo", () => {
@@ -126,7 +128,9 @@ describe("GET /president", () => {
     expect(body.legislation.pendingNow.map((i: { id: number }) => i.id)).toEqual([11]);
     expect(body.articles.map((a: { id: number }) => a.id)).toEqual([article.id]);
     expect(body.articles[0].president).toEqual({ id: "antonio-jose-seguro", name: "António José Seguro" });
-    expect(body.former.map((p: { name: string }) => p.name)).toEqual(["Marcelo Rebelo de Sousa"]);
+    expect(body.former.map((p: { name: string }) => p.name)).toEqual([
+      "Marcelo Rebelo de Sousa", "Aníbal Cavaco Silva", "Jorge Sampaio", "Mário Soares", "António Ramalho Eanes",
+    ]);
 
     const filtered = await get("/articles?president=antonio-jose-seguro");
     expect(filtered.body.items.map((a: { id: number }) => a.id)).toEqual([article.id]);

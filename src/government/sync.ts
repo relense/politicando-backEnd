@@ -3,6 +3,7 @@ import type { Db } from "../db/client.js";
 import { overwriteAll } from "../db/upsert.js";
 import { deputies, governmentMembers, governmentPositions, governments } from "../db/schema.js";
 import type { FetchResult } from "../ingestion/politeClient.js";
+import { GOVERNMENTS } from "./history.js";
 import {
   PORTAL_ORIGIN,
   PORTAL_SITEMAP,
@@ -122,6 +123,9 @@ export const syncGovernment = async (db: Db, source: GovernmentSource) => {
     ),
     updatedAt: now,
   }));
+  if (!GOVERNMENTS.some((gov) => gov.code === found.code && gov.end === null)) {
+    warnings.push(`The portal shows government ${found.code}, which src/government/history.ts doesn't list as in office: add it there`);
+  }
   const positionRows = positions.map((position) => ({ ...position, government: found.code, updatedAt: now }));
 
   await db.transaction(async (tx) => {

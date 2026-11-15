@@ -91,6 +91,13 @@ every body).
   europeias 2024), and links candidates to deputy records by name.
 - Not yet: presidenciais 2026 (not on the MAI site).
 
+## History
+
+`GET /governments/history` and `GET /timeline` serve every government since 1974 and the
+Presidents since 1976, kept by hand in `src/government/history.ts` and
+`src/presidency/presidents.ts`. When a government takes office, add it to the history: the
+daily government sync warns until you do. See `docs/history-api.md`.
+
 ## Explainers
 
 `GET /explainers/become-deputy` serves the rules for becoming a deputy, with their legal
