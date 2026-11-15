@@ -481,3 +481,32 @@ export const electionLists = pgTable(
   },
   (table) => [primaryKey({ columns: [table.electionId, table.list] })],
 );
+
+/** Candidates on each list, per círculo, as the results site publishes them. */
+export const electionCandidates = pgTable(
+  "election_candidates",
+  {
+    electionId: text("election_id")
+      .notNull()
+      .references(() => elections.id, { onDelete: "cascade" }),
+    /** The círculo: a district, Europe / outside Europe, or the whole country (europeias). */
+    placeKey: text("place_key")
+      .notNull()
+      .references(() => places.key),
+    list: text().notNull(),
+    /** Efetivo (in the running for a seat, in order) or suplente (replacement). */
+    kind: text().$type<"effective" | "alternate">().notNull(),
+    /** Order on the list, from 1. */
+    position: smallint().notNull(),
+    /** As published, usually in capitals. */
+    name: text().notNull(),
+    /** Won a seat on election night (an effective candidate within the list's seats). */
+    elected: boolean().notNull(),
+    /** Their deputy record, matched by full name. */
+    deputyId: integer("deputy_id").references(() => deputies.id, { onDelete: "set null" }),
+  },
+  (table) => [
+    primaryKey({ columns: [table.electionId, table.placeKey, table.list, table.kind, table.position] }),
+    index("election_candidates_deputy_idx").on(table.deputyId),
+  ],
+);

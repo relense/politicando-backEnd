@@ -92,6 +92,13 @@
       "when": 1794736563915,
       "tag": "0012_initiative_topics",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1794737273710,
+      "tag": "0013_election_candidates",
+      "breakpoints": true
     }
   ]
 }

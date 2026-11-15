@@ -140,6 +140,41 @@ largest results, one by one. A tie for the last seat goes to the list with fewer
 in small districts: in Portalegre (2 seats) a list needs about a third of the votes, while
 in Lisboa (48 seats) about 2% can be enough.
 
+## `GET /elections/:id/candidates?place=&list=`
+
+Who was on each list in a círculo, in order, and who got in. Available for **legislativas
+2022, 2024 and 2025** and **europeias 2024**, which the results site publishes; older
+elections return 404.
+
+```jsonc
+{
+  "election": { /* … */ },
+  "place": { "key": "LOCAL-130000", "name": "Porto", "level": "district", "dicofre": "13" },
+  "circles": [ /* every círculo with lists: for a selector */ ],
+  "lists": [{                          // most seats first
+    "list": "PS", "name": "Partido Socialista", "partySlugs": ["ps"],
+    "seats": 11,                       // draw the cut-off line after this many candidates
+    "candidates": [                    // efetivos, in order
+      { "position": 1, "name": "Fernando Manuel Ferreira Araújo", "elected": true, "deputyId": null },
+      { "position": 12, "name": "Isabel Sofia Alves Andrade", "elected": false, "deputyId": 6710 }
+    ],
+    "alternates": [ /* suplentes, same shape */ ]
+  }]
+}
+```
+
+- `place` is required for legislativas (a district, `FOREIGN-800000` or `FOREIGN-900000`).
+  Europeias have a single national list, which is the default.
+- `elected` is who won a seat on election night. `deputyId` links to the deputy record
+  (`GET /deputies/:id`): someone below the line with a `deputyId` took a seat later, replacing
+  someone. That's worth showing ("entrou por substituição"). Elected candidates with no
+  `deputyId` mostly went to the Government instead, or are spelled differently in the two
+  sources.
+- Names come in capitals from the source and are shown in proper case. A few particles may
+  look odd ("D'ávila").
+- Matching to deputies uses the full name. When spellings differ, it only matches within the
+  same círculo and party, so it misses a few rather than linking the wrong person.
+
 ## `GET /places/:key`
 
 A place with its parent and children (names only, no results): for search and navigation.

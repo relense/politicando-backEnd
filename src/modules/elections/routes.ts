@@ -2,7 +2,8 @@ import { and, asc, desc, eq, sql } from "drizzle-orm";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
 import type { Db } from "../../db/client.js";
-import { electionLists, electionResults, electionTurnout, elections, places } from "../../db/schema.js";
+import { electionCandidates, electionLists, electionResults, electionTurnout, elections, places } from "../../db/schema.js";
+import { properName } from "../../elections/candidates.js";
 import { dhondt } from "../../elections/dhondt.js";
 import { ApiError, notFound } from "../../errors.js";
 import { errorSchema } from "../shared.js";
@@ -363,6 +364,102 @@ export const electionRoutes =
           lastSeat: result.lastSeat,
           firstLoser: result.firstLoser,
           lists: result.lists,
+        };
+      },
+    );
+
+    const candidateSchema = z.object({
+      position: z.number(),
+      name: z.string().describe('Proper case, e.g. "Maria José de Aguiar"'),
+      elected: z.boolean().describe("Won a seat on election night"),
+      deputyId: z.number().nullable().describe("Their deputy record, if they are (or were) a deputy this legislature"),
+    });
+
+    app.get(
+      "/elections/:id/candidates",
+      {
+        schema: {
+          tags: ["elections"],
+          summary: "Candidate lists in one círculo: who was on each list, in order, and who got in",
+          params: z.object({ id: z.string().regex(/^[a-z]+-\d{4}$/) }),
+          querystring: z.object({
+            place: placeKeySchema.optional().describe("The círculo; required for legislativas (a district, FOREIGN-800000 or FOREIGN-900000)"),
+            list: z.string().max(60).optional().describe('One list, as on the ballot ("PS")'),
+          }),
+          response: {
+            200: z.object({
+              election: electionSummarySchema,
+              place: placeSchema,
+              circles: z
+                .array(placeSchema)
+                .describe("Every círculo with lists in this election, to choose from"),
+              lists: z.array(
+                z.object({
+                  list: z.string(),
+                  name: z.string().nullable(),
+                  partySlugs: z.array(z.string()),
+                  seats: z.number().describe("Seats it won here: the cut-off line is after this many effective candidates"),
+                  candidates: z.array(candidateSchema).describe("Efetivos, in order"),
+                  alternates: z.array(candidateSchema).describe("Suplentes, in order"),
+                }),
+              ).describe("Most seats first, then by name"),
+            }),
+            400: errorSchema,
+            404: errorSchema,
+          },
+        },
+      },
+      async (request) => {
+        const election = await findElection(request.params.id);
+        const circles = await db.execute<z.infer<typeof placeSchema>>(sql`
+          select distinct p.key, p.name, p.level, p.dicofre
+          from election_candidates c join places p on p.key = c.place_key
+          where c.election_id = ${election.id}
+          order by p.name`);
+        if (circles.rows.length === 0) throw notFound("Candidate lists for this election");
+        const key = request.query.place ?? (circles.rows.length === 1 ? circles.rows[0]!.key : null);
+        if (!key) throw new ApiError(400, "bad_request", "Pick a círculo with ?place=");
+        const place = circles.rows.find((c) => c.key === key);
+        if (!place) throw notFound("Candidate lists in this place");
+
+        const rows = await db
+          .select({
+            list: electionCandidates.list,
+            kind: electionCandidates.kind,
+            position: electionCandidates.position,
+            name: electionCandidates.name,
+            elected: electionCandidates.elected,
+            deputyId: electionCandidates.deputyId,
+            listName: electionLists.name,
+            partySlugs: sql<string[]>`coalesce(${electionLists.partySlugs}, '{}')`,
+          })
+          .from(electionCandidates)
+          .leftJoin(electionLists, and(eq(electionLists.electionId, electionCandidates.electionId), eq(electionLists.list, electionCandidates.list)))
+          .where(
+            and(
+              eq(electionCandidates.electionId, election.id),
+              eq(electionCandidates.placeKey, key),
+              request.query.list ? eq(electionCandidates.list, request.query.list) : undefined,
+            ),
+          )
+          .orderBy(asc(electionCandidates.list), asc(electionCandidates.kind), asc(electionCandidates.position));
+
+        type Out = { list: string; name: string | null; partySlugs: string[]; seats: number; candidates: z.infer<typeof candidateSchema>[]; alternates: z.infer<typeof candidateSchema>[] };
+        const lists = new Map<string, Out>();
+        for (const r of rows) {
+          const out = lists.get(r.list) ?? { list: r.list, name: r.listName, partySlugs: r.partySlugs, seats: 0, candidates: [], alternates: [] };
+          lists.set(r.list, out);
+          const candidate = { position: r.position, name: properName(r.name), elected: r.elected, deputyId: r.deputyId };
+          if (r.kind === "effective") {
+            out.candidates.push(candidate);
+            if (r.elected) out.seats++;
+          } else out.alternates.push(candidate);
+        }
+        return {
+          election,
+          place,
+          circles: circles.rows,
+          lists: [...lists.values()].sort((a, b) => b.seats - a.seats || a.list.localeCompare(b.list, "pt")),
         };
       },
     );

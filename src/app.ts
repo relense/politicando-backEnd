@@ -16,6 +16,7 @@ import { ApiError } from "./errors.js";
 import { articleRoutes } from "./modules/articles/routes.js";
 import type { RecaptchaVerifier } from "./modules/comments/recaptcha.js";
 import { commentRoutes } from "./modules/comments/routes.js";
+import { explainerRoutes } from "./modules/explainers/routes.js";
 import { peopleRoutes } from "./modules/people/routes.js";
 import { electionRoutes } from "./modules/elections/routes.js";
 import { governmentRoutes } from "./modules/government/routes.js";
@@ -96,6 +97,7 @@ export const buildApp = async ({
       await api.register(presidencyRoutes(db));
       await api.register(electionRoutes(db));
       await api.register(peopleRoutes(db));
+      await api.register(explainerRoutes(db));
       await api.register(
         commentRoutes({ db, verifyRecaptcha, createLimitPerMinute: commentLimitPerMinute }),
       );

@@ -6,7 +6,9 @@ import { deputies, governmentMembers, governmentPositions, parties, presidents }
 import { notFound } from "../../errors.js";
 import { LEGISLATURES } from "../../parliament/legislatures.js";
 import { PARTY_LEADERS } from "../../parliament/leadership.js";
+import { candidaciesOf } from "../../elections/candidates.js";
 import {
+  candidacySteps,
   deputyCurrentRoles,
   deputyOtherRoles,
   deputySteps,
@@ -28,9 +30,9 @@ const stepSchema = z.object({
     .describe("legislature: they sat at some point in that legislature, whose dates these are"),
   title: z.string(),
   detail: z.string().nullable(),
-  kind: z.enum(["parliament", "government", "presidency", "party", "local", "other"]),
+  kind: z.enum(["election", "parliament", "government", "presidency", "party", "local", "other"]),
   current: z.boolean(),
-  source: z.string().nullable().describe("Official page this comes from"),
+  source: z.string().nullable().describe("Official page this comes from; for elections, our endpoint with the full list"),
 });
 
 const refSchema = z.object({ kind: kindSchema, id: z.string() });
@@ -108,7 +110,14 @@ export const peopleRoutes =
       }
 
       const record = deputy && { ...deputy, legislature: LEGISLATURE };
+      const candidacies = deputy
+        ? (await candidaciesOf(db, deputy.id)).rows.map((r) => ({
+            electionId: r.election_id, electionName: r.election_name, date: r.date, place: r.place,
+            list: r.list, kind: r.kind, position: r.position, elected: r.elected,
+          }))
+        : [];
       const steps = [
+        ...candidacySteps(candidacies, deputy?.gender ?? null),
         ...(record ? deputySteps(record) : []),
         ...(member ? governmentSteps(member.posts) : []),
         ...(president ? presidencySteps(president, BIOGRAPHY_URL) : []),

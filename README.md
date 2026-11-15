@@ -87,7 +87,15 @@ every body).
   official place codes, so it is matched by name to the places earlier elections stored, and
   it must run after autárquicas 2021 (the job's order already does this). Parishes restored
   in 2025 get keys like `AUTARQUICAS2025-1234` with no DICOFRE code.
+- The same job imports candidate lists where the site has them (legislativas 2022-2025,
+  europeias 2024), and links candidates to deputy records by name.
 - Not yet: presidenciais 2026 (not on the MAI site).
+
+## Explainers
+
+`GET /explainers/become-deputy` serves the rules for becoming a deputy, with their legal
+basis, from `src/explainers/becomeDeputy.ts`. Review that text when the electoral law
+changes. See `docs/become-deputy-api.md`.
 
 ## People
 

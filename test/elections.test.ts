@@ -4,6 +4,9 @@ import type { ElectionDef } from "../src/elections/catalog.js";
 import { importElection, type ElectionSource } from "../src/elections/import.js";
 import { dicofreOf, levelOf, maiUrls, parseResults, partiesInList } from "../src/elections/mai.js";
 import { placeNameKey, v3Urls } from "../src/elections/maiV3.js";
+import { candidatesUrl, importCandidates, looselySame, parseCandidates, properName } from "../src/elections/candidates.js";
+import { deputies, parties } from "../src/db/schema.js";
+import { eq } from "drizzle-orm";
 import { createTestDb, resetDb } from "./helpers.js";
 
 const results = (voters: number, lists: [string, number, number | null][], totalMandates = 0) => ({
@@ -234,6 +237,117 @@ describe("importElection on the newest platform", () => {
 
     // Re-running matches the restored parish to the key it got the first time.
     expect(await importElection(db, sourceFor(v3SiteFiles()).source, AUTARQUICAS_2025)).toMatchObject({ places: 0, skipped: 9 });
+  });
+});
+
+describe("candidate lists", () => {
+  it("parses a círculo's lists", () => {
+    const parsed = parseCandidates({
+      numberOfPages: 1,
+      electionCandidates: [{
+        territoryKey: "LOCAL-010000", territoryName: "Aveiro",
+        candidates: [{ party: "PS", mandates: 1, effectiveCandidates: ["ANA SILVA", "RUI COSTA"], alternateCandidates: ["EVA REIS"] }],
+      }],
+    });
+    expect(parsed).toEqual({
+      pages: 1,
+      circles: [{ territoryKey: "LOCAL-010000", territoryName: "Aveiro", lists: [{ list: "PS", seats: 1, effective: ["ANA SILVA", "RUI COSTA"], alternates: ["EVA REIS"] }] }],
+    });
+    expect(parseCandidates("nope")).toEqual({ pages: 1, circles: [] });
+  });
+
+  it("names files the way the site does", () => {
+    expect(candidatesUrl(LEGISLATIVAS, "LOCAL-010000", 1)).toBe(
+      "https://www.eleicoes.mai.gov.pt/legislativas2025/assets/static/candidates/parties-candidates-AR-LOCAL-010000-1-false.json",
+    );
+    expect(candidatesUrl({ ...LEGISLATIVAS, site: "europeias2024", organs: ["PE"] }, null, 2)).toBe(
+      "https://www.eleicoes.mai.gov.pt/europeias2024/assets/static/candidates/parties-candidates-PE-2-false.json",
+    );
+  });
+
+  it("compares names loosely, but not too loosely", () => {
+    expect(looselySame("MARIANA MORTÁGUA", "Mariana Rodrigues Mortágua")).toBe(true);
+    expect(looselySame("PAULO ALEXANDRE DE SOUSA NEVES", "Paulo Alexandre Sousa Neves")).toBe(true);
+    expect(looselySame("VANESSA CLAÚDIA NOGUEIRA ROSA BARATA", "Vanessa Cláudia Nogueira da Rosa Pereira Barata")).toBe(true);
+    expect(looselySame("BRUNO MANUEL PEDROSA VENTURA", "Bruno Miguel Pedrosa Ventura")).toBe(false);
+    expect(looselySame("IDALINA MARIA MOREIRA COSTA", "Idalina Maria Moreira Durães")).toBe(false);
+    expect(looselySame("MARIANA", "Mariana Mortágua")).toBe(false);
+  });
+
+  it("writes names in proper case", () => {
+    expect(properName("PORFÍRIO SIMÕES DE CARVALHO E SILVA")).toBe("Porfírio Simões de Carvalho e Silva");
+    expect(properName("ANA-RITA D'ÁVILA")).toBe("Ana-Rita D'ávila");
+  });
+});
+
+const candidateFiles = () => {
+  const files = siteFor(LEGISLATIVAS);
+  files[candidatesUrl(LEGISLATIVAS, "LOCAL-010000", 1)] = {
+    numberOfPages: 1,
+    electionCandidates: [{
+      territoryKey: "LOCAL-010000", territoryName: "Aveiro",
+      candidates: [
+        { party: "PPD/PSD.CDS-PP", mandates: 2, effectiveCandidates: ["ANA MARIA SILVA", "RUI COSTA", "JOÃO DIAS"], alternateCandidates: ["EVA REIS"] },
+        { party: "PS", mandates: 1, effectiveCandidates: ["MARIANA MORTÁGUA", "PEDRO NUNES"], alternateCandidates: [] },
+      ],
+    }],
+  };
+  return files;
+};
+
+const addDeputy = async (id: number, fullName: string, party: string, gender: "M" | "F" = "F") => {
+  const [p] = await db.select({ id: parties.id }).from(parties).where(eq(parties.slug, party));
+  await db.insert(deputies).values({ id, name: fullName, fullName, constituency: "Aveiro", situation: "Efetivo", active: true, partyId: p!.id, gender });
+};
+
+describe("importCandidates", () => {
+  it("stores every list in order, marks who got in, and links deputies", async () => {
+    await importElection(db, sourceFor(siteFor(LEGISLATIVAS)).source, LEGISLATIVAS);
+    await addDeputy(1, "Ana Maria Silva", "psd");
+    await addDeputy(2, "Mariana Rodrigues Mortágua", "ps"); // Spelled differently, same círculo and party.
+    await addDeputy(3, "João Dias Fonseca", "chega"); // Not on the PSD list's party: no loose link.
+    const stats = await importCandidates(db, sourceFor(candidateFiles()).source, LEGISLATIVAS);
+    // Aveiro's file, and the two círculos abroad missing.
+    expect(stats).toEqual({ circles: 1, candidates: 6, linked: 2, missing: 2 });
+
+    const { body } = await get("/elections/legislativas-2025/candidates?place=LOCAL-010000");
+    expect(body.circles.map((c: { key: string }) => c.key)).toEqual(["LOCAL-010000"]);
+    expect(body.lists.map((l: { list: string; seats: number }) => [l.list, l.seats])).toEqual([["PPD/PSD.CDS-PP", 2], ["PS", 1]]);
+    expect(body.lists[0].candidates).toEqual([
+      { position: 1, name: "Ana Maria Silva", elected: true, deputyId: 1 },
+      { position: 2, name: "Rui Costa", elected: true, deputyId: null },
+      { position: 3, name: "João Dias", elected: false, deputyId: null },
+    ]);
+    expect(body.lists[0].alternates).toEqual([{ position: 1, name: "Eva Reis", elected: false, deputyId: null }]);
+    expect(body.lists[1].candidates[0]).toMatchObject({ name: "Mariana Mortágua", deputyId: 2 });
+    expect((await get("/elections/legislativas-2025/candidates?place=LOCAL-010000&list=PS")).body.lists).toHaveLength(1);
+    // With one círculo, it's the default.
+    expect((await get("/elections/legislativas-2025/candidates")).body.place.key).toBe("LOCAL-010000");
+    expect((await get("/elections/legislativas-2025/candidates?place=LOCAL-130000")).status).toBe(404);
+
+    // Their career path shows where they stood.
+    const path = await get("/people/deputy/2/path");
+    expect(path.body.path).toContainEqual(expect.objectContaining({
+      kind: "election", title: "Candidata nas Legislativas 2025", detail: "nº 1 da lista PS, círculo de Aveiro (eleita)",
+    }));
+
+    // Re-importing replaces, doesn't duplicate.
+    expect(await importCandidates(db, sourceFor(candidateFiles()).source, LEGISLATIVAS)).toMatchObject({ candidates: 6 });
+  });
+
+  it("skips elections whose site has no lists", async () => {
+    expect(await importCandidates(db, sourceFor({}).source, AUTARQUICAS)).toEqual({ circles: 0, candidates: 0, linked: 0, missing: 0 });
+  });
+});
+
+describe("explainers", () => {
+  it("explains how one becomes a deputy, with seats per círculo from the latest legislativas", async () => {
+    const empty = await get("/explainers/become-deputy");
+    expect(empty.body.circles).toBeNull();
+    expect(empty.body.sections.every((s: { sources: unknown[] }) => s.sources.length > 0)).toBe(true);
+    await importElection(db, sourceFor(siteFor(LEGISLATIVAS)).source, LEGISLATIVAS);
+    const { body } = await get("/explainers/become-deputy");
+    expect(body.circles).toEqual({ election: "legislativas-2025", items: [{ key: "LOCAL-010000", name: "Aveiro", seats: 3 }] });
   });
 });
 

@@ -6,7 +6,7 @@ import { legislatureDates } from "../parliament/legislatures.js";
  * beyond legislature dates.
  */
 
-export type StepKind = "parliament" | "government" | "presidency" | "party" | "local" | "other";
+export type StepKind = "election" | "parliament" | "government" | "presidency" | "party" | "local" | "other";
 
 export interface PathStep {
   from: string | null;
@@ -92,6 +92,28 @@ export const presidencySteps = (p: { termStart: string; termEnd: string | null }
   from: p.termStart, to: p.termEnd, precision: "day", title: "Presidente da República", detail: null,
   kind: "presidency", current: p.termEnd === null, source,
 }];
+
+export interface Candidacy {
+  electionId: string;
+  electionName: string;
+  date: string;
+  place: string;
+  list: string;
+  kind: string;
+  position: number;
+  elected: boolean;
+}
+
+/** Where they stood on a list: "nº 3 da lista PS no círculo de Porto". */
+export const candidacySteps = (rows: Candidacy[], gender: string | null): PathStep[] =>
+  rows.map((c) => ({
+    from: c.date, to: c.date, precision: "day",
+    title: `${gender === "F" ? "Candidata" : "Candidato"} nas ${c.electionName}`,
+    detail: `${c.kind === "alternate" ? "suplente nº" : "nº"} ${c.position} da lista ${c.list}, círculo de ${c.place}${
+      c.elected ? ` (${gender === "F" ? "eleita" : "eleito"})` : ""
+    }`,
+    kind: "election", current: false, source: `/elections/${c.electionId}/candidates`,
+  }));
 
 /** Newest first: ongoing steps on top, then by end date, then by start date. */
 export const sortPath = (steps: PathStep[]) =>

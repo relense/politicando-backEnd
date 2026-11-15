@@ -1,12 +1,13 @@
 import { loadDatabaseConfig } from "../config.js";
 import { createDb } from "../db/client.js";
 import { ELECTIONS } from "../elections/catalog.js";
+import { importCandidates } from "../elections/candidates.js";
 import { importElection } from "../elections/import.js";
 import { createPoliteClient } from "../ingestion/politeClient.js";
 
 /*
- * One-off import of election results. Not a scheduled job: run it once, and again after
- * an election once the official count is final.
+ * One-off import of election results, and the candidate lists where the site has them. Not
+ * a scheduled job: run it once, and again after an election once the official count is final.
  *
  *   npm run elections:import                         every election in the catalog
  *   npm run elections:import -- legislativas-2025    just one (or several)
@@ -34,7 +35,8 @@ try {
       refresh: args.includes("--refresh"),
       onProgress: (message) => console.log(message),
     });
-    console.log(JSON.stringify({ election: election.id, ...stats }));
+    const candidates = await importCandidates(db, client, election);
+    console.log(JSON.stringify({ election: election.id, ...stats, candidates }));
   }
 } catch (error) {
   console.error("Election import failed:", error);
