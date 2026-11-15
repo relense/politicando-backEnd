@@ -259,3 +259,82 @@ export const articleInitiatives = pgTable(
     index("article_initiatives_initiative_idx").on(table.initiativeId),
   ],
 );
+
+/** People in the Government, from portugal.gov.pt (see src/government/portal.ts). */
+export const governmentMembers = pgTable(
+  "government_members",
+  {
+    /** The portal's ID for the person, stable across posts. */
+    id: text().primaryKey(),
+    name: text().notNull(),
+    gender: text().$type<"M" | "F">(),
+    photoUrl: text("photo_url"),
+    /** Plain-text paragraphs of the official biography. */
+    bio: text().array().notNull().default([]),
+    links: jsonb().$type<{ network: string; url: string }[]>().notNull().default([]),
+    /** Their record as a deputy, matched by name, when they sat in this legislature. */
+    deputyId: integer("deputy_id").references(() => deputies.id, { onDelete: "set null" }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("government_members_deputy_idx").on(table.deputyId)],
+);
+
+/** Posts held in the Government, current and past. */
+export const governmentPositions = pgTable(
+  "government_positions",
+  {
+    /** The portal's ID for this person in this post. */
+    id: text().primaryKey(),
+    memberId: text("member_id")
+      .notNull()
+      .references(() => governmentMembers.id, { onDelete: "cascade" }),
+    /** Portal code of the government, e.g. "gc25". */
+    government: text().notNull(),
+    kind: text().$type<"prime_minister" | "minister" | "secretary_of_state">().notNull(),
+    /** "Ministro de Estado e das Finanças", "Secretária de Estado dos Assuntos Fiscais". */
+    title: text().notNull(),
+    /** Ministry slug ("financas"), or "primeiro-ministro". */
+    area: text().notNull(),
+    areaName: text("area_name").notNull(),
+    /** Ministry order (protocol order); 0 is the Prime Minister. */
+    areaRank: smallint("area_rank").notNull(),
+    /** Order within the ministry: 0 is the minister. */
+    rank: smallint().notNull(),
+    startDate: date("start_date"),
+    /** Null while in office. */
+    endDate: date("end_date"),
+    url: text().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("government_positions_member_idx").on(table.memberId),
+    index("government_positions_government_idx").on(table.government, table.areaRank, table.rank),
+  ],
+);
+
+/** The government itself, one row per portal code. */
+export const governments = pgTable("governments", {
+  code: text().primaryKey(),
+  name: text().notNull(),
+  startDate: date("start_date"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** News articles that name a member of the Government. */
+export const articleGovernmentMembers = pgTable(
+  "article_government_members",
+  {
+    articleId: integer("article_id")
+      .notNull()
+      .references(() => articles.id, { onDelete: "cascade" }),
+    memberId: text("member_id")
+      .notNull()
+      .references(() => governmentMembers.id, { onDelete: "cascade" }),
+    mentionCount: integer("mention_count").notNull(),
+    linkedBy: text("linked_by").$type<"auto" | "manual">().notNull().default("auto"),
+  },
+  (table) => [
+    primaryKey({ columns: [table.articleId, table.memberId] }),
+    index("article_government_members_member_idx").on(table.memberId),
+  ],
+);

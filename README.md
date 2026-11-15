@@ -47,6 +47,22 @@ To hide a comment, set its `hidden_at` in the database. There is no admin endpoi
 
 Comment `body` and `username`, and headlines and excerpts from news sources, are stored as received. **Clients must escape them when rendering.**
 
+## Government
+
+`npm run government:sync` reads the Government's composition from portugal.gov.pt: the Prime
+Minister, ministers and secretaries of state, with biographies, photos and past holders.
+There's no open-data file, so it finds each member's page through the portal's sitemap and
+reads the data embedded in it, politely (robots.txt, one request every 2 seconds, about
+3 minutes in total). Run it daily with `node dist/jobs/syncGovernment.js`. It refuses to sync
+if the portal lists no Prime Minister or fewer than 10 ministers in office. It only deletes
+posts the portal dropped when every page was read.
+
+- Endpoints: `GET /government`, `GET /government/members/:id`. See `docs/government-api.md`.
+- Code: `src/government/portal.ts` (parsing), `src/government/sync.ts`.
+- Members are linked to their deputy record by name, but never to a deputy who sat in parliament
+  while they were in office (a namesake).
+- When a new government takes office, the sync picks up the new portal code (gc26…) by itself.
+
 ## News scanner
 
 `npm run ingest` scans once and exits. It uses no paid API. The sources are in `src/ingestion/sources.ts`.

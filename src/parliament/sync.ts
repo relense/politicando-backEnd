@@ -1,6 +1,6 @@
-import { getTableColumns, inArray, notInArray, sql } from "drizzle-orm";
-import type { PgTable } from "drizzle-orm/pg-core";
+import { inArray, notInArray } from "drizzle-orm";
 import type { Db } from "../db/client.js";
+import { overwriteAll } from "../db/upsert.js";
 import {
   deputies,
   initiativeDeputies,
@@ -28,12 +28,6 @@ export interface SyncStats {
 const CHUNK = 500;
 
 /** `set` for an upsert that overwrites every column except the key. */
-const overwriteAll = (table: PgTable, except = "id") =>
-  Object.fromEntries(
-    Object.entries(getTableColumns(table))
-      .filter(([key]) => key !== except)
-      .map(([key, column]) => [key, sql.raw(`excluded."${column.name}"`)]),
-  );
 const chunks = <T>(items: T[]) =>
   Array.from({ length: Math.ceil(items.length / CHUNK) }, (_, i) => items.slice(i * CHUNK, (i + 1) * CHUNK));
 

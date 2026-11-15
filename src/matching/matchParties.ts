@@ -111,6 +111,19 @@ export const matchDeputies = (
     .sort((a, b) => b.mentions - a.mentions || a.deputyId - b.deputyId);
 
 /**
+ * People named in an article by any of their terms (full names), most mentioned first.
+ * Used for members of the Government, who are named in full in the news.
+ */
+export const matchNames = <Id extends string | number>(
+  article: { title: string; content: string },
+  people: { id: Id; terms: string[] }[],
+): { id: Id; mentions: number }[] =>
+  people
+    .map((person) => ({ id: person.id, mentions: weighted(article, regexFor(person)) }))
+    .filter(({ mentions }) => mentions > 0)
+    .sort((a, b) => b.mentions - a.mentions || String(a.id).localeCompare(String(b.id)));
+
+/**
  * Scores parties and deputies together. A deputy's mentions also count for their party,
  * but an article still needs at least one direct party mention to be kept, so a namesake
  * of a deputy in a football story doesn't make it political.

@@ -2,10 +2,12 @@ import { eq, gte, inArray } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import {
   articleDeputies,
+  articleGovernmentMembers,
   articleInitiatives,
   articleParties,
   articles,
   deputies,
+  governmentMembers,
   initiatives,
   parties,
   seenSourceUris,
@@ -13,6 +15,7 @@ import {
 import {
   countMentions,
   matchArticle,
+  matchNames,
   type DeputyMatch,
   type MatchableDeputy,
   type MatchableParty,
@@ -69,7 +72,29 @@ export interface Matchable {
   parties: MatchableParty[];
   deputies: MatchableDeputy[];
   initiatives: InitiativeIndex;
+  government: MatchablePerson[];
 }
+
+export interface MatchablePerson {
+  id: string;
+  terms: string[];
+}
+
+/**
+ * Members of the Government, current and past, matched by their full name. A name shared
+ * with a sitting deputy is left out: the news would mostly be about the deputy.
+ */
+export const loadMatchableGovernment = async (db: Db): Promise<MatchablePerson[]> => {
+  const sitting = new Set(
+    (await db.select({ name: deputies.name }).from(deputies).where(eq(deputies.active, true))).map((d) => simpleName(d.name)),
+  );
+  return (await db.select({ id: governmentMembers.id, name: governmentMembers.name }).from(governmentMembers))
+    .filter(({ name }) => name.trim().split(/\s+/).length >= 2 && !sitting.has(simpleName(name)))
+    .map(({ id, name }) => ({ id, terms: [name] }));
+};
+
+const simpleName = (name: string) =>
+  name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
 
 /**
  * Initiatives active recently enough to be in the news. Rarity is still measured over
@@ -155,7 +180,12 @@ const markSeen = (db: Db, url: string) =>
 const saveArticle = (
   db: Db,
   article: typeof articles.$inferInsert,
-  matches: { parties: PartyMatch[]; deputies: DeputyMatch[]; initiatives: InitiativeMatch[] },
+  matches: {
+    parties: PartyMatch[];
+    deputies: DeputyMatch[];
+    initiatives: InitiativeMatch[];
+    government: { id: string; mentions: number }[];
+  },
 ) =>
   db.transaction(async (tx) => {
     const [inserted] = await tx
@@ -176,6 +206,15 @@ const saveArticle = (
         matches.deputies.map((match) => ({
           articleId: inserted.id,
           deputyId: match.deputyId,
+          mentionCount: match.mentions,
+        })),
+      );
+    }
+    if (matches.government.length > 0) {
+      await tx.insert(articleGovernmentMembers).values(
+        matches.government.map((match) => ({
+          articleId: inserted.id,
+          memberId: match.id,
           mentionCount: match.mentions,
         })),
       );
@@ -273,11 +312,8 @@ const scanSource = async (
         }
       }
 
-      const matches = matchArticle(
-        { title, content: `${description}\n${bodyText}` },
-        matchable.parties,
-        matchable.deputies,
-      );
+      const text = { title, content: `${description}\n${bodyText}` };
+      const matches = matchArticle(text, matchable.parties, matchable.deputies);
       if (matches.parties.length > 0) {
         const initiativeMatches = matchInitiatives(matchable.initiatives, {
           text: `${title}\n${description}\n${bodyText}`.slice(0, INITIATIVE_TEXT_CHARS),
@@ -294,7 +330,7 @@ const scanSource = async (
             imageUrl,
             publishedAt: item.publishedAt,
           },
-          { ...matches, initiatives: initiativeMatches },
+          { ...matches, initiatives: initiativeMatches, government: matchNames(text, matchable.government) },
         );
         stats.matched++;
       } else if (pageUnavailable) {
@@ -317,6 +353,7 @@ export const ingest = async (options: IngestOptions): Promise<SourceStats[]> => 
     parties: await loadMatchableParties(options.db),
     deputies: await loadMatchableDeputies(options.db),
     initiatives: await loadInitiativeIndex(options.db, options.now),
+    government: await loadMatchableGovernment(options.db),
   };
   if (matchable.parties.length === 0) throw new Error("No parties found: run the seed first");
   return Promise.all(options.sources.map((source) => scanSource(source, matchable, options)));

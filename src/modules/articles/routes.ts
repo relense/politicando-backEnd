@@ -42,6 +42,8 @@ const articleInitiativeSchema = z.object({
   title: z.string(),
 });
 
+const articleGovernmentSchema = z.object({ id: z.string(), name: z.string() });
+
 export const articleSchema = z.object({
   id: z.number(),
   title: z.string(),
@@ -53,6 +55,7 @@ export const articleSchema = z.object({
   commentCount: z.number(),
   parties: z.array(articlePartySchema),
   deputies: z.array(articleDeputySchema),
+  government: z.array(articleGovernmentSchema).describe("Members of the Government named in it"),
   initiatives: z
     .array(articleInitiativeSchema)
     .describe("Initiatives it seems to be about. Found by keywords, so approximate"),
@@ -85,6 +88,13 @@ const deputiesSql = sql<z.infer<typeof articleDeputySchema>[]>`coalesce((
   where ad.article_id = articles.id
 ), '[]'::json)`;
 
+const governmentSql = sql<z.infer<typeof articleGovernmentSchema>[]>`coalesce((
+  select json_agg(json_build_object('id', g.id, 'name', g.name) order by agm.mention_count desc, g.name)
+  from article_government_members agm
+  join government_members g on g.id = agm.member_id
+  where agm.article_id = articles.id
+), '[]'::json)`;
+
 const initiativesSql = sql<z.infer<typeof articleInitiativeSchema>[]>`coalesce((
   select json_agg(
     json_build_object('id', i.id, 'type', i.type, 'number', i.number, 'title', i.title)
@@ -106,6 +116,7 @@ export const articleColumns = {
   commentCount: commentCountSql,
   parties: partiesSql,
   deputies: deputiesSql,
+  government: governmentSql,
   initiatives: initiativesSql,
 };
 
@@ -121,6 +132,7 @@ export const articleRoutes =
             party: z.string().optional().describe("Party slug"),
             deputy: z.coerce.number().int().positive().max(2_147_483_647).optional().describe("Deputy ID"),
             initiative: z.coerce.number().int().positive().max(2_147_483_647).optional().describe("Initiative ID"),
+            governmentMember: z.string().regex(/^[0-9a-f]{32}$/).optional().describe("Government member ID"),
             cursor: z.string().optional().describe("The nextCursor of the previous page"),
             limit: z.coerce.number().int().min(1).max(50).default(10),
           }),
@@ -135,7 +147,7 @@ export const articleRoutes =
         },
       },
       async (request) => {
-        const { party, deputy, initiative, cursor, limit } = request.query;
+        const { party, deputy, initiative, governmentMember, cursor, limit } = request.query;
         const conditions: SQL[] = [];
 
         if (cursor !== undefined) {
@@ -161,6 +173,12 @@ export const articleRoutes =
           conditions.push(sql`exists (
             select 1 from article_deputies ad
             where ad.article_id = articles.id and ad.deputy_id = ${found.id}
+          )`);
+        }
+        if (governmentMember !== undefined) {
+          conditions.push(sql`exists (
+            select 1 from article_government_members agm
+            where agm.article_id = articles.id and agm.member_id = ${governmentMember}
           )`);
         }
         if (initiative !== undefined) {
