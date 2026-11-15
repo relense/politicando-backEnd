@@ -78,6 +78,13 @@
       "when": 1794735094855,
       "tag": "0010_elections",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1794736047440,
+      "tag": "0011_election_labels",
+      "breakpoints": true
     }
   ]
 }

@@ -83,7 +83,11 @@ every body).
   `GET /places/:key`. See `docs/elections-api.md`.
 - Code: `src/elections/catalog.ts` (which elections), `src/elections/mai.ts` (file formats),
   `src/elections/import.ts`.
-- Not yet: autárquicas 2025 (the site's newer format) and presidenciais 2026.
+- Autárquicas 2025 uses the site's newest format (`src/elections/maiV3.ts`). It has no
+  official place codes, so it is matched by name to the places earlier elections stored, and
+  it must run after autárquicas 2021 (the job's order already does this). Parishes restored
+  in 2025 get keys like `AUTARQUICAS2025-1234` with no DICOFRE code.
+- Not yet: presidenciais 2026 (not on the MAI site).
 
 ## News scanner
 

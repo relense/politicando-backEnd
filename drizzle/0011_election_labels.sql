@@ -1,0 +1,1 @@
+ALTER TABLE "election_results" ADD COLUMN "label" text;

@@ -12,10 +12,9 @@ country to a town.
 | `legislativas` | 2011, 2015, 2019, 2022, 2024, 2025 | `AR`: Assembleia da República |
 | `europeias` | 2014, 2019 (`EUR`), 2024 (`PE`) | European Parliament |
 | `presidenciais` | 2011, 2016, 2021 | `PR` |
-| `autarquicas` | 2013, 2017, 2021 | `CM` câmara, `AM` assembleia municipal, `AF` assembleia de freguesia |
+| `autarquicas` | 2013, 2017, 2021, 2025 | `CM` câmara, `AM` assembleia municipal, `AF` assembleia de freguesia |
 
-Not yet available: **autárquicas 2025**, which uses a different site format, and
-**presidenciais 2026**, which isn't on the MAI site. Both are planned.
+Not yet available: **presidenciais 2026**, which isn't on the MAI site.
 
 Election ids are `<type>-<year>`, e.g. `legislativas-2025`.
 
@@ -58,7 +57,7 @@ between câmara, assembleia municipal and freguesia.
   "turnout": { "registered": 40000, "voters": 23000, "turnoutPct": 57.5, "blank": 300, "null": 250, "totalMandates": null },
   "lists": [{                          // most votes first
     "list": "PPD/PSD.CDS-PP",          // as on the ballot (a candidate's name in presidenciais)
-    "name": "AD - COLIGAÇÃO PSD/CDS",
+    "name": "AD - COLIGAÇÃO PSD/CDS",  // autárquicas: the list's local name ("Viva Cascais")
     "partySlugs": ["psd", "cds-pp"],   // our parties in it: use for colours and links; [] if none
     "coalition": true,
     "citizens": false,                 // citizens' group (independents), autárquicas
@@ -88,15 +87,22 @@ election doesn't have (e.g. `organ=CM` in legislativas).
 | `foreign` | `FOREIGN-600000`, then `FOREIGN-800000` Europe, `FOREIGN-900000` outside Europe | null |
 | `district` | `LOCAL-xx0000` (and the islands' regions) | `xx` |
 | `municipality` | `LOCAL-xxyy00` | `xxyy` |
-| `parish` | `LOCAL-xxyyzz` | `xxyyzz` |
+| `parish` | `LOCAL-xxyyzz` (`AUTARQUICAS2025-n` for parishes restored in 2025) | `xxyyzz` (null for restored ones) |
 
 `dicofre` is the official INE/DGT code, which also identifies features in the CAOP map
 boundaries (GeoJSON from DGT), so `children[].dicofre` can colour a map by winner.
 
 - Legislativas, europeias and presidenciais go down to municipalities. Autárquicas go to
   municipalities for `CM`/`AM` and to parishes for `AF`.
-- Parish boundaries change over time (the 2013 reform merged many), so a parish key that
-  exists in 2013 may not exist in 2021.
+- Parish boundaries change over time. The 2013 reform merged many parishes, and in 2025 about
+  300 were restored. So a parish key that exists in 2013 may not exist in 2021.
+- **Autárquicas 2025:** the site gives no official codes, so places are matched by name to
+  earlier elections. The restored parishes are new: their key looks like
+  `AUTARQUICAS2025-1234` and `dicofre` is `null`, so they can't be coloured on a map by
+  code yet. Their results are complete.
+- In autárquicas, one acronym can stand for different local lists (`PPD/PSD.CDS-PP` runs as
+  "Viva Cascais" in one town and "MAIA EM PRIMEIRO" in another). `name` is the local name
+  on that ballot. In national totals for such acronyms, it is the acronym itself.
 - In legislativas, seats are won per district (*círculo*): `mandates` at district level
   and in the total, not at municipality level.
 

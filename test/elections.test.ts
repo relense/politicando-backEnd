@@ -3,6 +3,7 @@ import { buildApp } from "../src/app.js";
 import type { ElectionDef } from "../src/elections/catalog.js";
 import { importElection, type ElectionSource } from "../src/elections/import.js";
 import { dicofreOf, levelOf, maiUrls, parseResults, partiesInList } from "../src/elections/mai.js";
+import { placeNameKey, v3Urls } from "../src/elections/maiV3.js";
 import { createTestDb, resetDb } from "./helpers.js";
 
 const results = (voters: number, lists: [string, number, number | null][], totalMandates = 0) => ({
@@ -78,6 +79,24 @@ describe("results files", () => {
     expect(parseResults("Not found")).toBeNull();
   });
 
+  it("reads the newest platform's shape and works out the share of valid votes", () => {
+    const parsed = parseResults({
+      data: {
+        currentResults: {
+          totalVoters: 1000, subscribedVoters: 2000, percentageVoters: 50, blankVotes: 60, nullVotes: 40, totalMandates: 7,
+          resultsParty: [{ id: 1758, acronym: "PS", votes: 450, percentage: 45, mandates: 4, presidents: 1 }],
+        },
+      },
+    })!;
+    expect(parsed.turnout.voters).toBe(1000);
+    expect(parsed.lists[0]).toMatchObject({ list: "PS", optionId: 1758, pct: 45, validPct: 50, presidents: 1 });
+  });
+
+  it("matches place names across elections", () => {
+    expect(placeNameKey("Belazaima do Chão, Castanheira do Vouga e Agadão")).toBe("belazaima do chao castanheira do vouga e agadao");
+    expect(placeNameKey("ÁGUEDA")).toBe(placeNameKey("Águeda"));
+  });
+
   it("knows our parties in ballot lists, including coalitions", () => {
     expect(partiesInList("PPD/PSD.CDS-PP")).toEqual(["psd", "cds-pp"]);
     expect(partiesInList("PPD/PSD.CDS-PP.PPM")).toEqual(["psd", "cds-pp"]);
@@ -124,7 +143,7 @@ const get = async (url: string) => {
 describe("importElection", () => {
   it("imports down to municipalities, skips what's stored, and goes to parishes for juntas", async () => {
     const { source, requested } = sourceFor(siteFor(LEGISLATIVAS));
-    expect(await importElection(db, source, LEGISLATIVAS)).toEqual({ places: 5, skipped: 0, missing: 0, lists: 3 });
+    expect(await importElection(db, source, LEGISLATIVAS)).toEqual({ places: 5, skipped: 0, missing: 0, lists: 3, unmatched: 0 });
     expect(requested.some((u) => u.includes("LOCAL-010103"))).toBe(false); // No parishes for AR by default.
 
     const again = sourceFor(siteFor(LEGISLATIVAS));
@@ -134,6 +153,84 @@ describe("importElection", () => {
     const autarquicas = sourceFor(siteFor(AUTARQUICAS));
     // No global total: starts at the national level. CM stops at municipalities, AF reaches parishes.
     expect(await importElection(db, autarquicas.source, AUTARQUICAS)).toMatchObject({ places: 3 + 5, missing: 2 });
+  });
+});
+
+const AUTARQUICAS_2025: ElectionDef = {
+  id: "autarquicas-2025", type: "autarquicas", name: "Autárquicas 2025", date: "2025-10-12",
+  site: "autarquicas2025", platform: "v3", organs: ["CM", "AF"],
+};
+
+/** The newest platform: numeric ids, no codes. Águeda now has a parish restored in 2025. */
+const v3SiteFiles = () => {
+  const u = v3Urls(AUTARQUICAS_2025);
+  const res = (voters: number, lists: [number, string, number][]) => ({
+    data: {
+      currentResults: {
+        totalVoters: voters, subscribedVoters: voters * 2, percentageVoters: 50, blankVotes: 0, nullVotes: 0, totalMandates: 0,
+        resultsParty: lists.map(([id, acronym, votes]) => ({ id, acronym, votes, percentage: (votes / voters) * 100, mandates: null, presidents: null })),
+      },
+    },
+  });
+  const files: Record<string, unknown> = {
+    [u.settings]: { electionId: 1 },
+    [u.election(1)]: {
+      data: { mainTerritories: [{ id: 1, description: "PORTUGAL" }], organs: [{ id: 4, key: "CM" }, { id: 6, key: "AF" }] },
+    },
+    [u.options(1)]: {
+      data: [
+        { id: 10, typeId: 1, name: "PS", description: "Partido Socialista" },
+        { id: 20, typeId: 2, name: "PPD/PSD.CDS-PP", description: "Viva Águeda" },
+        { id: 21, typeId: 2, name: "PPD/PSD.CDS-PP", description: "AD Aveiro" },
+        { id: 30, typeId: 3, name: "MBV", description: "Movimento Borralha Viva" },
+      ],
+    },
+    [u.children(1, 1)]: { data: [{ id: 2, parentId: 1, typeId: 5, descriptionShort: "Aveiro" }] },
+    [u.children(1, 2)]: { data: [{ id: 3, parentId: 2, typeId: 6, descriptionShort: "ÁGUEDA" }] },
+    [u.children(1, 3)]: {
+      data: [
+        { id: 4, parentId: 3, typeId: 7, descriptionShort: "Aguada de Cima" },
+        { id: 5, parentId: 3, typeId: 7, descriptionShort: "Barrô" },
+        { id: 99, parentId: 3, typeId: 7, descriptionShort: "Borralha" },
+      ],
+    },
+  };
+  for (const organ of [4, 6]) {
+    for (const t of [1, 2, 3]) files[u.results(1, t, organ)] = res(900, [[20, "PPD/PSD.CDS-PP", 500], [10, "PS", 400]]);
+  }
+  files[u.results(1, 4, 6)] = res(300, [[10, "PS", 200], [20, "PPD/PSD.CDS-PP", 100]]);
+  files[u.results(1, 5, 6)] = res(500, [[20, "PPD/PSD.CDS-PP", 300], [10, "PS", 200]]);
+  files[u.results(1, 99, 6)] = res(100, [[30, "MBV", 60], [10, "PS", 40]]);
+  return files;
+};
+
+describe("importElection on the newest platform", () => {
+  it("refuses to guess places when the previous autárquicas aren't there to match against", async () => {
+    await expect(importElection(db, sourceFor(v3SiteFiles()).source, AUTARQUICAS_2025)).rejects.toThrow(/previous autárquicas/);
+  });
+
+  it("matches places by name to earlier elections, and keys new parishes by the site's id", async () => {
+    await importElection(db, sourceFor(siteFor(AUTARQUICAS)).source, AUTARQUICAS);
+    const stats = await importElection(db, sourceFor(v3SiteFiles()).source, AUTARQUICAS_2025);
+    expect(stats).toMatchObject({ places: 3 + 6, missing: 0, lists: 3, unmatched: 1 });
+
+    const town = await get("/elections/autarquicas-2025/places/LOCAL-010100?organ=AF");
+    expect(town.status).toBe(200);
+    expect(town.body.breadcrumb.map((p: { key: string }) => p.key)).toEqual(["LOCAL-500000", "LOCAL-010000"]);
+    // The coalition's local name, not one of its many others.
+    expect(town.body.lists[0]).toMatchObject({ list: "PPD/PSD.CDS-PP", name: "Viva Águeda", partySlugs: ["psd", "cds-pp"], validPct: 55.56 });
+    expect(town.body.lists[1]).toMatchObject({ list: "PS", name: "Partido Socialista" });
+    expect(town.body.children.map((c: { key: string; dicofre: string | null; winner: { list: string } }) => [c.key, c.dicofre, c.winner.list])).toEqual([
+      ["LOCAL-010103", "010103", "PS"],
+      ["LOCAL-010121", "010121", "PPD/PSD.CDS-PP"],
+      ["AUTARQUICAS2025-99", null, "MBV"],
+    ]);
+
+    const restored = await get("/places/AUTARQUICAS2025-99");
+    expect(restored.body).toMatchObject({ name: "Borralha", level: "parish", dicofre: null, parent: { key: "LOCAL-010100" } });
+
+    // Re-running matches the restored parish to the key it got the first time.
+    expect(await importElection(db, sourceFor(v3SiteFiles()).source, AUTARQUICAS_2025)).toMatchObject({ places: 0, skipped: 9 });
   });
 });
 

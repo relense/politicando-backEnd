@@ -32,14 +32,31 @@ export interface PlaceResults {
     null: number;
     totalMandates: number | null;
   };
-  lists: { list: string; votes: number; pct: number; validPct: number | null; mandates: number | null; presidents: number | null }[];
+  lists: {
+    list: string;
+    /** The site's id for this list on this ballot (newest platform only), for its local name. */
+    optionId: number | null;
+    votes: number;
+    pct: number;
+    validPct: number | null;
+    mandates: number | null;
+    presidents: number | null;
+  }[];
 }
 
-/** One TERRITORY-RESULTS file (same shape on both platforms). Null if it has no count. */
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/**
+ * One results file. The same shape on every platform, except that the newest one calls the
+ * voter count totalVoters, wraps it in `data`, and leaves out the share of valid votes.
+ * Null if it has no count.
+ */
 export const parseResults = (data: unknown): PlaceResults | null => {
-  const current = obj(obj(data).currentResults);
-  const voters = num(current.numberVoters);
+  const root = obj(data);
+  const current = obj((root.currentResults ? root : obj(root.data)).currentResults);
+  const voters = num(current.numberVoters) ?? num(current.totalVoters);
   if (voters === null || !Array.isArray(current.resultsParty)) return null;
+  const valid = voters - (num(current.blankVotes) ?? 0) - (num(current.nullVotes) ?? 0);
   return {
     turnout: {
       registered: num(current.subscribedVoters),
@@ -56,9 +73,10 @@ export const parseResults = (data: unknown): PlaceResults | null => {
       if (!list || votes === null) return [];
       return [{
         list,
+        optionId: num(party.id),
         votes,
         pct: num(party.percentage) ?? 0,
-        validPct: num(party.validVotesPercentage),
+        validPct: num(party.validVotesPercentage) ?? (valid > 0 ? round2((votes / valid) * 100) : null),
         mandates: num(party.mandates),
         presidents: num(party.presidents),
       }];

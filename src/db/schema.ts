@@ -447,6 +447,8 @@ export const electionResults = pgTable(
       .references(() => places.key),
     /** As the ballot shows it: "PPD/PSD.CDS-PP", "B.E.", or a candidate's name. */
     list: text().notNull(),
+    /** The list's own name on this ballot, when it differs by place (local coalitions, citizens). */
+    label: text(),
     votes: integer().notNull(),
     pct: real().notNull(),
     validPct: real("valid_pct"),

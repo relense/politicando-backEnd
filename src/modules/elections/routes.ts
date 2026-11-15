@@ -7,11 +7,22 @@ import { ApiError, notFound } from "../../errors.js";
 import { errorSchema } from "../shared.js";
 
 const levelSchema = z.enum(["global", "national", "foreign", "district", "municipality", "parish"]);
-const placeSchema = z.object({ key: z.string(), name: z.string(), level: levelSchema, dicofre: z.string().nullable() });
+const placeSchema = z.object({
+  key: z.string(),
+  name: z.string(),
+  level: levelSchema,
+  dicofre: z.string().nullable().describe("Official code; null abroad, and for parishes restored in 2025 until codes are loaded"),
+});
+
+/** "LOCAL-010100"; places first seen in autárquicas 2025 are "AUTARQUICAS2025-123". */
+const placeKeySchema = z.string().regex(/^(?:(?:LOCAL|FOREIGN|GLOBAL)-\d{6}|[A-Z]+\d{4}-\d+)$/);
 
 const listResultSchema = z.object({
   list: z.string().describe('As on the ballot: "PPD/PSD.CDS-PP", "B.E.", or a candidate\'s name'),
-  name: z.string().nullable().describe("Full name of the party, coalition or citizens' group"),
+  name: z
+    .string()
+    .nullable()
+    .describe("Full name of the party, coalition or citizens' group; in autárquicas, the list's local name"),
   partySlugs: z.array(z.string()).describe("Our parties in it, for colours and links"),
   coalition: z.boolean(),
   citizens: z.boolean().describe("Citizens' group (independents), autárquicas only"),
@@ -82,7 +93,7 @@ export const electionRoutes =
       db
         .select({
           list: electionResults.list,
-          name: electionLists.name,
+          name: sql<string | null>`coalesce(${electionResults.label}, ${electionLists.name})`,
           partySlugs: sql<string[]>`coalesce(${electionLists.partySlugs}, '{}')`,
           coalition: sql<boolean>`coalesce(${electionLists.coalition}, false)`,
           citizens: sql<boolean>`coalesce(${electionLists.citizens}, false)`,
@@ -266,7 +277,7 @@ export const electionRoutes =
         schema: {
           tags: ["elections"],
           summary: "Results in one place (district, municipality or parish), with the places inside it",
-          params: z.object({ id: z.string().regex(/^[a-z]+-\d{4}$/), key: z.string().regex(/^(LOCAL|FOREIGN|GLOBAL)-\d{6}$/) }),
+          params: z.object({ id: z.string().regex(/^[a-z]+-\d{4}$/), key: placeKeySchema }),
           querystring: organQuery,
           response: { 200: placeResultSchema, 400: errorSchema, 404: errorSchema },
         },
@@ -280,7 +291,7 @@ export const electionRoutes =
         schema: {
           tags: ["elections"],
           summary: "A place and the places inside it",
-          params: z.object({ key: z.string().regex(/^(LOCAL|FOREIGN|GLOBAL)-\d{6}$/) }),
+          params: z.object({ key: placeKeySchema }),
           response: {
             200: placeSchema.extend({ parent: placeSchema.nullable(), children: z.array(placeSchema) }),
             400: errorSchema,
