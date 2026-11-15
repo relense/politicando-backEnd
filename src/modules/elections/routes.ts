@@ -463,30 +463,5 @@ export const electionRoutes =
         };
       },
     );
-
-    app.get(
-      "/places/:key",
-      {
-        schema: {
-          tags: ["elections"],
-          summary: "A place and the places inside it",
-          params: z.object({ key: placeKeySchema }),
-          response: {
-            200: placeSchema.extend({ parent: placeSchema.nullable(), children: z.array(placeSchema) }),
-            400: errorSchema,
-            404: errorSchema,
-          },
-        },
-      },
-      async (request) => {
-        const columns = { key: places.key, name: places.name, level: places.level, dicofre: places.dicofre };
-        const [place] = await db.select({ ...columns, parentKey: places.parentKey }).from(places).where(eq(places.key, request.params.key));
-        if (!place) throw notFound("Place");
-        const { parentKey, ...rest } = place;
-        const [parent] = parentKey ? await db.select(columns).from(places).where(eq(places.key, parentKey)) : [];
-        const children = await db.select(columns).from(places).where(eq(places.parentKey, place.key));
-        children.sort((a, b) => a.name.localeCompare(b.name, "pt"));
-        return { ...rest, parent: parent ?? null, children };
-      },
-    );
   };
+

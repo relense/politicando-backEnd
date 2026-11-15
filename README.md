@@ -113,6 +113,14 @@ records above (parliament, Government, Presidency), so they need no job of their
 `docs/people-api.md`. Legislature dates are in `src/parliament/legislatures.ts`: add the next
 one after each general election.
 
+## Places and search
+
+`GET /places` and `GET /places/:key` (`docs/places-api.md`) put together each district,
+municipality and parish: the mayor (from the 2025 autárquicas candidates, imported with the
+election), council seats, the district's deputies, recent results and contracts.
+`GET /sitemap` lists every indexable page for the frontend's sitemap; `docs/seo.md` is the
+search brief for the frontend.
+
 ## Public contracts
 
 `npm run contracts:import` downloads public contracts from BASE (IMPIC's open data on

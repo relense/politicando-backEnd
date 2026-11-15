@@ -22,6 +22,8 @@ import { adminRoutes } from "./modules/admin/routes.js";
 import { caseRoutes } from "./modules/cases/routes.js";
 import { forumRoutes } from "./modules/forums/routes.js";
 import { editorialRoutes } from "./modules/editorial/routes.js";
+import { seoRoutes } from "./modules/seo/routes.js";
+import { placeRoutes } from "./modules/places/routes.js";
 import { articleRoutes } from "./modules/articles/routes.js";
 import type { RecaptchaVerifier } from "./modules/comments/recaptcha.js";
 import { commentRoutes } from "./modules/comments/routes.js";
@@ -130,6 +132,8 @@ export const buildApp = async ({
       await api.register(adminRecordRoutes(db));
       await api.register(adminForumRoutes(db));
       await api.register(editorialRoutes(db));
+      await api.register(seoRoutes(db));
+      await api.register(placeRoutes(db));
       await api.register(forumRoutes({ db, verifyRecaptcha, forumSecret, createLimitPerMinute: commentLimitPerMinute }));
       await api.register(caseRoutes(db));
       await api.register(

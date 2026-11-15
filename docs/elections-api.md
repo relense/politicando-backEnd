@@ -177,13 +177,8 @@ elections return 404.
 
 ## `GET /places/:key`
 
-A place with its parent and children (names only, no results): for search and navigation.
-
-```jsonc
-{ "key": "LOCAL-010100", "name": "Águeda", "level": "municipality", "dicofre": "0101",
-  "parent": { "key": "LOCAL-010000", "name": "Aveiro", "level": "district", "dicofre": "01" },
-  "children": [ /* places */ ] }
-```
+A place with its parent and children, plus who represents it (mayor, council, deputies),
+recent results and contracts. See `docs/places-api.md`.
 
 ## Page ideas
 

@@ -3,6 +3,7 @@ import { createDb } from "../db/client.js";
 import { ELECTIONS } from "../elections/catalog.js";
 import { importCandidates } from "../elections/candidates.js";
 import { importElection } from "../elections/import.js";
+import { importMayors } from "../elections/mayors.js";
 import { createPoliteClient } from "../ingestion/politeClient.js";
 
 /*
@@ -36,7 +37,8 @@ try {
       onProgress: (message) => console.log(message),
     });
     const candidates = await importCandidates(db, client, election);
-    console.log(JSON.stringify({ election: election.id, ...stats, candidates }));
+    const mayors = await importMayors(db, client, election);
+    console.log(JSON.stringify({ election: election.id, ...stats, candidates, ...(mayors.candidates > 0 && { mayors }) }));
   }
 } catch (error) {
   console.error("Election import failed:", error);

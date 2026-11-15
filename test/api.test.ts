@@ -396,9 +396,12 @@ describe("platform", () => {
       "/api/v2/parties",
       "/api/v2/people/featured",
       "/api/v2/people/{kind}/{id}/path",
+      "/api/v2/places",
       "/api/v2/places/{key}",
       "/api/v2/president",
       "/api/v2/reports",
+      "/api/v2/sitemap",
+      "/api/v2/sitemap/{kind}",
       "/api/v2/timeline",
     ]);
   });

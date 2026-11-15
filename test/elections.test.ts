@@ -4,6 +4,7 @@ import type { ElectionDef } from "../src/elections/catalog.js";
 import { importElection, type ElectionSource } from "../src/elections/import.js";
 import { dicofreOf, levelOf, maiUrls, parseResults, partiesInList } from "../src/elections/mai.js";
 import { placeNameKey, v3Urls } from "../src/elections/maiV3.js";
+import { importMayors } from "../src/elections/mayors.js";
 import { candidatesUrl, importCandidates, looselySame, parseCandidates, properName } from "../src/elections/candidates.js";
 import { deputies, parties } from "../src/db/schema.js";
 import { eq } from "drizzle-orm";
@@ -98,6 +99,8 @@ describe("results files", () => {
   it("matches place names across elections", () => {
     expect(placeNameKey("Belazaima do Chão, Castanheira do Vouga e Agadão")).toBe("belazaima do chao castanheira do vouga e agadao");
     expect(placeNameKey("ÁGUEDA")).toBe(placeNameKey("Águeda"));
+    expect(placeNameKey("Lagoa (R.A.A)")).toBe("lagoa");
+    expect(placeNameKey("Calheta (R.A.M.)")).toBe(placeNameKey("Calheta"));
   });
 
   it("knows our parties in ballot lists, including coalitions", () => {
@@ -207,6 +210,28 @@ const v3SiteFiles = () => {
   files[u.results(1, 4, 6)] = res(300, [[10, "PS", 200], [20, "PPD/PSD.CDS-PP", 100]]);
   files[u.results(1, 5, 6)] = res(500, [[20, "PPD/PSD.CDS-PP", 300], [10, "PS", 200]]);
   files[u.results(1, 99, 6)] = res(100, [[30, "MBV", 60], [10, "PS", 40]]);
+  // Heads of the câmara lists in the district; the winner is "President".
+  files[u.mayors(1, 2, 1)] = {
+    data: {
+      territories: [
+        {
+          id: 2, description: "Aveiro", territoryType: 5,
+          territories: [
+            {
+              id: 3, description: "Águeda", territoryType: 6,
+              votingOptions: [
+                { votingOption: { id: 20, name: "PPD/PSD.CDS-PP" }, candidates: [{ position: 1, name: "Ana Exemplo", type: "Efetivo", state: "President" }] },
+                { votingOption: { id: 10, name: "PS" }, candidates: [{ position: 1, name: "Rui Exemplo", type: "Efetivo", state: "NA" }] },
+              ],
+            },
+            { id: 77, description: "Nenhures", territoryType: 6, votingOptions: [{ votingOption: { id: 10, name: "PS" }, candidates: [{ position: 1, name: "X", type: "Efetivo", state: "President" }] }] },
+          ],
+        },
+      ],
+      page: 1,
+      numberOfPages: 1,
+    },
+  };
   return files;
 };
 
@@ -237,6 +262,30 @@ describe("importElection on the newest platform", () => {
 
     // Re-running matches the restored parish to the key it got the first time.
     expect(await importElection(db, sourceFor(v3SiteFiles()).source, AUTARQUICAS_2025)).toMatchObject({ places: 0, skipped: 9 });
+  });
+
+  it("imports mayors and shows them on place pages", async () => {
+    await importElection(db, sourceFor(siteFor(AUTARQUICAS)).source, AUTARQUICAS);
+    await importElection(db, sourceFor(v3SiteFiles()).source, AUTARQUICAS_2025);
+    expect(await importMayors(db, sourceFor(v3SiteFiles()).source, AUTARQUICAS_2025)).toEqual({
+      municipalities: 1, candidates: 2, mayors: 1, unmatched: ["Nenhures (Aveiro)"],
+    });
+
+    const mayor = { name: "Ana Exemplo", list: "PPD/PSD.CDS-PP", label: "Viva Águeda", parties: ["psd", "cds-pp"], election: "autarquicas-2025" };
+    const town = await get("/places/LOCAL-010100");
+    expect(town.body).toMatchObject({
+      key: "LOCAL-010100", name: "ÁGUEDA", level: "municipality", parent: { key: "LOCAL-010000", name: "Aveiro" }, mayor,
+      contracts: { carriedOut: { count: 0, total: 0 }, council: null },
+    });
+    expect(town.body.elections[0]).toMatchObject({ election: "autarquicas-2025", winner: { list: "PPD/PSD.CDS-PP", label: "Viva Águeda" } });
+    expect(town.body.deputies.circle).toMatchObject({ key: "LOCAL-010000", name: "Aveiro" });
+
+    const map = await get("/places?level=municipality&parent=LOCAL-010000");
+    expect(map.body.items).toEqual([expect.objectContaining({ key: "LOCAL-010100", mayor })]);
+    expect((await get("/places/LOCAL-010000")).body.mayor).toBeNull();
+
+    const candidates = await get("/elections/autarquicas-2025/candidates?place=LOCAL-010100");
+    expect(candidates.status).toBe(200);
   });
 });
 

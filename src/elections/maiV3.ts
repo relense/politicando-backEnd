@@ -24,6 +24,9 @@ export const v3Urls = (election: ElectionDef) => {
     results: (electionId: number, territoryId: number, organId: number) =>
       file("result/territory", { electionId, territoryId, organId }),
     children: (electionId: number, territoryId: number) => file("territory/children", { electionId, territoryId }),
+    /** Head candidates of every câmara list in a district (votingOptionName=null: all lists). */
+    mayors: (electionId: number, territoryId: number, page: number) =>
+      `${base}/assets/static/candidate/candidates-electionId=${electionId}-territoryId=${territoryId}-votingOptionName=null-candidatesElected=false-page=${page}.json`,
   };
 };
 
@@ -71,11 +74,51 @@ export const parseV3Children = (raw: unknown) =>
     return id !== null && name && level ? [{ id, name, level }] : [];
   });
 
-/** For matching place names across elections: no accents, case or punctuation. */
+/**
+ * For matching place names across sources: no accents, case or punctuation, and no trailing
+ * qualifier in brackets ("Lagoa (R.A.A)", "Calheta (R.A.M.)"), which only some sources add.
+ */
 export const placeNameKey = (name: string) =>
   name
+    .replace(/\s*\([^)]*\)\s*$/, "")
     .normalize("NFD")
     .replace(/\p{M}/gu, "")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
+
+export interface MayoralList {
+  district: string;
+  municipality: string;
+  list: string;
+  candidates: { position: number; name: string; elected: boolean }[];
+}
+
+/**
+ * A candidates file: for each municipality, the head of each câmara list. The winner has
+ * state "President". The site publishes no other candidates for autárquicas.
+ */
+export const parseV3Mayors = (raw: unknown) => {
+  const body = obj(data(raw));
+  const lists: MayoralList[] = [];
+  for (const d of Array.isArray(body.territories) ? body.territories : []) {
+    const district = str(obj(d).description);
+    for (const m of Array.isArray(obj(d).territories) ? (obj(d).territories as unknown[]) : []) {
+      const municipality = str(obj(m).description);
+      if (!district || !municipality || num(obj(m).territoryType) !== 6) continue;
+      for (const vo of Array.isArray(obj(m).votingOptions) ? (obj(m).votingOptions as unknown[]) : []) {
+        const list = str(obj(obj(vo).votingOption).name);
+        if (!list) continue;
+        const candidates = (Array.isArray(obj(vo).candidates) ? (obj(vo).candidates as unknown[]) : []).flatMap((c) => {
+          const name = str(obj(c).name);
+          const position = num(obj(c).position);
+          return name && position !== null && str(obj(c).type) === "Efetivo"
+            ? [{ position, name, elected: str(obj(c).state)?.toUpperCase() === "PRESIDENT" }]
+            : [];
+        });
+        if (candidates.length) lists.push({ district, municipality, list, candidates });
+      }
+    }
+  }
+  return { pages: num(body.numberOfPages) ?? 1, lists };
+};
