@@ -413,8 +413,14 @@ describe("election endpoints", () => {
       imported: true,
       turnout: { voters: 1000, totalMandates: 3 },
       winner: { list: "PPD/PSD.CDS-PP", name: "AD - COLIGAÇÃO PSD/CDS", partySlugs: ["psd", "cds-pp"], mandates: 2 },
+      round: null,
     });
-    expect((await get("/elections?type=autarquicas")).body.items).toHaveLength(1);
+    expect(body.items[0].deepestLevel).toMatch(/^(district|municipality)$/);
+    expect(body.items[1].deepestLevel).toBe("parish");
+    expect(body.upcoming[0]).toMatchObject({ imported: false, confirmed: false, date: null });
+    const autarquicas = await get("/elections?type=autarquicas");
+    expect(autarquicas.body.items).toHaveLength(1);
+    expect(autarquicas.body.upcoming.map((e: { type: string }) => e.type)).toEqual(["autarquicas"]);
   });
 
   it("returns the whole country with its children, and drills down with a breadcrumb", async () => {

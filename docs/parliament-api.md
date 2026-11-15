@@ -194,6 +194,37 @@ it is predictable but never smarter than the title.
 - `topics`: subjects found in the title by keyword, such as Habitação, Saúde or Impostos.
   About one in five initiatives fits none: show them under "Outros".
 
+### Stage, search, sort and counts (new)
+
+- `?stage=` filters by the step on the law's path: `submitted` (Entregue), `debate` (Em
+  debate), `approved` (Aprovada), `president` (No Presidente), `vetoed` (Vetada), `published`
+  (Lei), `rejected` (Rejeitada), `withdrawn` (Retirada). Each summary has the same key in
+  `plain.status.group`.
+- `?q=` searches title words (Portuguese stemming, so "habitação" finds "habitacional") or
+  the exact number ("78").
+- `?sort=newest|oldest` by latest activity. The cursor works both ways.
+- The response now has `total` (everything matching the filters) and `stages:
+  [{ key, label, plain, count }]`. Stage counts apply every filter **except** `stage`, so tabs
+  keep their numbers when one is selected.
+- `plain.title` is now `null` when there's nothing to simplify (about 90% of titles). Show
+  the official title then, without repeating it.
+
+### Presidency fields (new)
+
+- `promulgationRecorded: false`: parliament's record skips the promulgation, but the law was
+  published in the Diário da República, so it was promulgated. `promulgatedAt` is null then;
+  show the publication date (`publishedAt`). Initiative 78 was one of these: it showed as
+  "pending" for months but became law on 19 August 2026.
+- `vetoKind`: `political` (the President's own objection) or `unconstitutionality` (after a
+  Constitutional Court ruling), for the latest veto. `constitutionalCourt: [{ ruling, url }]`
+  links the rulings.
+- `vetoes: [{ date, kind, constitutionalCourt }]`: every veto, oldest first. The nationality
+  law was vetoed after rulings 1133/2025 and 1134/2025, passed again, and vetoed again
+  politically.
+- **Not available:** when a law is *sent* to the Constitutional Court. Parliament's data only
+  shows the ruling, cited on the veto. So while a decree is pending we can't tell if the
+  deadline is paused. Show "à espera" with the date it arrived, without calling it late.
+
 ## `GET /initiatives/topics`
 
 ```jsonc

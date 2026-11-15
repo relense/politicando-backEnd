@@ -76,3 +76,22 @@ export const PRESIDENT_ALIASES: Readonly<Record<string, { withContext: string[];
 
 export const PRESIDENCY_SITE = "https://www.presidencia.pt";
 export const BIOGRAPHY_URL = `${PRESIDENCY_SITE}/presidente-da-republica/o-presidente/biografia/`;
+
+const MONTHS = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
+
+/**
+ * Birth date and place and where they live, read from the official biography's wording
+ * ("nasceu a 11 de março de 1962, em Penamacor", "reside nas Caldas da Rainha"). Null when
+ * the biography doesn't say it that way.
+ */
+export const biographyFacts = (bio: string[]) => {
+  const text = bio.join(" ");
+  const born = /nasceu (?:a|em) (\d{1,2}) de (\p{L}+) de (\d{4}),? (?:em|n[oa]s?) ([\p{Lu}][\p{L}' -]*?)(?=[,.;(]| vila| cidade| concelho| freguesia| onde)/u.exec(text);
+  const month = born ? MONTHS.indexOf(born[2]!.toLowerCase()) + 1 : 0;
+  const lives = /\breside(?:m)? (?:em|n[oa]s?) ([\p{Lu}][\p{L}' -]*?)(?=[,.;(])/u.exec(text);
+  return {
+    birthDate: born && month ? `${born[3]}-${String(month).padStart(2, "0")}-${born[1]!.padStart(2, "0")}` : null,
+    birthPlace: born?.[4]?.trim() ?? null,
+    residence: lives?.[1]?.trim() ?? null,
+  };
+};

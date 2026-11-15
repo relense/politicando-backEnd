@@ -64,6 +64,14 @@ One call for the whole page, ministries in protocol order (the order the portal 
 - Photos are portraits (about 800×1000) hosted by the portal. They're lighter than deputy
   photos, but still load them lazily.
 
+### Party of members who aren't deputies
+
+`party` comes from parliament for former deputies (`partySource: "deputy"`) or from our
+curated list (`"curated"`, public record only). The new `independent: true` means public record
+says they belong to no party. **`party: null` with `independent: false` means we don't know**:
+show nothing rather than "independente". Six of the 17 ministers are in that state, until each
+one's status is confirmed from a source.
+
 ## `GET /government/members/:id`
 
 ```jsonc

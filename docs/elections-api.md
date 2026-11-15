@@ -39,6 +39,18 @@ The elections menu, newest first.
 }
 ```
 
+### New fields
+
+- `deepestLevel`: `country`, `district`, `municipality` or `parish`: the most detailed level
+  with results. Show the map and the drill-down only to that level.
+- `round`: presidenciais only, `1` or `2`. Second rounds will have ids ending in
+  `-2a-volta`. Every presidential election we hold had a single round.
+- `upcoming: [{ type, name, year, date, confirmed, imported: false, window, basis }]`: the next
+  election of each kind, soonest first, including regionais in the Açores and Madeira. None has
+  an official date yet (`date: null`, `confirmed: false`). `window` says when the law requires
+  it, in Portuguese, for "Próximas eleições". We set `date` when the decree comes out.
+- Lists that the source names "-" now use their acronym.
+
 ## `GET /elections/:id?organ=` and `GET /elections/:id/places/:key?organ=`
 
 Results in one place, plus the places inside it, ready for a map. Without a place, you get

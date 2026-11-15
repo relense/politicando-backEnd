@@ -243,25 +243,59 @@ const statusOf = (events: Json[]): { status: InitiativeStatus; publishedAt: stri
  * The President's decision from the stages, latest event winning: a vetoed decree that
  * parliament passes again ("2ª versão") is sent and promulgated anew.
  */
+/** "Acórdão do Tribunal Constitucional n.º 1133/2025" → ruling 1133/2025 and its page. */
+export const constitutionalRulings = (text: string) =>
+  [...text.matchAll(/Ac[óo]rd[ãa]o do Tribunal Constitucional n\.?\s*[ºo°]?\s*(\d+)\s*\/\s*(\d{4})/gi)].map(([, n, year]) => ({
+    ruling: `${Number(n)}/${year}`,
+    url: `https://www.tribunalconstitucional.pt/tc/acordaos/${year}${n!.padStart(4, "0")}.html`,
+  }));
+
 export const presidencyOf = (events: Json[]): PresidencyRecord | null => {
-  const latest = (pattern: RegExp) =>
+  const matching = (pattern: RegExp) =>
     events
-      .filter((event) => pattern.test(str(event.Fase) ?? ""))
-      .map((event) => isoDate(event.DataFase))
-      .filter((date): date is string => date !== null)
-      .sort()
-      .at(-1) ?? null;
+      .filter((event) => pattern.test(str(event.Fase) ?? "") && isoDate(event.DataFase) !== null)
+      .sort((a, b) => isoDate(a.DataFase)!.localeCompare(isoDate(b.DataFase)!));
+  const latest = (pattern: RegExp) => {
+    const found = matching(pattern);
+    return found.length ? isoDate(found.at(-1)!.DataFase) : null;
+  };
   const sentAt = latest(/^Envio para promulgação/);
-  const promulgatedAt = latest(/^Promulgação/);
+  let promulgatedAt = latest(/^Promulgação/);
   const vetoedAt = latest(/^Veto/);
+  // The record sometimes skips "Promulgação": a law published after it was sent was promulgated.
+  const lawAt = latest(/^Lei .*\(Publicação DR\)/);
+  const inferred = !promulgatedAt && lawAt !== null && sentAt !== null && lawAt >= sentAt && (!vetoedAt || lawAt >= vetoedAt);
   if (!sentAt && !promulgatedAt && !vetoedAt) return null;
   const status =
-    promulgatedAt && (!vetoedAt || promulgatedAt >= vetoedAt)
+    inferred || (promulgatedAt && (!vetoedAt || promulgatedAt >= vetoedAt))
       ? "promulgated"
       : vetoedAt && (!sentAt || vetoedAt >= sentAt)
         ? "vetoed"
         : "pending";
-  return { status, sentAt, promulgatedAt, vetoedAt };
+  // "Veto (Receção)", "(Leitura)" and "(Publicação)" are steps of one veto: group them by the first.
+  const vetoes = matching(/^Veto \(Rece/).reduce<NonNullable<PresidencyRecord["vetoes"]>>((list, event) => {
+    const date = isoDate(event.DataFase)!;
+    const found = constitutionalRulings(str(event.ObsFase) ?? "");
+    const same = list.find((v) => v.date === date);
+    const target = same ?? { date, kind: "political" as const, constitutionalCourt: [] };
+    for (const r of found) if (!target.constitutionalCourt.some((c) => c.ruling === r.ruling)) target.constitutionalCourt.push(r);
+    target.kind = target.constitutionalCourt.length ? "unconstitutionality" : "political";
+    if (!same) list.push(target);
+    return list;
+  }, []);
+  if (vetoedAt && vetoes.length === 0) vetoes.push({ date: vetoedAt, kind: "political", constitutionalCourt: [] });
+  const rulings = vetoes.at(-1)?.constitutionalCourt ?? [];
+  if (inferred) promulgatedAt = null;
+  return {
+    status,
+    sentAt,
+    promulgatedAt,
+    promulgationRecorded: !inferred,
+    vetoedAt,
+    vetoKind: vetoedAt ? (rulings.length ? "unconstitutionality" : "political") : null,
+    constitutionalCourt: rulings,
+    vetoes,
+  };
 };
 
 /** @param data Iniciativas<Leg>_json.txt */

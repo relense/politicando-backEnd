@@ -279,8 +279,8 @@ describe("curated parties", () => {
     expect(curatedParty("LUIS MONTENEGRO")).toBe("psd");
     expect(curatedParty("Telmo Correia")).toBe("cds-pp");
     expect(curatedParty("Luís Neves")).toBeNull();
-    expect(memberParty("Luís Montenegro", null)).toEqual({ party: "psd", partySource: "curated" });
-    expect(memberParty("Luís Montenegro", "chega")).toEqual({ party: "chega", partySource: "deputy" });
-    expect(memberParty("Fulano", null)).toEqual({ party: null, partySource: null });
+    expect(memberParty("Luís Montenegro", null)).toEqual({ party: "psd", partySource: "curated", independent: false });
+    expect(memberParty("Luís Montenegro", "chega")).toEqual({ party: "chega", partySource: "deputy", independent: false });
+    expect(memberParty("Fulano", null)).toEqual({ party: null, partySource: null, independent: false });
   });
 });

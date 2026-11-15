@@ -1,7 +1,7 @@
 import { and, asc, count, desc, eq, gt, max, sql, type SQL } from "drizzle-orm";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
-import { TOPICS, plainStatus, plainTitle, plainType, type PlainStatusInput } from "../../parliament/plain.js";
+import { STAGE_GROUP, STAGE_GROUP_SQL, STAGE_GROUPS, TOPICS, plainStatus, plainTitle, plainType, type PlainStatusInput } from "../../parliament/plain.js";
 import type { Db } from "../../db/client.js";
 import { articles, deputies, initiatives, parties } from "../../db/schema.js";
 import { ApiError, notFound } from "../../errors.js";
@@ -59,8 +59,27 @@ export const initiativeSummarySchema = z.object({
     .object({
       status: z.enum(["pending", "promulgated", "vetoed"]),
       sentAt: z.string().nullable(),
-      promulgatedAt: z.string().nullable(),
+      promulgatedAt: z.string().nullable().describe("Null if promulgated but the record skips the date: see promulgationRecorded"),
+      promulgationRecorded: z
+        .boolean()
+        .describe("False when parliament's record skips the promulgation and we infer it from the law's publication in the Diário da República"),
       vetoedAt: z.string().nullable(),
+      vetoKind: z
+        .enum(["political", "unconstitutionality"])
+        .nullable()
+        .describe("political: the President's own objection (parliament can confirm it); unconstitutionality: after a Constitutional Court ruling"),
+      constitutionalCourt: z
+        .array(z.object({ ruling: z.string().describe('e.g. "1133/2025"'), url: z.string() }))
+        .describe("Constitutional Court rulings behind the latest veto"),
+      vetoes: z
+        .array(
+          z.object({
+            date: z.string(),
+            kind: z.enum(["political", "unconstitutionality"]),
+            constitutionalCourt: z.array(z.object({ ruling: z.string(), url: z.string() })),
+          }),
+        )
+        .describe("Every veto, oldest first: a decree can be vetoed, passed again and vetoed again"),
       by: z.string().nullable().describe("President who decided (or is deciding, if pending)"),
     })
     .nullable()
@@ -77,7 +96,10 @@ export const initiativeSummarySchema = z.object({
     .describe("Topics found in the title by keyword; see GET /initiatives/topics. Empty when none fits"),
   plain: z
     .object({
-      title: z.string().describe("The title without legal boilerplate (laws cited, \"procedendo à n.ª alteração…\")"),
+      title: z
+        .string()
+        .nullable()
+        .describe("The title without legal boilerplate (laws cited, \"procedendo à n.ª alteração…\"). Null when there's nothing to simplify: show the official title"),
       type: z.object({
         label: z.string().describe('e.g. "Recomendação" for a Projeto de Resolução'),
         explainer: z.string().describe("One or two sentences on what this kind of initiative is"),
@@ -89,6 +111,7 @@ export const initiativeSummarySchema = z.object({
           "submitted", "committee", "consultation", "debate", "approved_in_principle", "approved",
           "awaiting_president", "vetoed", "promulgated", "published", "rejected", "not_admitted", "withdrawn",
         ]),
+        group: z.enum(STAGE_GROUPS.map((g) => g.key)).describe("The step on the law's path, as in ?stage= on GET /initiatives"),
       }),
     })
     .describe("Plain-language reading, by fixed rules (no AI)"),
@@ -102,8 +125,17 @@ export const withPlain = <
 >({ topics, ...row }: T) => ({
   ...row,
   topics: topics.map((slug) => ({ slug, label: TOPIC_LABELS.get(slug) ?? slug })),
-  plain: { title: plainTitle(row.title), type: plainType(row.type), status: plainStatus(row) },
+  plain: { title: simplerTitle(row.title), type: plainType(row.type), status: withGroup(plainStatus(row)) },
 });
+
+const withGroup = (status: ReturnType<typeof plainStatus>) => ({ ...status, group: STAGE_GROUP[status.stage] });
+
+/** The plain title, or null when it says the same as the official one. */
+const simplerTitle = (title: string) => {
+  const simple = plainTitle(title);
+  const same = (a: string) => a.replace(/[\s.,;:]+/g, " ").trim().toLowerCase();
+  return same(simple) === same(title) ? null : simple;
+};
 
 const partyVoteSchema = z.object({
   party: z.string().describe("Party slug, or the parliament's acronym for groups we don't list"),
@@ -174,9 +206,10 @@ const presidentOnSql = (date: SQL) =>
   );
 const presidencySql = sql<z.infer<typeof initiativeSummarySchema>["presidency"]>`(
   case when initiatives.presidency is null then null else
-  initiatives.presidency || jsonb_build_object('by', ${presidentOnSql(sql`coalesce(
+  jsonb_build_object('promulgationRecorded', true, 'vetoKind', null, 'constitutionalCourt', '[]'::jsonb, 'vetoes', '[]'::jsonb)
+    || initiatives.presidency || jsonb_build_object('by', ${presidentOnSql(sql`coalesce(
     case initiatives.presidency->>'status'
-      when 'promulgated' then (initiatives.presidency->>'promulgatedAt')::date
+      when 'promulgated' then coalesce((initiatives.presidency->>'promulgatedAt')::date, initiatives.published_at)
       when 'vetoed' then (initiatives.presidency->>'vetoedAt')::date
     end, current_date)`)})
   end
@@ -520,8 +553,13 @@ export const parliamentRoutes =
       {
         schema: {
           tags: ["parliament"],
-          description: "Newest activity first. Use status=in_progress for what is up for discussion.",
+          description:
+            "Newest activity first (sort=oldest for the reverse). `total` and `stages` count everything matching the filters, " +
+            "`stages` ignoring the stage filter itself so tabs can show their numbers.",
           querystring: z.object({
+            stage: z.enum(STAGE_GROUPS.map((g) => g.key)).optional().describe("Step on the law's path; see `stages` in the response"),
+            q: z.string().trim().min(2).max(200).optional().describe("Words in the title, or the initiative's number"),
+            sort: z.enum(["newest", "oldest"]).default("newest").describe("By latest activity"),
             status: statusSchema.optional(),
             party: z.string().optional().describe("Author party slug"),
             deputy: z.coerce.number().int().positive().max(MAX_POSTGRES_INT).optional().describe("Author deputy ID"),
@@ -542,14 +580,21 @@ export const parliamentRoutes =
             limit: z.coerce.number().int().min(1).max(50).default(10),
           }),
           response: {
-            200: z.object({ items: z.array(initiativeSummarySchema), nextCursor: z.string().nullable() }),
+            200: z.object({
+              items: z.array(initiativeSummarySchema),
+              nextCursor: z.string().nullable(),
+              total: z.number().describe("Initiatives matching every filter"),
+              stages: z
+                .array(z.object({ key: z.string(), label: z.string(), plain: z.string(), count: z.number() }))
+                .describe("Counts per step, with every filter except stage"),
+            }),
             400: errorSchema,
             404: errorSchema,
           },
         },
       },
       async (request) => {
-        const { status, party, deputy, type, presidency, topic, coverage, cursor, limit } = request.query;
+        const { status, party, deputy, type, presidency, topic, coverage, cursor, limit, stage, q, sort } = request.query;
         const conditions: SQL[] = [];
         if (topic) conditions.push(sql`${initiatives.topics} @> array[${topic}]::text[]`);
         if (coverage) {
@@ -559,9 +604,9 @@ export const parliamentRoutes =
         if (status) conditions.push(eq(initiatives.status, status));
         if (presidency) conditions.push(sql`initiatives.presidency->>'status' = ${presidency}`);
         if (type) conditions.push(eq(initiatives.type, type));
-        if (cursor !== undefined) {
-          const c = decodeCursor(cursor);
-          conditions.push(sql`(initiatives.phase_date, initiatives.id) < (${c.phaseDate}::date, ${c.id}::int)`);
+        if (q) {
+          const words = sql`to_tsvector('portuguese', initiatives.title) @@ websearch_to_tsquery('portuguese', ${q})`;
+          conditions.push(sql`(${words} or initiatives.title ilike ${`%${q.replace(/[\\%_]/g, "\\$&")}%`} or initiatives.number = ${q})`);
         }
         if (party !== undefined) {
           const [found] = await db.select({ id: parties.id }).from(parties).where(eq(parties.slug, party));
@@ -578,17 +623,38 @@ export const parliamentRoutes =
           )`);
         }
 
+        const stageOf = sql.raw(STAGE_GROUP_SQL);
+        const counted = await db
+          .select({ stage: sql<string>`${stageOf}`, n: sql<number>`count(*)::int` })
+          .from(initiatives)
+          .where(and(...conditions))
+          .groupBy(sql`1`);
+        const counts = new Map(counted.map((r) => [r.stage, r.n]));
+        if (stage) conditions.push(sql`${stageOf} = ${stage}`);
+        const total = stage ? (counts.get(stage) ?? 0) : counted.reduce((sum, r) => sum + r.n, 0);
+
+        const newest = sort === "newest";
+        if (cursor !== undefined) {
+          const c = decodeCursor(cursor);
+          conditions.push(
+            newest
+              ? sql`(initiatives.phase_date, initiatives.id) < (${c.phaseDate}::date, ${c.id}::int)`
+              : sql`(initiatives.phase_date, initiatives.id) > (${c.phaseDate}::date, ${c.id}::int)`,
+          );
+        }
         const rows = await db
           .select(initiativeColumns)
           .from(initiatives)
           .where(and(...conditions))
-          .orderBy(desc(initiatives.phaseDate), desc(initiatives.id))
+          .orderBy(...(newest ? [desc(initiatives.phaseDate), desc(initiatives.id)] : [asc(initiatives.phaseDate), asc(initiatives.id)]))
           .limit(limit + 1);
         const page = rows.slice(0, limit);
         const last = page.at(-1);
         return {
           items: page.map(withPlain),
           nextCursor: rows.length > limit && last ? encodeCursor({ phaseDate: last.phaseDate, id: last.id }) : null,
+          total,
+          stages: STAGE_GROUPS.map((g) => ({ ...g, count: counts.get(g.key) ?? 0 })),
         };
       },
     );

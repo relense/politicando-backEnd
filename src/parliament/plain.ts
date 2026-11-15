@@ -114,6 +114,52 @@ export const plainStatus = (i: PlainStatusInput): { label: string; stage: PlainS
   return { label: "Entregue, à espera de debate", stage: "submitted" };
 };
 
+/** The steps of a law's path, for filters and tabs: each fine stage falls in one. */
+export const STAGE_GROUPS = [
+  { key: "submitted", label: "Entregue", plain: "Deu entrada no Parlamento e ainda não foi debatida." },
+  { key: "debate", label: "Em debate", plain: "Em discussão: numa comissão, em consulta ou à espera de votação. Pode já ter sido aprovada na generalidade." },
+  { key: "approved", label: "Aprovada", plain: "Aprovada pelo Parlamento, ainda não seguiu para o Presidente ou espera publicação." },
+  { key: "president", label: "No Presidente", plain: "Enviada ao Presidente da República, que tem de promulgar ou vetar." },
+  { key: "vetoed", label: "Vetada", plain: "O Presidente vetou e devolveu-a ao Parlamento, que pode alterá-la ou confirmá-la." },
+  { key: "published", label: "Lei", plain: "Publicada em Diário da República: é lei, ou resolução, em vigor." },
+  { key: "rejected", label: "Rejeitada", plain: "Chumbada numa votação, ou não admitida." },
+  { key: "withdrawn", label: "Retirada", plain: "Os autores retiraram-na." },
+] as const;
+export type StageGroup = (typeof STAGE_GROUPS)[number]["key"];
+
+export const STAGE_GROUP: Readonly<Record<PlainStage, StageGroup>> = {
+  submitted: "submitted",
+  committee: "debate",
+  consultation: "debate",
+  debate: "debate",
+  approved_in_principle: "debate",
+  approved: "approved",
+  promulgated: "approved",
+  awaiting_president: "president",
+  vetoed: "vetoed",
+  published: "published",
+  rejected: "rejected",
+  not_admitted: "rejected",
+  withdrawn: "withdrawn",
+};
+
+/**
+ * The same rules as plainStatus, grouped by STAGE_GROUP, as SQL over the initiatives table,
+ * so lists can filter and count by step. Keep the two in step (a test checks they agree).
+ */
+export const STAGE_GROUP_SQL = `(case
+  when initiatives.status = 'withdrawn' then 'withdrawn'
+  when initiatives.status = 'rejected' then 'rejected'
+  when initiatives.status = 'approved' then case
+    when initiatives.published_at is not null then 'published'
+    when initiatives.presidency->>'status' = 'vetoed' then 'vetoed'
+    when initiatives.presidency->>'status' = 'pending' then 'president'
+    else 'approved' end
+  when initiatives.phase ~* 'Não admissão' then 'rejected'
+  when (initiatives.votes->-1->>'result') = 'Aprovado' and (initiatives.votes->-1->>'phase') ~* 'generalidade' then 'debate'
+  when initiatives.phase ~* '(Separata|Parecer|comiss|Votação|Discussão|Debate|Agendamento)' then 'debate'
+  else 'submitted' end)`;
+
 const LAW_REF = String.raw`(?:Lei|Decreto-Lei|Decreto Legislativo Regional|Decreto Regulamentar|Lei Orgânica|Portaria)\s*n\.?\s*[º°o]?\s*[\dA-Z/.-]+(?:,?\s*de\s+\d{1,2}\s+de\s+[a-zç]+(?:\s+de\s+\d{4})?)?`;
 
 /**

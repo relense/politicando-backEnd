@@ -307,7 +307,7 @@ describe("presidencyOf", () => {
   it("follows the decree through Belém, the latest event winning", () => {
     expect(presidencyOf([ev("Entrada", "2026-01-01")])).toBeNull();
     expect(presidencyOf([ev("Envio para promulgação", "2026-04-01")])).toEqual({
-      status: "pending", sentAt: "2026-04-01", promulgatedAt: null, vetoedAt: null,
+      status: "pending", sentAt: "2026-04-01", promulgatedAt: null, promulgationRecorded: true, vetoedAt: null, vetoKind: null, constitutionalCourt: [], vetoes: [],
     });
     expect(presidencyOf([ev("Envio para promulgação", "2026-04-01"), ev("Promulgação", "2026-04-10")])?.status).toBe("promulgated");
     expect(presidencyOf([ev("Envio para promulgação", "2026-04-01"), ev("Veto (Receção)", "2026-04-20")])?.status).toBe("vetoed");
@@ -319,6 +319,39 @@ describe("presidencyOf", () => {
     expect(presidencyOf(second)).toMatchObject({ status: "pending", vetoedAt: "2026-04-20", sentAt: "2026-06-01" });
     expect(presidencyOf([...second, ev("Promulgação (2ª versão)", "2026-06-10")])).toMatchObject({
       status: "promulgated", vetoedAt: "2026-04-20", promulgatedAt: "2026-06-10",
+    });
+  });
+
+  it("infers a promulgation the record skips from the law's publication", () => {
+    const sent = [ev("Envio para promulgação", "2026-07-31"), ev("Lei (Publicação DR)", "2026-08-19")];
+    expect(presidencyOf(sent)).toMatchObject({ status: "promulgated", promulgatedAt: null, promulgationRecorded: false });
+  });
+
+  it("tells a veto after a Constitutional Court ruling from a political one", () => {
+    const veto = (ObsFase: string) => [
+      ev("Envio para promulgação", "2025-11-01"),
+      { Fase: "Veto (Receção)", DataFase: "2025-12-19", ObsFase },
+    ];
+    expect(presidencyOf(veto("Decreto n.º 17/XVII - Acórdão do Tribunal Constitucional n.º 1133/2025"))).toMatchObject({
+      status: "vetoed",
+      vetoKind: "unconstitutionality",
+      constitutionalCourt: [{ ruling: "1133/2025", url: "https://www.tribunalconstitucional.pt/tc/acordaos/20251133.html" }],
+    });
+    expect(presidencyOf(veto("Decreto 70/XVII"))).toMatchObject({ vetoKind: "political", constitutionalCourt: [] });
+    // Vetoed after a ruling, passed again, vetoed again on its merits.
+    const twice = [
+      ...veto("Acórdão do Tribunal Constitucional n.º 785/2025"),
+      { Fase: "Veto (Leitura)", DataFase: "2025-12-20", ObsFase: "" },
+      ev("Envio para promulgação (2ª versão)", "2026-05-01"),
+      { Fase: "Veto (Receção)", DataFase: "2026-05-13", ObsFase: "Decreto n.º 49/XVII" },
+    ];
+    expect(presidencyOf(twice)).toMatchObject({
+      status: "vetoed",
+      vetoKind: "political",
+      vetoes: [
+        { date: "2025-12-19", kind: "unconstitutionality", constitutionalCourt: [{ ruling: "785/2025" }] },
+        { date: "2026-05-13", kind: "political", constitutionalCourt: [] },
+      ],
     });
   });
 });

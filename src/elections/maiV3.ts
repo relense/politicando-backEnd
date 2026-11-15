@@ -58,7 +58,11 @@ export const parseV3Options = (raw: unknown) => {
     const id = num(obj(o).id);
     const list = str(obj(o).name);
     const kind = LIST_TYPES[num(obj(o).typeId) ?? 0];
-    if (id !== null && list && kind) options.set(id, { list, name: str(obj(o).description) ?? list, kind });
+    if (id !== null && list && kind) {
+      // Some lists have "-" for a description: use the acronym instead.
+      const description = str(obj(o).description);
+      options.set(id, { list, name: description && /[\p{L}\d]/u.test(description) ? description : list, kind });
+    }
   }
   return options;
 };

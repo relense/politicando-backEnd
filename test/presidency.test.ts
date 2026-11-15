@@ -5,7 +5,7 @@ import { loadMatchablePresident } from "../src/ingestion/ingest.js";
 import { matchNames } from "../src/matching/matchParties.js";
 import { linkStoredArticles } from "../src/parliament/linkNews.js";
 import { syncParliament } from "../src/parliament/sync.js";
-import { BIOGRAPHY_URL, presidentOn } from "../src/presidency/presidents.js";
+import { BIOGRAPHY_URL, biographyFacts, presidentOn } from "../src/presidency/presidents.js";
 import { parseBiography, syncPresidency } from "../src/presidency/sync.js";
 import { createTestDb, insertArticle, resetDb } from "./helpers.js";
 import { event, initiative, initiativesFile, loaderFor, vote } from "./parliamentFixtures.js";
@@ -134,5 +134,17 @@ describe("GET /president", () => {
 
     const filtered = await get("/articles?president=antonio-jose-seguro");
     expect(filtered.body.items.map((a: { id: number }) => a.id)).toEqual([article.id]);
+  });
+});
+
+describe("biographyFacts", () => {
+  it("reads birth and residence from the official wording", () => {
+    expect(
+      biographyFacts([
+        "António José Martins Seguro nasceu a 11 de março de 1962, em Penamacor, vila de que é Cidadão Honorário.",
+        "É casado e tem dois filhos, com quem reside nas Caldas da Rainha.",
+      ]),
+    ).toEqual({ birthDate: "1962-03-11", birthPlace: "Penamacor", residence: "Caldas da Rainha" });
+    expect(biographyFacts(["Professor universitário."])).toEqual({ birthDate: null, birthPlace: null, residence: null });
   });
 });

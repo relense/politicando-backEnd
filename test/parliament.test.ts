@@ -90,7 +90,8 @@ describe("presidency on initiatives", () => {
     const { body } = await get("/initiatives?presidency=promulgated");
     expect(body.items.map((i: { id: number }) => i.id)).toEqual([1]);
     expect(body.items[0].presidency).toEqual({
-      status: "promulgated", sentAt: "2025-10-05", promulgatedAt: "2025-10-15", vetoedAt: null, by: "Marcelo Rebelo de Sousa",
+      status: "promulgated", sentAt: "2025-10-05", promulgatedAt: "2025-10-15", promulgationRecorded: true, vetoedAt: null,
+      vetoKind: null, constitutionalCourt: [], vetoes: [], by: "Marcelo Rebelo de Sousa",
     });
     expect((await get("/initiatives?presidency=vetoed")).body.items).toEqual([]);
     expect((await get("/initiatives/2")).body.presidency).toBeNull();
@@ -248,13 +249,33 @@ describe("plain language and topics", () => {
     const { body } = await get("/initiatives");
     const byId = new Map(body.items.map((i: { id: number }) => [i.id, i]));
     expect((byId.get(1) as { plain: unknown }).plain).toEqual({
-      title: "Lei aprovada e publicada",
+      title: null, // Nothing to simplify.
       type: expect.objectContaining({ label: "Proposta de lei dos deputados", makesLaw: true }),
-      status: { label: "Aprovada e publicada", stage: "published" },
+      status: { label: "Aprovada e publicada", stage: "published", group: "published" },
     });
     const stages = [2, 3, 4, 5].map((id) => (byId.get(id) as { plain: { status: { stage: string } } }).plain.status.stage);
     expect(stages).toEqual(["rejected", "approved_in_principle", "withdrawn", "submitted"]);
     expect((await get("/initiatives/1")).body.plain.status.stage).toBe("published");
+  });
+
+  it("filters by stage, words and number, sorts both ways, and counts per stage", async () => {
+    const { body } = await get("/initiatives?limit=2");
+    expect(body.total).toBe(5);
+    expect(Object.fromEntries(body.stages.map((s: { key: string; count: number }) => [s.key, s.count]))).toEqual({
+      submitted: 1, debate: 1, approved: 0, president: 0, vetoed: 0, published: 1, rejected: 1, withdrawn: 1,
+    });
+    const ids = async (query: string) => (await get(`/initiatives?${query}`)).body.items.map((i: { id: number }) => i.id);
+    expect(await ids("stage=debate")).toEqual([3]);
+    expect(await ids("q=chumbada")).toEqual([2]);
+    expect(await ids("q=generalidade")).toEqual([3, 2]);
+    expect(await ids("sort=oldest")).toEqual([4, 2, 3, 1, 5]);
+    const oldest = await get("/initiatives?sort=oldest&limit=2");
+    expect((await get(`/initiatives?sort=oldest&limit=2&cursor=${oldest.body.nextCursor}`)).body.items.map((i: { id: number }) => i.id)).toEqual([3, 1]);
+    // Stage counts ignore the stage filter; total doesn't.
+    const debate = await get("/initiatives?stage=debate");
+    expect(debate.body.total).toBe(1);
+    expect(debate.body.stages.find((s: { key: string }) => s.key === "published").count).toBe(1);
+    expect((await get("/initiatives?stage=maybe")).status).toBe(400);
   });
 
   it("files initiatives under topics and filters by them", async () => {

@@ -5,6 +5,7 @@ import type { Db } from "../../db/client.js";
 import { electionCandidates, electionLists, electionResults, electionTurnout, elections, places } from "../../db/schema.js";
 import { properName } from "../../elections/candidates.js";
 import { dhondt } from "../../elections/dhondt.js";
+import { UPCOMING_ELECTIONS } from "../../elections/upcoming.js";
 import { ApiError, notFound } from "../../errors.js";
 import { errorSchema } from "../shared.js";
 
@@ -209,7 +210,7 @@ export const electionRoutes =
       {
         schema: {
           tags: ["elections"],
-          summary: "Elections since 2011, newest first, with who won",
+          summary: "Elections since 2011, newest first, with who won, and the next ones",
           querystring: z.object({ type: electionSummarySchema.shape.type.optional() }),
           response: {
             200: z.object({
@@ -218,8 +219,27 @@ export const electionRoutes =
                   turnout: turnoutSchema.nullable(),
                   winner: listResultSchema.nullable().describe("Most votes in the main body, whole country"),
                   imported: z.boolean().describe("False while results are still being imported"),
+                  deepestLevel: z
+                    .enum(["country", "district", "municipality", "parish"])
+                    .nullable()
+                    .describe("The most detailed level with results: show the map and drill-down only to here"),
+                  round: z.number().nullable().describe("Presidenciais: 1st or 2nd round. Null for other elections"),
                 }),
               ),
+              upcoming: z
+                .array(
+                  z.object({
+                    type: z.enum(["legislativas", "autarquicas", "europeias", "presidenciais", "regionais"]),
+                    name: z.string(),
+                    year: z.number(),
+                    date: z.string().nullable().describe("Official date, once set by decree"),
+                    confirmed: z.boolean().describe("True once the date is official"),
+                    imported: z.literal(false),
+                    window: z.string().describe("When the law says it must happen, in Portuguese"),
+                    basis: z.string().describe("The law that says so"),
+                  }),
+                )
+                .describe("The next election of each kind, soonest first. Filtered by type when one is given"),
             }),
           },
         },
@@ -238,6 +258,14 @@ export const electionRoutes =
           .from(elections)
           .where(request.query.type ? eq(elections.type, request.query.type) : undefined)
           .orderBy(desc(elections.date));
+        const levels = await db.execute<{ election_id: string; levels: string[] }>(sql`
+          select t.election_id, array_agg(distinct p.level) as levels
+          from election_turnout t join places p on p.key = t.place_key
+          group by t.election_id`);
+        const DEPTH = ["parish", "municipality", "district"] as const;
+        const deepest = new Map<string, (typeof DEPTH)[number] | "country" | null>(
+          levels.rows.map((r) => [r.election_id, DEPTH.find((level) => r.levels.includes(level)) ?? (r.levels.length ? "country" : null)]),
+        );
         const items = await Promise.all(
           rows.map(async ({ importedAt, ...election }) => {
             const organ = election.organs[0]!;
@@ -248,10 +276,17 @@ export const electionRoutes =
               turnout: key ? await turnoutOf(election.id, organ, key) : null,
               winner: lists[0] ?? null,
               imported: importedAt !== null,
+              deepestLevel: deepest.get(election.id) ?? null,
+              // Second rounds get ids ending in "-2a-volta".
+              round: election.type === "presidenciais" ? (/-2a-volta$/.test(election.id) ? 2 : 1) : null,
             };
           }),
         );
-        return { items };
+        const upcoming = UPCOMING_ELECTIONS.filter((e) => !request.query.type || e.type === request.query.type).map((e) => ({
+          ...e,
+          imported: false as const,
+        }));
+        return { items, upcoming };
       },
     );
 

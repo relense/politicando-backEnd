@@ -55,6 +55,8 @@ with ties in name order.
 How the party voted in parliament, newest first. Query: `phase` (`deciding`, the default:
 votes that decide an initiative such as generalidade and votação final global; or `all`),
 `position` (`favor`, `against`, `abstention`, `absent`, `split`), `page`, `limit` (≤ 100).
+Paging is by page number, not cursor: `total` counts the matching votes, so the number of pages is
+`ceil(total / limit)`.
 
 ```jsonc
 {

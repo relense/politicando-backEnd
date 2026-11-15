@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { Db } from "../../db/client.js";
 import { articles, initiatives, presidents } from "../../db/schema.js";
 import { notFound } from "../../errors.js";
-import { currentPresident } from "../../presidency/presidents.js";
+import { biographyFacts, currentPresident, presidentOn } from "../../presidency/presidents.js";
 import { articleColumns, articleSchema } from "../articles/routes.js";
 import { initiativeColumns, initiativeSummarySchema, withPlain } from "../parliament/routes.js";
 import { errorSchema } from "../shared.js";
@@ -28,6 +28,9 @@ export const presidencyRoutes =
                 fullName: z.string(),
                 termStart: z.string(),
                 bio: z.array(z.string()).describe("Official biography from presidencia.pt, plain-text paragraphs"),
+                birthDate: z.string().nullable().describe("Read from the official biography; null if it doesn't say"),
+                birthPlace: z.string().nullable(),
+                residence: z.string().nullable().describe("Where the biography says he lives"),
                 photoUrl: z.string().nullable(),
                 url: z.string(),
               }),
@@ -39,6 +42,16 @@ export const presidencyRoutes =
                   latestVetoes: z.array(initiativeSummarySchema),
                   latestPromulgated: z.array(initiativeSummarySchema),
                   pendingNow: z.array(initiativeSummarySchema),
+                  allTime: z
+                    .object({
+                      since: z.string().nullable().describe("First decree sent to Belém in the data we hold (the current legislature)"),
+                      promulgated: z.number(),
+                      vetoed: z.number().describe("Vetoes (each time: a law can be vetoed twice), including laws later passed again"),
+                      vetoedUnconstitutional: z.number().describe("Of those, after a Constitutional Court ruling"),
+                      pending: z.number(),
+                      byPresident: z.array(z.object({ id: z.string(), name: z.string(), promulgated: z.number(), vetoed: z.number() })),
+                    })
+                    .describe("Every President, over the data we hold"),
                 })
                 .describe("Decrees from parliament only. Government decrees aren't in the parliament's data"),
               articles: z.array(articleSchema).describe("Latest news naming him"),
@@ -53,8 +66,12 @@ export const presidencyRoutes =
         const [president] = await db.select().from(presidents).where(eq(presidents.id, current.id));
         if (!president) throw notFound("President");
 
-        const inTerm = (field: string) =>
-          sql`(initiatives.presidency->>${field})::date >= ${president.termStart}::date`;
+        // A promulgation the record skips counts on the law's publication date.
+        const dateOf = (field: string) =>
+          field === "promulgatedAt"
+            ? sql`coalesce((initiatives.presidency->>'promulgatedAt')::date, case when initiatives.presidency->>'status' = 'promulgated' then initiatives.published_at end)`
+            : sql`(initiatives.presidency->>${field})::date`;
+        const inTerm = (field: string) => sql`${dateOf(field)} >= ${president.termStart}::date`;
         const [counts] = await db
           .select({
             promulgated: sql<number>`count(*) filter (where ${inTerm("promulgatedAt")})::int`,
@@ -67,7 +84,7 @@ export const presidencyRoutes =
             .select(initiativeColumns)
             .from(initiatives)
             .where(where)
-            .orderBy(sql`(initiatives.presidency->>${field})::date desc nulls last`, desc(initiatives.id))
+            .orderBy(sql`${dateOf(field)} desc nulls last`, desc(initiatives.id))
             .limit(LATEST)
             .then((rows) => rows.map(withPlain));
         const [latestVetoes, latestPromulgated, pendingNow] = await Promise.all([
@@ -75,6 +92,37 @@ export const presidencyRoutes =
           list(inTerm("promulgatedAt"), "promulgatedAt"),
           list(sql`initiatives.presidency->>'status' = 'pending'`, "sentAt"),
         ]);
+        const decided = await db
+          .select({ presidency: initiatives.presidency, publishedAt: initiatives.publishedAt })
+          .from(initiatives)
+          .where(sql`${initiatives.presidency} is not null`);
+        const tally = new Map<string, { id: string; name: string; promulgated: number; vetoed: number }>();
+        const add = (date: string | null, key: "promulgated" | "vetoed") => {
+          const who = date ? presidentOn(date) : null;
+          if (!who) return;
+          const entry = tally.get(who.id) ?? { id: who.id, name: who.name, promulgated: 0, vetoed: 0 };
+          entry[key]++;
+          tally.set(who.id, entry);
+        };
+        const allTime = { since: null as string | null, promulgated: 0, vetoed: 0, vetoedUnconstitutional: 0, pending: 0 };
+        for (const { presidency: p, publishedAt } of decided) {
+          if (!p) continue;
+          if (p.sentAt && (!allTime.since || p.sentAt < allTime.since)) allTime.since = p.sentAt;
+          if (p.status === "pending") allTime.pending++;
+          // A law split in several decrees can be partly promulgated and partly vetoed.
+          if (p.status === "promulgated" || p.promulgatedAt) {
+            allTime.promulgated++;
+            add(p.promulgatedAt ?? publishedAt, "promulgated");
+          }
+          const vetoes = p.vetoes ?? (p.vetoedAt ? [{ date: p.vetoedAt, kind: p.vetoKind ?? "political" }] : []);
+          for (const veto of vetoes) {
+            allTime.vetoed++;
+            if (veto.kind === "unconstitutionality") allTime.vetoedUnconstitutional++;
+            add(veto.date, "vetoed");
+          }
+        }
+        const byPresident = [...tally.values()].sort((a, b) => b.promulgated + b.vetoed - (a.promulgated + a.vetoed));
+
         const news = await db
           .select(articleColumns)
           .from(articles)
@@ -99,10 +147,11 @@ export const presidencyRoutes =
             fullName: president.fullName,
             termStart: president.termStart,
             bio: president.bio,
+            ...biographyFacts(president.bio),
             photoUrl: president.photoUrl,
             url: "https://www.presidencia.pt/presidente-da-republica/o-presidente/biografia/",
           },
-          legislation: { ...counts!, latestVetoes, latestPromulgated, pendingNow },
+          legislation: { ...counts!, latestVetoes, latestPromulgated, pendingNow, allTime: { ...allTime, byPresident } },
           articles: news.map((a) => ({ ...a, publishedAt: a.publishedAt.toISOString() })),
           former: former.reverse(),
         };

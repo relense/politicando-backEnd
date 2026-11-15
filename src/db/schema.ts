@@ -155,8 +155,17 @@ export interface PresidencyRecord {
   /** pending: sent and waiting; vetoed: sent back to parliament (it may still pass a new version). */
   status: "pending" | "promulgated" | "vetoed";
   sentAt: string | null;
+  /** Null when promulgated but the record skips the step (inferred from the law's publication). */
   promulgatedAt: string | null;
+  /** False when the promulgation is inferred from the law being published. */
+  promulgationRecorded?: boolean;
   vetoedAt: string | null;
+  /** political: the President's own objection; unconstitutionality: after a Constitutional Court ruling. */
+  vetoKind?: "political" | "unconstitutionality" | null;
+  /** Constitutional Court rulings cited on the latest veto. */
+  constitutionalCourt?: { ruling: string; url: string }[];
+  /** Every veto, oldest first: a decree can be vetoed, passed again and vetoed again. */
+  vetoes?: { date: string; kind: "political" | "unconstitutionality"; constitutionalCourt: { ruling: string; url: string }[] }[];
 }
 
 export interface VoteRecord {

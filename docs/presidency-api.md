@@ -41,6 +41,17 @@ parliament. A short "what does the President do" explainer on the page will help
 - Government decrees aren't covered yet: they aren't in the parliament's data. They're
   announced on presidencia.pt, which could be added later.
 
+### New fields
+
+- `president.birthDate`, `birthPlace`, `residence`: read from the official biography
+  ("nasceu a 11 de março de 1962, em Penamacor", "reside nas Caldas da Rainha"). Null when
+  the biography doesn't say it that way.
+- `legislation.allTime`: `{ since, promulgated, vetoed, vetoedUnconstitutional, pending,
+  byPresident: [{ id, name, promulgated, vetoed }] }` over every decree in our data. Our data
+  starts with the current legislature (`since`, July 2025), so it spans Marcelo and Seguro.
+  Label it "desde julho de 2025", not "desde sempre". `vetoed` counts each veto, so a law
+  vetoed twice counts twice.
+
 ## News
 
 - Articles have `president: { id, name } | null`.

@@ -22,6 +22,7 @@ const memberSummarySchema = z.object({
   deputyId: z.number().nullable().describe("Their deputy record, when they were elected to this legislature"),
   party: z.string().nullable().describe("Party slug: from their deputy record, or our curated list; null when unknown"),
   partySource: z.enum(["deputy", "curated"]).nullable().describe("deputy: parliament's record; curated: kept by hand from public record"),
+  independent: z.boolean().describe("True when public record says they belong to no party. party null and independent false: we don't know"),
 });
 
 const ministrySchema = z.object({
@@ -145,6 +146,7 @@ export const governmentRoutes =
               links: z.array(z.object({ network: z.string(), url: z.string() })),
               party: z.string().nullable().describe("Party slug: from their deputy record, or our curated list; null when unknown"),
               partySource: z.enum(["deputy", "curated"]).nullable(),
+              independent: z.boolean(),
               inOffice: z.boolean(),
               deputy: z
                 .object({ id: z.number(), name: z.string(), party: z.string().nullable() })
