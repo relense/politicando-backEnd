@@ -63,6 +63,8 @@ describe("parties", () => {
       website: "https://www.psd.pt/",
       assemblySeats: 89,
       seatsAsOf: "2026-10-08",
+      governmentMembers: 0,
+      lastElection: null,
     });
   });
 });

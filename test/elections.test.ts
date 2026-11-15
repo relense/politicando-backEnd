@@ -99,11 +99,14 @@ describe("results files", () => {
 
   it("knows our parties in ballot lists, including coalitions", () => {
     expect(partiesInList("PPD/PSD.CDS-PP")).toEqual(["psd", "cds-pp"]);
-    expect(partiesInList("PPD/PSD.CDS-PP.PPM")).toEqual(["psd", "cds-pp"]);
+    expect(partiesInList("PPD/PSD.CDS-PP.PPM")).toEqual(["psd", "cds-pp", "ppm"]);
     expect(partiesInList("B.E.")).toEqual(["be"]);
-    expect(partiesInList("PCP-PEV")).toEqual(["pcp"]);
+    expect(partiesInList("R.I.R.")).toEqual(["rir"]);
+    expect(partiesInList("PCP-PEV")).toEqual(["pcp", "pev"]);
     expect(partiesInList("CH")).toEqual(["chega"]);
-    expect(partiesInList("ADN")).toEqual([]);
+    expect(partiesInList("ADN")).toEqual(["adn"]);
+    expect(partiesInList("PS.L")).toEqual(["ps", "livre"]);
+    expect(partiesInList("P.N.R.")).toEqual([]);
     expect(partiesInList("Marcelo Rebelo de Sousa")).toEqual([]);
   });
 
@@ -274,6 +277,18 @@ describe("election endpoints", () => {
     expect((await get("/elections/legislativas-2025?organ=CM")).status).toBe(400);
     expect((await get("/elections/legislativas-2025/places/LOCAL-010103")).status).toBe(404);
     expect((await get("/elections/nope")).status).toBe(400);
+  });
+
+  it("ranks parties by votes in the latest legislativas, sharing coalition votes", async () => {
+    const { body } = await get("/parties?sort=votes");
+    expect(body.slice(0, 4).map((p: { slug: string }) => p.slug)).toEqual(["cds-pp", "psd", "ps", "be"]);
+    expect(body[1].lastElection).toEqual({
+      id: "legislativas-2025", date: "2025-05-18", votes: 500, validPct: 50.76, mandates: 2,
+      lists: ["PPD/PSD.CDS-PP"], coalition: true,
+    });
+    expect(body.find((p: { slug: string }) => p.slug === "chega").lastElection).toBeNull();
+    expect((await get("/parties?sort=seats")).body[0].slug).toBe("psd");
+    expect((await get("/parties?sort=bogus")).status).toBe(400);
   });
 
   it("describes places with parent and children", async () => {

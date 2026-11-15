@@ -1,4 +1,5 @@
 import { partySlugForGroup } from "../parliament/groups.js";
+import { PARTY_DEFINITIONS } from "../matching/parties.js";
 import { MAI_ORIGIN, type ElectionDef } from "./catalog.js";
 
 /** Where each file lives on the two platforms. */
@@ -104,21 +105,30 @@ export const parseLists = (data: unknown) =>
       : [];
   });
 
-/** Ballot acronyms that differ from the parliament's group names. */
-const BALLOT_TO_GROUP: Record<string, string> = { "PPD/PSD": "PSD", "B.E.": "BE", "PCP-PEV": "PCP", CDS: "CDS-PP", "P.N.R.": "PNR" };
+/** Ballot acronyms that differ from ours, or that stand for several of our parties. */
+const BALLOT_ALIASES: Record<string, string[]> = {
+  "PPD/PSD": ["psd"],
+  CDS: ["cds-pp"],
+  "PCP-PEV": ["pcp", "pev"], // CDU
+  BE: ["be"],
+};
+const BY_ACRONYM = new Map(PARTY_DEFINITIONS.map((p) => [p.acronym, p.slug]));
+
+const slugsFor = (acronym: string): string[] | null => {
+  const known = BALLOT_ALIASES[acronym] ?? (BY_ACRONYM.has(acronym) ? [BY_ACRONYM.get(acronym)!] : null);
+  if (known) return known;
+  const group = partySlugForGroup(acronym);
+  return group ? [group] : null;
+};
 
 /**
- * Our parties in a ballot list. Coalitions join members with dots ("PPD/PSD.CDS-PP");
- * "B.E." also has dots, so known acronyms are matched whole first.
+ * Our parties in a ballot list. Coalitions join members with dots ("PPD/PSD.CDS-PP.PPM");
+ * "B.E." and "R.I.R." also have dots, so known acronyms are matched whole first.
  */
 export const partiesInList = (list: string): string[] => {
-  const whole = partySlugForGroup(BALLOT_TO_GROUP[list] ?? list);
-  if (whole) return [whole];
-  const slugs = list
-    .split(".")
-    .map((part) => partySlugForGroup(BALLOT_TO_GROUP[part] ?? part))
-    .filter((slug): slug is string => slug !== null);
-  return [...new Set(slugs)];
+  const whole = slugsFor(list);
+  if (whole) return whole;
+  return [...new Set(list.split(".").flatMap((part) => slugsFor(part) ?? []))];
 };
 
 /** Level of a place from its key. */

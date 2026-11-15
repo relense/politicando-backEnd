@@ -36,7 +36,7 @@ Everything is under `/api/v2`.
 
 | Route | Description |
 |---|---|
-| `GET /parties` | All parties |
+| `GET /parties?sort=name\|seats\|votes` | All parties, with seats, latest legislativas result and Government members. See `docs/parties-api.md` |
 | `GET /articles?party=&deputy=&cursor=&limit=` | Newest first, returns `{ items, nextCursor }`. `limit` is 1-50, default 10 |
 | `GET /articles/:id` | One article: excerpt, parties and source link |
 | `GET /articles/:id/comments` | Flat list; use `parentId` to build threads |
