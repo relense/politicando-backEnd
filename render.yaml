@@ -44,7 +44,7 @@ services:
       - key: SMTP_URL
         sync: false
       - key: MAIL_FROM
-        value: Politicando <newsletter@politicando.pt>
+        value: Politicando <info@politicando.pt>
       - key: SITE_URL
         sync: false
       # This API's public address, e.g. https://api.politicando.pt

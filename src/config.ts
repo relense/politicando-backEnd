@@ -35,7 +35,7 @@ const apiSchema = baseSchema.extend({
   COOKIE_SECURE: z.enum(["true", "false"]).default("true").transform((value) => value === "true"),
   /** "" turns the newsletter off, "log" prints emails to the console (local only), or an smtp(s):// URL. */
   SMTP_URL: z.string().default(""),
-  MAIL_FROM: z.string().default("Politicando <newsletter@politicando.pt>"),
+  MAIL_FROM: z.string().default("Politicando <info@politicando.pt>"),
   /** Signs newsletter links. Long and random; changing it breaks every link already sent. */
   NEWSLETTER_SECRET: z.string().min(32).optional(),
   /** The website (where newsletter links land) and this API's public address (used in those links). */
