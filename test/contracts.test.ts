@@ -141,7 +141,7 @@ const seed = async () => {
     stream([
       record(),
       record({
-        idcontrato: "101", tipoprocedimento: "Concurso público", precoContratual: 2_000_000, dataPublicacao: "2025-03-01",
+        idcontrato: "101", tipoprocedimento: "Concurso público", precoContratual: 2_000_000, dataPublicacao: "2025-03-01", dataCelebracaoContrato: "2025-02-20",
         objectoContrato: "Construção de escola", localExecucao: ["Portugal, Faro, Lagoa"],
         adjudicante: [{ nifEntContrato: "506804240", descEntContrato: "Município de Lagoa (Algarve)" }],
       }),
@@ -222,11 +222,18 @@ describe("contract routes", () => {
   });
 
   it("groups by year, entity and municipality", async () => {
+    // Only 2026 is imported: a contract dated 2025 is left out of the years (not of the totals).
     const years = await get("/contracts/stats?by=year");
     expect(years.body).toMatchObject({
-      items: [{ key: "2025", count: 1 }, { key: "2026", count: 2 }],
+      items: [{ key: "2026", count: 2 }],
       totals: { count: 3, total: 2_916_352.76 },
+      years: [2026],
       source: "https://dados.gov.pt/pt/datasets/66d72d488ca4b7cb2de28712/",
+    });
+    await db.insert(contractImports).values({ year: 2025, sourceModified: "2026-11-15", contracts: 1 });
+    expect((await get("/contracts/stats?by=year")).body).toMatchObject({
+      items: [{ key: "2025", count: 1 }, { key: "2026", count: 2 }],
+      years: [2025, 2026],
     });
     expect(years.body.updatedAt).not.toBeNull();
     const entities = await get("/contracts/stats?by=entity");

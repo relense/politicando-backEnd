@@ -112,6 +112,10 @@ Query: the filters, plus:
 - `order=total|count` (default `total`) and `limit` (1-100, default 20). These apply to
   `entity`, `supplier`, `municipality` and `district`, which return the top N.
   `year`, `month` and `procedure` return every group (`year` and `month` in date order).
+- `year` and `month` group by the **signing date** (the publication date when there is none),
+  the way BASE splits its yearly files, and only cover the years in `years`. So each bar is a
+  complete year (the current one so far). Label the chart "por data de celebração do contrato".
+- `years`: the years we have imported, e.g. `[2024, 2025, 2026]`.
 
 ```json
 {
@@ -119,6 +123,7 @@ Query: the filters, plus:
   "items": [{ "key": "LOCAL-110600", "label": "Lisboa", "count": 100240, "total": 8987803516.15 }],
   "totals": { "count": 687557, "total": 59535735887.99 },
   "updatedAt": "2026-11-15 10:43:39.927567+00",
+  "years": [2024, 2025, 2026],
   "source": "https://dados.gov.pt/pt/datasets/66d72d488ca4b7cb2de28712/"
 }
 ```

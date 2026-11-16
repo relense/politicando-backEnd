@@ -208,6 +208,7 @@ export const contractRoutes =
               items: z.array(groupSchema),
               totals: z.object({ count: z.number(), total: z.number() }),
               updatedAt: z.string().nullable().describe("When the newest data was imported"),
+              years: z.array(z.number()).describe("The years we have, complete (the current one so far)"),
               source: z.string(),
             }),
             400: errorSchema,
@@ -221,10 +222,17 @@ export const contractRoutes =
         const aggregates = sql`count(*)::int as count, round(coalesce(sum(c.price), 0)::numeric, 2)::float8 as total`;
         let query: SQL;
         if (by === "year" || by === "month") {
+          // By signing date (publication date when there is none): BASE splits its yearly files that way,
+          // so each year we imported is complete. Years we didn't import are left out: the few contracts
+          // dated in them (late or misdated records) would show as a tiny, misleading year.
           // A literal, not a parameter: Postgres must see key and label as the same expression.
-          const period = sql.raw(by === "year" ? "to_char(c.published_at, 'YYYY')" : "to_char(c.published_at, 'YYYY-MM')");
+          const period = sql.raw(
+            by === "year" ? "to_char(coalesce(c.signed_at, c.published_at), 'YYYY')" : "to_char(coalesce(c.signed_at, c.published_at), 'YYYY-MM')",
+          );
           query = sql`select ${period} as key, ${period} as label, ${aggregates}
-            from contracts c where ${where} group by 1 order by 1`;
+            from contracts c where ${where}
+              and extract(year from coalesce(c.signed_at, c.published_at))::int in (select year from contract_imports)
+            group by 1 order by 1`;
         } else if (by === "procedure") {
           query = sql`select c.procedure_kind as key, c.procedure_kind as label, ${aggregates}
             from contracts c where ${where} group by 1 order by total desc`;
@@ -238,16 +246,18 @@ export const contractRoutes =
             from contracts c cross join unnest(c.place_keys) as k(key) join places pl on pl.key = k.key and pl.level = ${by}
             where ${where} group by pl.key ${top}`;
         }
-        const [rows, totals, updated] = await Promise.all([
+        const [rows, totals, updated, years] = await Promise.all([
           db.execute<z.infer<typeof groupSchema>>(query),
           db.execute<{ count: number; total: number }>(sql`select ${aggregates} from contracts c where ${where}`),
           db.execute<{ at: string | null }>(sql`select max(imported_at)::text as at from contract_imports`),
+          db.execute<{ year: number }>(sql`select year::int from contract_imports order by year`),
         ]);
         return {
           by,
           items: rows.rows.map((r) => (by === "procedure" ? { ...r, label: procedureLabel(r.key) } : r)),
           totals: totals.rows[0] ?? { count: 0, total: 0 },
           updatedAt: updated.rows[0]?.at ?? null,
+          years: years.rows.map((r) => r.year),
           source: CONTRACTS_DATASET_URL,
         };
       },
