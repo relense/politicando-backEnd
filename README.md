@@ -26,6 +26,7 @@ The API docs are at `/docs` and the OpenAPI spec is at `/docs/json`.
 | `npm run ingest` | Scan news sources once |
 | `npm run parliament:sync` | Load deputies and initiatives from the parliament's open data |
 | `npm run elections:import` | Import election results since 2011, plus the curated legislativas 1975–2009 (one-off; add ids to import only some, `--historic` for just the curated ones) |
+| `npm run agenda:sync` | Import the political calendar: the parliament's agenda, the President's and the European Parliament's plenaries (Render runs it every 3 hours) |
 | `npm run parliament:history` | Import earlier legislatures' initiatives (I to XVI) from the parliament's open data, for the legislature pages (one-off; add ids for only some) |
 | `npm run editorial:import -- <folder or .md files>` | Publish editorial posts written as Markdown with front matter (e.g. `../politicando-research/articles`); only files with a `slug` are published (`featured: true` makes a front-page pick); re-running updates them by slug. `--draft` to keep them as drafts, `--author="Nome"` for the byline |
 | `npm run admin:create -- <email> "<name>" admin` | Create the first admin (prints a one-time password) |

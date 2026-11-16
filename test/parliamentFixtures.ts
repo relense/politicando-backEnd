@@ -137,13 +137,14 @@ export const organs = () => ({
 type Dataset = "deputies" | "biographies" | "initiatives" | "organs";
 
 /** A loader for syncParliament that serves the given files. */
-export const loaderFor = (files: { deputies?: unknown; biographies?: unknown; initiatives?: unknown; organs?: unknown } = {}) => {
+export const loaderFor = (files: { deputies?: unknown; biographies?: unknown; initiatives?: unknown; organs?: unknown; agenda?: unknown } = {}) => {
   const data = (dataset: Dataset) =>
     ({
       deputies: files.deputies ?? chamber(),
       biographies: files.biographies ?? biographies(),
       initiatives: files.initiatives ?? initiativesFile(),
       organs: files.organs ?? organs(),
+      agenda: files.agenda ?? [],
     })[dataset];
   return {
     json: async (dataset: Dataset) => data(dataset),

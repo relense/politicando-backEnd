@@ -911,3 +911,54 @@ export const newsletterSubscribers = pgTable("newsletter_subscribers", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
 });
+
+export type AgendaPlace = {
+  name: string;
+  address: string | null;
+  municipality: string | null;
+  district: string | null;
+  lat: number | null;
+  lng: number | null;
+};
+export type AgendaOnline = { url: string; label: string | null };
+export type AgendaAttend = { open: boolean; how: string | null; url: string | null };
+
+/**
+ * The political calendar (see src/agenda). Imported events keep their source's id and are
+ * replaced on every sync; editors' own events have source "editorial". `featured` and
+ * `hidden` are the editors' and survive imports.
+ */
+export const agendaEvents = pgTable(
+  "agenda_events",
+  {
+    id: text().primaryKey(),
+    source: text().$type<"parliament" | "president" | "europarl" | "editorial">().notNull(),
+    kind: text().notNull(),
+    title: text().notNull(),
+    summary: text(),
+    allDay: boolean("all_day").notNull(),
+    /** Exact start; for all-day events, midnight in Lisbon of the first day. */
+    startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
+    /** Exact end when known (timed events only). */
+    endsAt: timestamp("ends_at", { withTimezone: true }),
+    startDay: date("start_day").notNull(),
+    /** Last day, inclusive, for all-day events over several days. */
+    endDay: date("end_day"),
+    /** When it stops being listed: the end, or the end of its last day in Lisbon when unknown. */
+    until: timestamp({ withTimezone: true }).notNull(),
+    status: text().$type<"scheduled" | "cancelled" | "postponed">().notNull().default("scheduled"),
+    place: jsonb().$type<AgendaPlace>(),
+    district: text(),
+    online: jsonb().$type<AgendaOnline>(),
+    attend: jsonb().$type<AgendaAttend>().notNull(),
+    organizer: text(),
+    partySlugs: text("party_slugs").array().notNull().default(sql`'{}'::text[]`),
+    sourceUrl: text("source_url"),
+    featured: boolean().notNull().default(false),
+    hidden: boolean().notNull().default(false),
+    createdBy: integer("created_by").references(() => admins.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("agenda_events_starts_idx").on(table.startsAt, table.id), index("agenda_events_until_idx").on(table.until)],
+);
