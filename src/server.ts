@@ -24,6 +24,7 @@ const app = await buildApp({
   forumSecret: config.FORUM_SECRET,
   newsletter,
   logger: true,
+  warmCaches: true,
 });
 
 const shutdown = async () => {

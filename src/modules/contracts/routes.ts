@@ -5,6 +5,7 @@ import { CONTRACTS_DATASET_URL, PROCEDURES, type ProcedureKind, baseContractUrl 
 import type { Db } from "../../db/client.js";
 import { ApiError, notFound } from "../../errors.js";
 import { errorSchema } from "../shared.js";
+import { cacheKey, createVersionedCache } from "./cache.js";
 
 const procedureKinds = PROCEDURES.map((p) => p.kind) as [ProcedureKind, ...ProcedureKind[]];
 const procedureByKind = new Map(PROCEDURES.map((p) => [p.kind, p]));
@@ -85,10 +86,64 @@ const groupSchema = z.object({
 });
 
 const statsBy = z.enum(["year", "month", "procedure", "entity", "supplier", "municipality", "district"]);
+const proceduresQuery = filtersSchema.omit({ procedure: true });
+const statsQuery = filtersSchema.extend({
+  by: statsBy,
+  order: z.enum(["total", "count"]).default("total").describe("For entity, supplier and places: biggest first by this"),
+  limit: z.coerce.number().int().min(1).max(100).default(20).describe("For entity, supplier and places"),
+});
+
+/** What the contracts page asks for with no filters: kept ready, so nobody waits for it. */
+const WARM = {
+  procedures: [{}],
+  stats: [{ by: "year" }, { by: "entity", limit: "8" }, { by: "supplier", limit: "8" }, { by: "municipality", limit: "8" }],
+};
+
+export interface ContractRoutesOptions {
+  /** Compute the contracts page's default totals at start and after every import (the server; not tests). */
+  warm?: boolean;
+  /** How often to look for a new import, in ms (default every request: tests change data often). */
+  recheckMs?: number;
+}
 
 export const contractRoutes =
-  (db: Db): FastifyPluginAsyncZod =>
+  (db: Db, { warm = false, recheckMs = 0 }: ContractRoutesOptions = {}): FastifyPluginAsyncZod =>
   async (app) => {
+    // Totals and charts scan every contract, and the data only changes when the weekly import
+    // runs: keep the answers until contract_imports says there's new data.
+    const cache = createVersionedCache<unknown>({
+      version: async () =>
+        (await db.execute<{ v: string | null }>(sql`select max(imported_at)::text as v from contract_imports`)).rows[0]?.v ?? "none",
+      checkEveryMs: recheckMs,
+    });
+    const cached = <T>(name: string, query: Record<string, unknown>, compute: () => Promise<T>) =>
+      cache.get(cacheKey(name, query), compute) as Promise<T>;
+
+    if (warm) {
+      const fill = async () => {
+        try {
+          await Promise.all([
+            ...WARM.procedures.map((q) => procedureTotals(proceduresQuery.parse(q))),
+            ...WARM.stats.map((q) => stats(statsQuery.parse(q))),
+          ]);
+        } catch (error) {
+          app.log.warn({ err: error }, "Couldn't precompute the contracts totals");
+        }
+      };
+      // After a deploy, and whenever the weekly import lands (checked every 10 minutes).
+      app.addHook("onReady", async () => void fill());
+      const timer = setInterval(() => {
+        cache.refresh(true).then(
+          async (changed) => {
+            if (changed) await fill();
+          },
+          () => {},
+        );
+      }, 10 * 60_000);
+      timer.unref();
+      app.addHook("onClose", async () => clearInterval(timer));
+    }
+
     const partiesOf = async (ids: string[]) => {
       const map = new Map<string, { entities: z.infer<typeof partySchema>[]; suppliers: z.infer<typeof partySchema>[] }>();
       if (ids.length === 0) return map;
@@ -171,7 +226,7 @@ export const contractRoutes =
         schema: {
           tags: ["contracts"],
           summary: "Procedure kinds explained, with how many contracts and euros each accounts for",
-          querystring: filtersSchema.omit({ procedure: true }),
+          querystring: proceduresQuery,
           response: {
             200: z.object({
               items: z.array(z.object({ kind: z.enum(procedureKinds), label: z.string(), plain: z.string(), count: z.number(), total: z.number() })),
@@ -180,15 +235,7 @@ export const contractRoutes =
           },
         },
       },
-      async (request) => {
-        const rows = await db.execute<{ kind: string; count: number; total: number }>(sql`
-          select c.procedure_kind as kind, count(*)::int as count, round(coalesce(sum(c.price), 0)::numeric, 2)::float8 as total
-          from contracts c where ${conditionsOf(request.query)} group by 1`);
-        const byKind = new Map(rows.rows.map((r) => [r.kind, r]));
-        return {
-          items: PROCEDURES.map((p) => ({ ...p, count: byKind.get(p.kind)?.count ?? 0, total: byKind.get(p.kind)?.total ?? 0 })),
-        };
-      },
+      async (request) => procedureTotals(request.query),
     );
 
     app.get(
@@ -197,11 +244,7 @@ export const contractRoutes =
         schema: {
           tags: ["contracts"],
           summary: "Contract counts and totals grouped by year, month, procedure, entity, supplier or place",
-          querystring: filtersSchema.extend({
-            by: statsBy,
-            order: z.enum(["total", "count"]).default("total").describe("For entity, supplier and places: biggest first by this"),
-            limit: z.coerce.number().int().min(1).max(100).default(20).describe("For entity, supplier and places"),
-          }),
+          querystring: statsQuery,
           response: {
             200: z.object({
               by: statsBy,
@@ -215,12 +258,28 @@ export const contractRoutes =
           },
         },
       },
-      async (request) => {
-        const { by, order, limit, ...filters } = request.query;
+      async (request) => stats(request.query),
+    );
+
+    async function procedureTotals(query: z.infer<typeof proceduresQuery>) {
+      return cached("procedures", query, async () => {
+        const rows = await db.execute<{ kind: string; count: number; total: number }>(sql`
+          select c.procedure_kind as kind, count(*)::int as count, round(coalesce(sum(c.price), 0)::numeric, 2)::float8 as total
+          from contracts c where ${conditionsOf(query)} group by 1`);
+        const byKind = new Map(rows.rows.map((r) => [r.kind, r]));
+        return {
+          items: PROCEDURES.map((p) => ({ ...p, count: byKind.get(p.kind)?.count ?? 0, total: byKind.get(p.kind)?.total ?? 0 })),
+        };
+      });
+    }
+
+    async function stats(query: z.infer<typeof statsQuery>) {
+      return cached("stats", query, async () => {
+        const { by, order, limit, ...filters } = query;
         const where = conditionsOf(filters);
         const top = sql`order by ${order === "count" ? sql`count` : sql`total`} desc, key limit ${limit}`;
         const aggregates = sql`count(*)::int as count, round(coalesce(sum(c.price), 0)::numeric, 2)::float8 as total`;
-        let query: SQL;
+        let statement: SQL;
         if (by === "year" || by === "month") {
           // By signing date (publication date when there is none): BASE splits its yearly files that way,
           // so each year we imported is complete. Years we didn't import are left out: the few contracts
@@ -229,25 +288,25 @@ export const contractRoutes =
           const period = sql.raw(
             by === "year" ? "to_char(coalesce(c.signed_at, c.published_at), 'YYYY')" : "to_char(coalesce(c.signed_at, c.published_at), 'YYYY-MM')",
           );
-          query = sql`select ${period} as key, ${period} as label, ${aggregates}
+          statement = sql`select ${period} as key, ${period} as label, ${aggregates}
             from contracts c where ${where}
               and extract(year from coalesce(c.signed_at, c.published_at))::int in (select year from contract_imports)
             group by 1 order by 1`;
         } else if (by === "procedure") {
-          query = sql`select c.procedure_kind as key, c.procedure_kind as label, ${aggregates}
+          statement = sql`select c.procedure_kind as key, c.procedure_kind as label, ${aggregates}
             from contracts c where ${where} group by 1 order by total desc`;
         } else if (by === "entity" || by === "supplier") {
           const role = by;
-          query = sql`select p.nif as key, max(p.name) as label, ${aggregates}
+          statement = sql`select p.nif as key, max(p.name) as label, ${aggregates}
             from contracts c join contract_parties p on p.contract_id = c.id and p.role = ${role}
             where ${where} and p.nif <> '' group by p.nif ${top}`;
         } else {
-          query = sql`select pl.key, max(pl.name) as label, ${aggregates}
+          statement = sql`select pl.key, max(pl.name) as label, ${aggregates}
             from contracts c cross join unnest(c.place_keys) as k(key) join places pl on pl.key = k.key and pl.level = ${by}
             where ${where} group by pl.key ${top}`;
         }
         const [rows, totals, updated, years] = await Promise.all([
-          db.execute<z.infer<typeof groupSchema>>(query),
+          db.execute<z.infer<typeof groupSchema>>(statement),
           db.execute<{ count: number; total: number }>(sql`select ${aggregates} from contracts c where ${where}`),
           db.execute<{ at: string | null }>(sql`select max(imported_at)::text as at from contract_imports`),
           db.execute<{ year: number }>(sql`select year::int from contract_imports order by year`),
@@ -260,8 +319,8 @@ export const contractRoutes =
           years: years.rows.map((r) => r.year),
           source: CONTRACTS_DATASET_URL,
         };
-      },
-    );
+      });
+    }
 
     app.get(
       "/contracts/parties/:nif",
@@ -284,43 +343,49 @@ export const contractRoutes =
         },
       },
       async (request) => {
-        const { nif } = request.params;
-        const names = await db.execute<{ name: string }>(sql`
-          select name from contract_parties where nif = ${nif} group by name order by count(*) desc limit 1`);
-        const name = names.rows[0]?.name;
-        if (!name) throw notFound("Contract party");
-
-        const side = async (role: "entity" | "supplier") => {
-          const other = role === "entity" ? "supplier" : "entity";
-          const [totals, counterparts] = await Promise.all([
-            db.execute<{ count: number; total: number; direct: number }>(sql`
-              select count(*)::int as count, round(coalesce(sum(c.price), 0)::numeric, 2)::float8 as total,
-                count(*) filter (where c.procedure_kind in ('direct_award', 'direct_award_simplified'))::int as direct
-              from contract_parties p join contracts c on c.id = p.contract_id
-              where p.nif = ${nif} and p.role = ${role}`),
-            db.execute<z.infer<typeof groupSchema>>(sql`
-              select o.nif as key, max(o.name) as label, count(*)::int as count, round(coalesce(sum(c.price), 0)::numeric, 2)::float8 as total
-              from contract_parties p
-              join contracts c on c.id = p.contract_id
-              join contract_parties o on o.contract_id = p.contract_id and o.role = ${other} and o.nif <> ''
-              where p.nif = ${nif} and p.role = ${role}
-              group by o.nif order by total desc, key limit 10`),
-          ]);
-          const t = totals.rows[0]!;
-          return { count: t.count, total: t.total, directAwards: t.direct, counterparts: counterparts.rows };
-        };
-
-        const [asEntity, asSupplier, latest] = await Promise.all([
-          side("entity"),
-          side("supplier"),
-          db.execute<Row>(sql`
-            select ${summaryColumns} from contracts c
-            where c.id in (select contract_id from contract_parties where nif = ${nif})
-            order by c.published_at desc nulls last, c.id desc nulls last limit 10`),
-        ]);
-        return { nif, name, asEntity, asSupplier, latest: await summaries(latest.rows) };
+        // A big public body has tens of thousands of contracts: cached like the totals.
+        const party = await cached("party", { nif: request.params.nif }, () => partyOf(request.params.nif));
+        if (!party) throw notFound("Contract party");
+        return party;
       },
     );
+
+    async function partyOf(nif: string) {
+      const names = await db.execute<{ name: string }>(sql`
+        select name from contract_parties where nif = ${nif} group by name order by count(*) desc limit 1`);
+      const name = names.rows[0]?.name;
+      if (!name) return null;
+
+      const side = async (role: "entity" | "supplier") => {
+        const other = role === "entity" ? "supplier" : "entity";
+        const [totals, counterparts] = await Promise.all([
+          db.execute<{ count: number; total: number; direct: number }>(sql`
+            select count(*)::int as count, round(coalesce(sum(c.price), 0)::numeric, 2)::float8 as total,
+              count(*) filter (where c.procedure_kind in ('direct_award', 'direct_award_simplified'))::int as direct
+            from contract_parties p join contracts c on c.id = p.contract_id
+            where p.nif = ${nif} and p.role = ${role}`),
+          db.execute<z.infer<typeof groupSchema>>(sql`
+            select o.nif as key, max(o.name) as label, count(*)::int as count, round(coalesce(sum(c.price), 0)::numeric, 2)::float8 as total
+            from contract_parties p
+            join contracts c on c.id = p.contract_id
+            join contract_parties o on o.contract_id = p.contract_id and o.role = ${other} and o.nif <> ''
+            where p.nif = ${nif} and p.role = ${role}
+            group by o.nif order by total desc, key limit 10`),
+        ]);
+        const t = totals.rows[0]!;
+        return { count: t.count, total: t.total, directAwards: t.direct, counterparts: counterparts.rows };
+      };
+
+      const [asEntity, asSupplier, latest] = await Promise.all([
+        side("entity"),
+        side("supplier"),
+        db.execute<Row>(sql`
+          select ${summaryColumns} from contracts c
+          where c.id in (select contract_id from contract_parties where nif = ${nif})
+          order by c.published_at desc nulls last, c.id desc nulls last limit 10`),
+      ]);
+      return { nif, name, asEntity, asSupplier, latest: await summaries(latest.rows) };
+    }
 
     app.get(
       "/contracts/:id",
