@@ -1,7 +1,7 @@
 import { asc, eq } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { articleGovernmentMembers, articleParties, articles, governmentMembers, parties, seenSourceUris } from "../src/db/schema.js";
-import { canonicalUrl, ingest, toExcerpt } from "../src/ingestion/ingest.js";
+import { canonicalUrl, ingest, refreshGenericHeadlines, toExcerpt } from "../src/ingestion/ingest.js";
 import { createPoliteClient } from "../src/ingestion/politeClient.js";
 import type { NewsSource } from "../src/ingestion/sources.js";
 import { createTestDb, resetDb } from "./helpers.js";
@@ -321,5 +321,30 @@ describe("helpers", () => {
     expect(excerpt.length).toBeLessThanOrEqual(301);
     expect(excerpt.endsWith("palavra…")).toBe(true);
     expect(toExcerpt("curto")).toBe("curto");
+  });
+});
+
+describe("refreshGenericHeadlines", () => {
+  it("replaces a placeholder headline once the page has the real one", async () => {
+    const meta = (title: string, description: string) =>
+      `<meta property="og:title" content="${title}"><meta property="og:description" content="${description}">${page("O PS e o PSD.")}`;
+    // Scanned while the page still had the placeholder.
+    await run({
+      [FEED]: [200, feed(item("/8h", "As notícias das 8h", "As notícias na Rádio. O PS e o PSD."))],
+      "https://a.pt/8h": [200, meta("As notícias das 8h", "As notícias na Rádio.")],
+    });
+    expect((await db.select({ title: articles.title }).from(articles))[0]!.title).toBe("As notícias das 8h");
+
+    const pages: Record<string, string> = { "https://a.pt/8h": meta("8h. Isaltino tem três julgamentos", "Autarca de Oeiras.") };
+    const fetch = vi.fn<typeof globalThis.fetch>(async (input) => new Response(pages[String(input)] ?? "", { status: pages[String(input)] ? 200 : 404 }));
+    const client = createPoliteClient({ fetch, sleep: async () => undefined });
+    expect(await refreshGenericHeadlines({ db, client, now: NOW })).toBe(1);
+    expect(await db.select({ title: articles.title, excerpt: articles.excerpt }).from(articles)).toEqual([
+      { title: "8h. Isaltino tem três julgamentos", excerpt: "Autarca de Oeiras." },
+    ]);
+    // Nothing generic left: no more page requests.
+    fetch.mockClear();
+    expect(await refreshGenericHeadlines({ db, client, now: NOW })).toBe(0);
+    expect(fetch.mock.calls.filter(([u]) => !String(u).endsWith("robots.txt"))).toEqual([]);
   });
 });

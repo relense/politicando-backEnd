@@ -81,3 +81,10 @@ export const pickHeadline = (listingTitle: string, pageHeadline: string, domain:
   if (!page || simplify(page) === simplify(listingTitle)) return { title: listingTitle, fromPage: false };
   return { title: page, fromPage: true };
 };
+
+/**
+ * Placeholder headlines some outlets publish first and replace later: Observador's radio
+ * bulletins go out as "As notícias das 8h" and get their real headline minutes afterwards.
+ */
+const GENERIC_HEADLINES = [/^as not[ií]cias d[ae]s? \d{1,2}(h\d{0,2}|:\d{2})?$/i, /^notici[aá]rio( d[ae]s? \d{1,2}(h\d{0,2}|:\d{2})?)?$/i];
+export const isGenericHeadline = (headline: string) => GENERIC_HEADLINES.some((pattern) => pattern.test(headline.trim()));

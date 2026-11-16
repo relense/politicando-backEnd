@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractArticle, pickHeadline, stripSiteSuffix } from "../src/ingestion/extractArticle.js";
+import { extractArticle, isGenericHeadline, pickHeadline, stripSiteSuffix } from "../src/ingestion/extractArticle.js";
 import { parseNewsSitemap, parseRss, toPlainText } from "../src/ingestion/parseListing.js";
 
 const RSS = `<?xml version="1.0"?><rss version="2.0" xmlns:content="c" xmlns:media="m"><channel>
@@ -146,6 +146,11 @@ describe("headlines", () => {
     expect(stripSiteSuffix("Ventura reeleito - 24 Notícias", "24noticias.sapo.pt")).toBe("Ventura reeleito");
     expect(stripSiteSuffix("Santos Silva admite eleições | Jornal Económico", "jornaleconomico.sapo.pt")).toBe("Santos Silva admite eleições");
     expect(stripSiteSuffix("Costa responde - e Ventura reage", "publico.pt")).toBe("Costa responde - e Ventura reage");
+  });
+
+  it("recognises placeholder headlines", () => {
+    for (const t of ["As notícias das 8h", "As noticias das 00h", "As notícias das 13h30", "Noticiário", "Noticiário das 9h"]) expect(isGenericHeadline(t)).toBe(true);
+    for (const t of ["8h. Isaltino Morais tem três julgamentos à vista", "As notícias das 8h que marcaram o dia", "Despertador: PS garante"]) expect(isGenericHeadline(t)).toBe(false);
   });
 
   it("keeps the feed headline when the page agrees, and the page's when the feed is generic", () => {

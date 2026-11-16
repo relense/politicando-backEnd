@@ -1,4 +1,4 @@
-import { eq, gte, inArray } from "drizzle-orm";
+import { and, desc, eq, gte, inArray } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import {
   articleDeputies,
@@ -35,7 +35,7 @@ import { PARTY_DEFINITIONS } from "../matching/parties.js";
 import { GOVERNMENT_ALIASES } from "../government/aliases.js";
 import { PRESIDENT_ALIASES, currentPresident } from "../presidency/presidents.js";
 import { DEPUTY_ALIASES } from "../parliament/aliases.js";
-import { extractArticle, pickHeadline } from "./extractArticle.js";
+import { extractArticle, isGenericHeadline, pickHeadline } from "./extractArticle.js";
 import { parseNewsSitemap, parseRss, type ListingItem } from "./parseListing.js";
 import type { PoliteClient } from "./politeClient.js";
 import type { NewsSource } from "./sources.js";
@@ -394,4 +394,38 @@ export const ingest = async (options: IngestOptions): Promise<SourceStats[]> => 
   };
   if (matchable.parties.length === 0) throw new Error("No parties found: run the seed first");
   return Promise.all(options.sources.map((source) => scanSource(source, matchable, options)));
+};
+
+/** How far back, and how many pages per run, to look again at articles stored with a placeholder headline. */
+const RECHECK_WINDOW_MS = 2 * 24 * 60 * 60 * 1000;
+const RECHECK_MAX_PAGES = 10;
+
+/**
+ * Articles stored while their headline was still a placeholder ("As notícias das 8h") get the
+ * real headline and summary once the page has them. Returns how many were updated.
+ */
+export const refreshGenericHeadlines = async ({ db, client, now = new Date() }: Pick<IngestOptions, "db" | "client" | "now">) => {
+  const recent = await db
+    .select({ id: articles.id, title: articles.title, url: articles.url, source: articles.source })
+    .from(articles)
+    .where(and(gte(articles.publishedAt, new Date(now.getTime() - RECHECK_WINDOW_MS))))
+    .orderBy(desc(articles.publishedAt));
+  let updated = 0;
+  for (const article of recent.filter((a) => isGenericHeadline(a.title)).slice(0, RECHECK_MAX_PAGES)) {
+    const page = await client.get(article.url);
+    if (page.status !== "ok") continue;
+    const extracted = extractArticle(page.body);
+    const headline = pickHeadline(article.title, extracted.headline, article.source);
+    if (!headline.fromPage || isGenericHeadline(headline.title)) continue;
+    await db
+      .update(articles)
+      .set({
+        title: headline.title,
+        ...(extracted.description ? { excerpt: toExcerpt(extracted.description) } : {}),
+        ...(extracted.imageUrl ? { imageUrl: extracted.imageUrl } : {}),
+      })
+      .where(eq(articles.id, article.id));
+    updated++;
+  }
+  return updated;
 };
