@@ -6,14 +6,15 @@ Base path: `/api/v2`. Article items look the same everywhere (`id`, `title`, `ex
 
 ## GET /articles
 
-Returns `{ items, nextCursor }`. Pass `nextCursor` back as `cursor` for the next page; it's
+Returns `{ items, nextCursor, total }`. `total` is how many articles match the filters across all pages (the same on every page), for "Mostrar 52 notícias". Pass `nextCursor` back as `cursor` for the next page; it's
 `null` on the last page. Every filter combines with the others and with paging.
 
 | query | what |
 | --- | --- |
 | `q` | Words in the title or excerpt. **All** words must match, ignoring accents and case: `habitacao` finds "Habitação". Parts of words match too (`habit` finds "habitação"). Up to 10 words |
-| `source` | One outlet, exactly as in `article.source` (e.g. `observador.pt`). Take the values from `/articles/sources` |
-| `party`, `deputy`, `initiative`, `governmentMember`, `president` | As before |
+| `source` | An outlet as in `article.source` (e.g. `observador.pt`), or several separated by commas (`publico.pt,expresso.pt`): articles from **any** of them. Take the values from `/articles/sources`. An outlet with no articles just matches nothing |
+| `party` | A party slug, or several separated by commas (`ps,psd,livre`): articles about **any** of them. 404 `not_found` if any slug is unknown, naming it (`"Party not found: xyz"`) |
+| `deputy`, `initiative`, `governmentMember`, `president` | One value each, as before |
 | `sort` | `newest` (default) or `comments` |
 | `since` | Only articles published in the last N hours: `24h` (or `24`). 1 to 8760 |
 | `limit` | 1–50, default 10 |
@@ -28,6 +29,10 @@ name. Map domains to names on your side if you want "Observador" in the dropdown
 have at least one visible comment, most comments first (ties: newest first). Counts only
 visible comments, the same as `commentCount`. Paging works, but positions can shift if
 someone comments while you page; for a sidebar, one request with `limit` is enough.
+
+Filters combine with AND: `?party=ps,psd&source=publico.pt,expresso.pt` gives articles about PS
+or PSD **and** from Público or Expresso. Up to 30 values per list; spaces and empty values are
+ignored. Everything works together with `q`, `sort`, `since`, `cursor` and `limit`.
 
 ## GET /articles/sources
 

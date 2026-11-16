@@ -1,4 +1,4 @@
-import { and, desc, eq, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
 import type { Db } from "../../db/client.js";
@@ -147,6 +147,14 @@ export const articleColumns = {
   initiatives: initiativesSql,
 };
 
+/** "a,b,c" → ["a", "b", "c"]: trimmed, no empties or repeats, at most `max` values. */
+const commaList = (max: number) =>
+  z
+    .string()
+    .max(2_000)
+    .transform((value) => [...new Set(value.split(",").map((v) => v.trim()).filter(Boolean))])
+    .pipe(z.array(z.string().max(100)).min(1).max(max));
+
 export const articleRoutes =
   (db: Db): FastifyPluginAsyncZod =>
   async (app) => {
@@ -156,13 +164,15 @@ export const articleRoutes =
         schema: {
           tags: ["articles"],
           querystring: z.object({
-            party: z.string().optional().describe("Party slug"),
+            party: commaList(30).optional().describe('Party slug, or several separated by commas ("ps,psd,livre"): articles about any of them'),
             deputy: z.coerce.number().int().positive().max(2_147_483_647).optional().describe("Deputy ID"),
             initiative: z.coerce.number().int().positive().max(2_147_483_647).optional().describe("Initiative ID"),
             governmentMember: z.string().regex(/^[0-9a-f]{32}$/).optional().describe("Government member ID"),
             president: z.string().regex(/^[a-z-]+$/).optional().describe('President ID, e.g. "antonio-jose-seguro"'),
             q: z.string().trim().max(200).optional().describe("Words in the title or excerpt; all must match, ignoring accents and case"),
-            source: z.string().max(100).optional().describe("Outlet, exactly as in article.source (see /articles/sources)"),
+            source: commaList(30)
+              .optional()
+              .describe('Outlet as in article.source (see /articles/sources), or several separated by commas: articles from any of them'),
             sort: z.enum(["newest", "comments"]).default("newest").describe("comments: most commented first, only articles with comments"),
             since: z
               .string()
@@ -178,6 +188,7 @@ export const articleRoutes =
             200: z.object({
               items: z.array(articleSchema),
               nextCursor: z.string().nullable(),
+              total: z.number().describe("Articles matching the filters, across all pages"),
             }),
             400: errorSchema,
             404: errorSchema,
@@ -190,28 +201,27 @@ export const articleRoutes =
 
         // Newest first pages by (publishedAt, id); most commented by position, since counts change.
         let offset = 0;
+        let after: SQL | undefined;
         if (cursor !== undefined) {
           if (sort === "comments") offset = decodeOffset(cursor);
           else {
             const { publishedAt, id } = decodeCursor(cursor);
-            conditions.push(sql`(articles.published_at, articles.id) < (${publishedAt}::timestamptz, ${id}::int)`);
+            after = sql`(articles.published_at, articles.id) < (${publishedAt}::timestamptz, ${id}::int)`;
           }
         }
         for (const word of searchWords(q ?? "")) {
           conditions.push(sql`${FOLDED_TEXT} like ${`%${escapeLike(word)}%`}`);
         }
-        if (source !== undefined) conditions.push(eq(articles.source, source));
+        if (source !== undefined) conditions.push(inArray(articles.source, source));
         if (since !== undefined) conditions.push(sql`articles.published_at >= now() - make_interval(hours => ${since})`);
         if (sort === "comments") conditions.push(sql`${commentCountSql} > 0`);
         if (party !== undefined) {
-          const [found] = await db
-            .select({ id: parties.id })
-            .from(parties)
-            .where(eq(parties.slug, party));
-          if (!found) throw notFound("Party");
+          const found = await db.select({ id: parties.id, slug: parties.slug }).from(parties).where(inArray(parties.slug, party));
+          const unknown = party.filter((slug) => !found.some((p) => p.slug === slug));
+          if (unknown.length > 0) throw new ApiError(404, "not_found", `Party not found: ${unknown.join(", ")}`);
           conditions.push(sql`exists (
             select 1 from article_parties ap
-            where ap.article_id = articles.id and ap.party_id = ${found.id}
+            where ap.article_id = articles.id and ap.party_id in (${sql.join(found.map((p) => sql`${p.id}`), sql`, `)})
           )`);
         }
         if (deputy !== undefined) {
@@ -247,13 +257,16 @@ export const articleRoutes =
         }
 
         const order = sort === "comments" ? [desc(commentCountSql), desc(articles.publishedAt), desc(articles.id)] : [desc(articles.publishedAt), desc(articles.id)];
-        const rows = await db
-          .select(articleColumns)
-          .from(articles)
-          .where(and(...conditions))
-          .orderBy(...order)
-          .limit(limit + 1)
-          .offset(offset);
+        const [rows, [counted]] = await Promise.all([
+          db
+            .select(articleColumns)
+            .from(articles)
+            .where(and(...conditions, after))
+            .orderBy(...order)
+            .limit(limit + 1)
+            .offset(offset),
+          db.select({ total: sql<number>`count(*)::int` }).from(articles).where(and(...conditions)),
+        ]);
 
         const page = rows.slice(0, limit);
         const last = page.at(-1);
@@ -265,6 +278,7 @@ export const articleRoutes =
             : sort === "comments"
               ? encodeOffset(offset + limit)
               : encodeCursor({ publishedAt: last.publishedAt.toISOString(), id: last.id }),
+          total: counted?.total ?? 0,
         };
       },
     );

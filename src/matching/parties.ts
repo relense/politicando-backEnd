@@ -139,7 +139,7 @@ export const PARTY_DEFINITIONS: PartyDefinition[] = [
     terms: ["Nós, Cidadãos!", "Nós Cidadãos", "Nós, Cidadãos"],
   },
   {
-    slug: "atua", acronym: "A)T", name: "(A)TUA",
+    slug: "atua", acronym: "(A)TUA", name: "(A)TUA",
     website: null, assemblySeats: 0,
     terms: ["(A)TUA"],
   },

@@ -189,6 +189,30 @@ describe("article list", () => {
     });
   });
 
+  it("takes several parties and sources: any within a list, both lists together, with a total", async () => {
+    await insertArticle(db, { sourceUri: "a", title: "A", source: "publico.pt", publishedAt: new Date("2026-10-05") }, ["ps"]);
+    await insertArticle(db, { sourceUri: "b", title: "B", source: "expresso.pt", publishedAt: new Date("2026-10-04") }, ["psd"]);
+    await insertArticle(db, { sourceUri: "c", title: "C", source: "dn.pt", publishedAt: new Date("2026-10-03") }, ["ps"]);
+    await insertArticle(db, { sourceUri: "d", title: "D", source: "publico.pt", publishedAt: new Date("2026-10-02") }, ["chega"]);
+    await insertArticle(db, { sourceUri: "e", title: "E", source: "publico.pt", publishedAt: new Date("2026-10-01") }, ["ps", "psd"]);
+    const titles = async (query: string) => (await get(`/articles?${query}`)).body.items.map((a: { title: string }) => a.title);
+
+    expect(await titles("party=ps,psd")).toEqual(["A", "B", "C", "E"]);
+    expect(await titles("source=publico.pt,expresso.pt")).toEqual(["A", "B", "D", "E"]);
+    expect(await titles("party=ps,psd&source=publico.pt,%20expresso.pt,")).toEqual(["A", "B", "E"]);
+    expect(await titles("party=ps")).toEqual(["A", "C", "E"]);
+
+    const first = await get("/articles?party=ps,psd&source=publico.pt,expresso.pt&limit=2");
+    expect(first.body).toMatchObject({ total: 3 });
+    const second = await get(`/articles?party=ps,psd&source=publico.pt,expresso.pt&limit=2&cursor=${first.body.nextCursor}`);
+    expect(second.body).toMatchObject({ total: 3, nextCursor: null });
+    expect(second.body.items.map((a: { title: string }) => a.title)).toEqual(["E"]);
+
+    expect(await get("/articles?party=ps,nope,psd")).toMatchObject({ status: 404, body: { error: { code: "not_found", message: "Party not found: nope" } } });
+    expect((await get("/articles?source=nada.pt,outro.pt")).body).toEqual({ items: [], nextCursor: null, total: 0 });
+    expect((await get("/articles?party=,")).status).toBe(400);
+  });
+
   it("sorts by visible comments within the last hours", async () => {
     const now = Date.now();
     const old = await insertArticle(db, { sourceUri: "old", title: "Antigo", publishedAt: new Date(now - 48 * 3_600_000) });
