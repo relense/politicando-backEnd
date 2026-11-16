@@ -517,6 +517,8 @@ describe("platform", () => {
       "/api/v2/deputies/{id}/votes",
       "/api/v2/editorial",
       "/api/v2/editorial/{slug}",
+      "/api/v2/editorial/{slug}/comments",
+      "/api/v2/editorial/{slug}/view",
       "/api/v2/elections",
       "/api/v2/elections/{id}",
       "/api/v2/elections/{id}/candidates",

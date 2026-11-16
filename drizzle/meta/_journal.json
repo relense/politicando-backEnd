@@ -162,6 +162,20 @@
       "when": 1794857731673,
       "tag": "0022_feedback",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1794864552048,
+      "tag": "0023_editorial_views",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1794864783755,
+      "tag": "0024_editorial_comments",
+      "breakpoints": true
     }
   ]
 }

@@ -200,8 +200,11 @@ export const adminRoutes =
 
     const moderatedComment = z.object({
       id: z.number(),
-      articleId: z.number(),
-      articleTitle: z.string(),
+      articleId: z.number().nullable().describe("On a news article…"),
+      articleTitle: z.string().nullable(),
+      postId: z.number().nullable().describe("…or on one of our editorial posts"),
+      postSlug: z.string().nullable(),
+      postTitle: z.string().nullable(),
       parentId: z.number().nullable(),
       username: z.string().nullable(),
       body: z.string(),
@@ -218,6 +221,7 @@ export const adminRoutes =
           querystring: z.object({
             status: z.enum(["visible", "hidden", "all"]).default("visible"),
             articleId: z.coerce.number().int().positive().optional(),
+            postId: z.coerce.number().int().positive().optional().describe("An editorial post's id"),
             before: z.coerce.number().int().positive().optional().describe("Comments with a smaller id (the last id of the previous page)"),
             limit: z.coerce.number().int().min(1).max(100).default(50),
           }),
@@ -226,22 +230,25 @@ export const adminRoutes =
       },
       async (request) => {
         await requireAdmin(request, "moderator");
-        const { status, articleId, before, limit } = request.query;
+        const { status, articleId, postId, before, limit } = request.query;
         const rows = await db.execute<{
-          id: number; article_id: number; article_title: string; parent_id: number | null; username: string | null;
-          body: string; created_at: string; hidden_at: string | null;
+          id: number; article_id: number | null; article_title: string | null; post_id: number | null; post_slug: string | null;
+          post_title: string | null; parent_id: number | null; username: string | null; body: string; created_at: string; hidden_at: string | null;
         }>(sql`
-          select c.id, c.article_id, a.title as article_title, c.parent_id, c.username, c.body,
+          select c.id, c.article_id, a.title as article_title, c.editorial_post_id as post_id, e.slug as post_slug,
+            e.title as post_title, c.parent_id, c.username, c.body,
             to_char(c.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as created_at,
             to_char(c.hidden_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as hidden_at
-          from comments c join articles a on a.id = c.article_id
+          from comments c left join articles a on a.id = c.article_id left join editorial_posts e on e.id = c.editorial_post_id
           where ${status === "visible" ? sql`c.hidden_at is null` : status === "hidden" ? sql`c.hidden_at is not null` : sql`true`}
             and ${articleId ? sql`c.article_id = ${articleId}` : sql`true`}
+            and ${postId ? sql`c.editorial_post_id = ${postId}` : sql`true`}
             and ${before ? sql`c.id < ${before}` : sql`true`}
           order by c.id desc limit ${limit}`);
         return {
           items: rows.rows.map((r) => ({
-            id: r.id, articleId: r.article_id, articleTitle: r.article_title, parentId: r.parent_id, username: r.username,
+            id: r.id, articleId: r.article_id, articleTitle: r.article_title, postId: r.post_id, postSlug: r.post_slug, postTitle: r.post_title,
+            parentId: r.parent_id, username: r.username,
             body: r.body, createdAt: r.created_at, hiddenAt: r.hidden_at,
           })),
         };
