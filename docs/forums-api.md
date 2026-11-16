@@ -1,7 +1,8 @@
 # Forums API (for the frontend)
 
-Anonymous forums, like 4chan or Reddit without accounts. There is one board per party and a
-general one (`geral`). Nobody signs in. Each poster gets an **ID per thread**, derived from
+Anonymous forums, like 4chan or Reddit without accounts. There is one board per party, a
+general one (`geral`), and an ideas board (`ideias`) for suggestions about the site, which
+the team answers with a status. Nobody signs in. Each poster gets an **ID per thread**, derived from
 their IP and a server secret:
 
 - It is the same for all their posts in that thread, so you can follow who says what.
@@ -20,11 +21,12 @@ links with `rel="nofollow ugc noopener"`. `>>123` can link to post 123 in the sa
 
 ## GET /forums
 
-Boards: `geral` first, then parties by seats.
+Boards: `geral` first, then `ideias`, then parties by seats.
 
 ```json
 { "items": [
   { "board": "geral", "name": "Geral", "acronym": null, "threads": 12, "posts": 140, "lastActivity": "2026-11-15T12:00:00.000Z" },
+  { "board": "ideias", "name": "Ideias", "acronym": null, "threads": 30, "posts": 95, "lastActivity": "…" },
   { "board": "psd", "name": "Partido Social Democrata", "acronym": "PPD/PSD", "threads": 3, "posts": 20, "lastActivity": "…" }
 ] }
 ```
@@ -34,8 +36,9 @@ Boards: `geral` first, then parties by seats.
 ## GET /forums/:board/threads
 
 Query: `sort=active|new|top` (default `active`: last reply first; `new`: newest; `top`: most
-replies), `page`, `limit` (1-50, default 25). Pinned threads come first. 404 for an unknown
-board.
+upvoted, then most replies), `status` (only threads the team gave that status; see the
+ideas board), `page`, `limit` (1-50, default 25). Pinned threads come first. 404 for an
+unknown board.
 
 ```json
 {
@@ -52,7 +55,11 @@ board.
       "bumpedAt": "…",
       "pinned": false,
       "locked": false,
-      "link": { "article": { "id": 12, "title": "…" }, "initiative": null }
+      "link": { "article": { "id": 12, "title": "…" }, "initiative": null },
+      "score": 42,
+      "status": null,
+      "answer": null,
+      "answeredAt": null
     }
   ],
   "total": 1
@@ -107,6 +114,41 @@ Returns 201 `{ id, posterId }`. Replying bumps the thread. Errors:
 - 409 `thread_locked`: closed by a moderator. Hide the form when `locked`.
 - 400 `invalid_reply`: `replyTo` isn't in this thread.
 
+## POST /forums/threads/:id/vote
+
+Upvotes a thread, on any board. No body, no captcha. Returns 200 `{ "score": 42 }`.
+
+- One vote per reader per thread, counted by a keyed hash of the IP (never stored as is).
+  Voting again returns the same score, without an error. There's no downvote or undo.
+- 30 votes a minute per IP; past that, 429 `rate_limited`.
+- 404 for a missing or hidden thread. Locked threads can still be voted on.
+- `score` is on every thread in the list and in `GET /forums/threads/:id`. Remember the vote
+  on the device to show the arrow as pressed.
+
+## The ideas board (`ideias`)
+
+A board like the others (same posting, replies, captcha, limits and reports) where readers
+suggest things for the site. The page at `/feedback/ideias` lists it with `sort=top`.
+
+The team gives each idea a `status` and, optionally, a public `answer`:
+
+| `status` | Meaning |
+|---|---|
+| `null` | Nobody from the team has looked yet |
+| `reviewing` | We're looking at it |
+| `planned` | We'll do it |
+| `in_progress` | We're doing it |
+| `done` | Done |
+| `declined` | We won't do it (the answer usually says why) |
+
+`answer` is plain text, e.g. "Feito em novembro: já podes filtrar por distrito", and
+`answeredAt` is when it was written (it only changes when the text changes). Both are on the
+thread in the list and in `GET /forums/threads/:id`. Filter with
+`GET /forums/ideias/threads?status=planned`.
+
+For the feedback page's "most voted ideas" box, use
+`GET /forums/ideias/threads?sort=top&limit=5`.
+
 ## POST /reports
 
 Lets readers report threads, replies and article comments:
@@ -122,4 +164,9 @@ options.
 
 ## Moderation
 
-In the admin, see `docs/admin-api.md`: the reports queue, hiding, locking and pinning.
+In the admin, see `docs/admin-api.md`: the reports queue, hiding, locking and pinning. For
+ideas (moderators):
+
+`PUT /admin/forum/threads/:id/status` with `{ "status": "planned", "answer": "Está nos planos para dezembro" }`.
+Both can be `null`. Returns `{ status, answer, answeredAt }`. Threads on other boards get
+400 `not_an_idea`.
