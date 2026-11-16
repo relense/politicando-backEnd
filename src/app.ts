@@ -159,7 +159,7 @@ export const buildApp = async ({
   await app.register(cors, { origin: corsOrigins, methods: ["GET", "POST", "PATCH", "DELETE"], credentials: true });
   await app.register(rateLimit, { max: 300, timeWindow: "1 minute", allowList: (request) => fromFrontend.has(request.raw) });
   await app.register(swagger, {
-    openapi: { info: { title: "Politicando API", version: "2.0.0" } },
+    openapi: { info: { title: "Politicando API", version: "2.0.0", contact: { name: "Politicando", email: "info@politicando.pt", url: "https://www.politicando.pt" } } },
     transform: jsonSchemaTransform,
   });
   await app.register(swaggerUi, { routePrefix: "/docs", staticCSP: true });

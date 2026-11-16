@@ -23,8 +23,8 @@ These protect readers and us; we can be sued over this.
 3. **Sources are always visible**, with publisher and date. Court and official sources first.
 4. **Show `reviewedAt`**: "Revisto a 15 nov. 2026". Cases move; readers should know how fresh
    an entry is.
-5. **Corrections**: add a "Pedir correção" link (e.g. a mailto to the editors). People named
-   have a right of reply.
+5. **Corrections**: add a "Pedir correção" link, to the feedback form (kind `error`) or a
+   mailto to `info@politicando.pt`. People named have a right of reply.
 6. **No scores or rankings of people.** Counts per party are fine with context (how many
    officeholders each party has had), but don't build a "most corrupt" list. An index will
    come later, with a public methodology.

@@ -4,6 +4,8 @@ Collects Portuguese news, links each article to the political parties it mention
 
 Built with Node 22, TypeScript, Fastify, Zod, Drizzle and Postgres.
 
+Live at https://www.politicando.pt (API: https://api.politicando.pt). Contact: info@politicando.pt.
+
 ## Run it locally
 
 ```sh
@@ -282,7 +284,7 @@ Production checklist:
 - `COOKIE_SECURE=true` (the default): the admin session cookie only travels over HTTPS.
 - `CORS_ORIGINS` lists only our frontends: the API allows credentials for them, for the admin.
 - Database roles: run `deploy/db-roles.sql` once. Migrations run as `politicando_owner`; the API and jobs connect as `politicando_app`, which can't change the schema or rewrite the audit log.
-- Newsletter: `SMTP_URL=smtps://user:password@host:465` from a mail provider, `MAIL_FROM` on a domain whose SPF/DKIM that provider covers, `NEWSLETTER_SECRET` (`openssl rand -hex 32`, set once: changing it breaks every link already sent), `SITE_URL` (the website) and `PUBLIC_API_URL` (this API's public address). Without `SMTP_URL` and `NEWSLETTER_SECRET`, sign-ups answer 503.
+- Newsletter: `SMTP_URL=smtps://user:password@host:465` from a mail provider, `MAIL_FROM` (default `Politicando <info@politicando.pt>`) on a domain whose SPF/DKIM that provider covers, `NEWSLETTER_SECRET` (`openssl rand -hex 32`, set once: changing it breaks every link already sent), `SITE_URL` (the website) and `PUBLIC_API_URL` (this API's public address). Without `SMTP_URL` and `NEWSLETTER_SECRET`, sign-ups answer 503.
 - Create the first admin with `node dist/jobs/createAdmin.js <email> "<name>" admin`, then invite the rest from the admin (`docs/admin-api.md`).
 - Schedule the jobs from the host's cron, with the same image: `node dist/jobs/ingest.js` hourly, `syncParliament.js` and `syncGovernment.js` daily, `importContracts.js` weekly.
 
