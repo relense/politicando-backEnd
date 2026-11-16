@@ -380,6 +380,38 @@ describe("platform", () => {
     await proxied.close();
   });
 
+  it("counts each reader behind the frontend, when it sends the shared key", async () => {
+    const seen = vi.fn<RecaptchaVerifier>(async () => true);
+    const key = "k".repeat(40);
+    const behind = await buildApp({
+      db, corsOrigins: [], verifyRecaptcha: seen, clientIpHeader: "True-Client-IP", commentLimitPerMinute: 1, frontendKey: key,
+    });
+    const article = await insertArticle(db);
+    const comment = (headers: Record<string, string>) =>
+      behind.inject({ method: "POST", url: `/api/v2/articles/${article.id}/comments`, payload: { body: "x", recaptchaToken: "t" }, headers: { "true-client-ip": "9.9.9.9", ...headers } });
+
+    // The frontend server (9.9.9.9) renders for two readers: each gets their own limit.
+    expect((await comment({ "x-frontend-key": key, "x-reader-ip": "1.1.1.1" })).statusCode).toBe(201);
+    expect(seen).toHaveBeenLastCalledWith("t", "1.1.1.1");
+    expect((await comment({ "x-frontend-key": key, "x-reader-ip": "2.2.2.2" })).statusCode).toBe(201);
+    expect((await comment({ "x-frontend-key": key, "x-reader-ip": "1.1.1.1" })).statusCode).toBe(429);
+    // Without the right key, X-Reader-IP is ignored: it's the caller's own address.
+    expect((await comment({ "x-frontend-key": "wrong", "x-reader-ip": "3.3.3.3" })).statusCode).toBe(201);
+    expect(seen).toHaveBeenLastCalledWith("t", "9.9.9.9");
+    expect((await comment({ "x-reader-ip": "4.4.4.4" })).statusCode).toBe(429);
+
+    // Renders with no reader (background revalidation) skip the general limit of 300 a minute.
+    const get = (headers: Record<string, string>) => behind.inject({ method: "GET", url: "/api/v2/cases/glossary", headers: { "true-client-ip": "8.8.8.8", ...headers } });
+    const statuses = async (headers: Record<string, string>) => {
+      const codes = new Set<number>();
+      for (let i = 0; i < 301; i++) codes.add((await get(headers)).statusCode);
+      return [...codes].sort();
+    };
+    expect(await statuses({ "x-frontend-key": key })).toEqual([200]);
+    expect(await statuses({})).toEqual([200, 429]);
+    await behind.close();
+  });
+
   it("reports health", async () => {
     const response = await app.inject({ method: "GET", url: "/health" });
     expect(response.statusCode).toBe(200);

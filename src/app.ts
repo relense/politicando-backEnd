@@ -1,4 +1,5 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { isIP } from "node:net";
 import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
@@ -64,6 +65,12 @@ export interface AppOptions {
   newsletter?: NewsletterSettings | null;
   /** Precompute the contracts page's totals at start and after imports (the server, not tests). */
   warmCaches?: boolean;
+  /**
+   * Shared with the frontend's server. Its page renders all come from one address, so with the
+   * key it says whose page it is rendering (X-Reader-IP) and limits apply to each reader, not
+   * to the frontend as a whole. Without the key, those headers are ignored.
+   */
+  frontendKey?: string;
   /** Sends the team's answers to feedback; without it, answers are only noted. */
   mailer?: Mailer | null;
   feedbackLimitPerHour?: number;
@@ -84,10 +91,12 @@ export const buildApp = async ({
   forumSecret = randomBytes(32).toString("hex"),
   newsletter = null,
   warmCaches = false,
+  frontendKey,
   mailer = null,
   feedbackLimitPerHour = 10,
 }: AppOptions) => {
-  const app = Fastify({ logger, trustProxy: trustProxy || clientIpHeader !== undefined, bodyLimit: 64 * 1024 });
+  const proxied = trustProxy || clientIpHeader !== undefined;
+  const app = Fastify({ logger, trustProxy: proxied || frontendKey !== undefined, bodyLimit: 64 * 1024 });
   if (clientIpHeader !== undefined) {
     const header = clientIpHeader.toLowerCase();
     // Registered first, so the rate limiter already sees the real address.
@@ -97,6 +106,23 @@ export const buildApp = async ({
       // Without the header, fall back to the connection's address rather than anything sent.
       if (ip) request.raw.headers["x-forwarded-for"] = ip;
       else delete request.raw.headers["x-forwarded-for"];
+    });
+  }
+  // Frontend renders without a reader (background revalidation) skip the general limit.
+  const fromFrontend = new WeakSet<object>();
+  if (frontendKey !== undefined) {
+    const expected = createHash("sha256").update(frontendKey).digest();
+    app.addHook("onRequest", async (request) => {
+      const sentKey = request.headers["x-frontend-key"];
+      const reader = request.headers["x-reader-ip"];
+      delete request.raw.headers["x-frontend-key"];
+      delete request.raw.headers["x-reader-ip"];
+      // trustProxy is on only for the key's sake: never take a client's own X-Forwarded-For.
+      if (!proxied) delete request.raw.headers["x-forwarded-for"];
+      if (typeof sentKey !== "string" || !timingSafeEqual(createHash("sha256").update(sentKey).digest(), expected)) return;
+      const ip = typeof reader === "string" ? reader.trim() : "";
+      if (isIP(ip)) request.raw.headers["x-forwarded-for"] = ip;
+      else if (request.method === "GET" || request.method === "HEAD") fromFrontend.add(request.raw);
     });
   }
   app.setValidatorCompiler(validatorCompiler);
@@ -131,7 +157,7 @@ export const buildApp = async ({
   await app.register(cookie);
   // credentials: the admin frontend sends its session cookie; only the listed origins may.
   await app.register(cors, { origin: corsOrigins, methods: ["GET", "POST", "PATCH", "DELETE"], credentials: true });
-  await app.register(rateLimit, { max: 300, timeWindow: "1 minute" });
+  await app.register(rateLimit, { max: 300, timeWindow: "1 minute", allowList: (request) => fromFrontend.has(request.raw) });
   await app.register(swagger, {
     openapi: { info: { title: "Politicando API", version: "2.0.0" } },
     transform: jsonSchemaTransform,

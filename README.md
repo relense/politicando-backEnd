@@ -156,6 +156,12 @@ audited. Interests with a NIF link to public contracts. Drafts stay private; pub
 checks the sources (`src/cases/model.ts`). See `docs/cases-api.md`, including the wording
 rules for the frontend.
 
+## Rate limits
+
+Per reader IP: 300 requests a minute overall, with tighter limits on posting. The frontend
+renders pages on its own server, so it sends the reader's IP with a shared `FRONTEND_API_KEY`
+to keep limits per reader. See `docs/rate-limits.md`.
+
 ## Forums and editorial
 
 Anonymous party forums (`/forums`, `docs/forums-api.md`): no accounts, reCAPTCHA and rate
