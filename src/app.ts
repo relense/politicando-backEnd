@@ -44,6 +44,12 @@ export interface AppOptions {
   corsOrigins: string[];
   verifyRecaptcha: RecaptchaVerifier;
   trustProxy?: boolean;
+  /**
+   * A header our proxy sets to the client's IP and clients can't forge (Render, behind
+   * Cloudflare: "true-client-ip"). When set, it's the only source of request.ip: rate limits,
+   * reCAPTCHA and forum poster IDs never see a client-sent X-Forwarded-For.
+   */
+  clientIpHeader?: string;
   logger?: boolean;
   commentLimitPerMinute?: number;
   /** Admin session cookie over HTTPS only (default true; turn off for local HTTP). */
@@ -62,6 +68,7 @@ export const buildApp = async ({
   corsOrigins,
   verifyRecaptcha,
   trustProxy = false,
+  clientIpHeader,
   logger = false,
   commentLimitPerMinute = 5,
   secureCookies = true,
@@ -69,7 +76,18 @@ export const buildApp = async ({
   forumSecret = randomBytes(32).toString("hex"),
   newsletter = null,
 }: AppOptions) => {
-  const app = Fastify({ logger, trustProxy, bodyLimit: 64 * 1024 });
+  const app = Fastify({ logger, trustProxy: trustProxy || clientIpHeader !== undefined, bodyLimit: 64 * 1024 });
+  if (clientIpHeader !== undefined) {
+    const header = clientIpHeader.toLowerCase();
+    // Registered first, so the rate limiter already sees the real address.
+    app.addHook("onRequest", async (request) => {
+      const value = request.headers[header];
+      const ip = (Array.isArray(value) ? value[0] : value)?.split(",")[0]?.trim();
+      // Without the header, fall back to the connection's address rather than anything sent.
+      if (ip) request.raw.headers["x-forwarded-for"] = ip;
+      else delete request.raw.headers["x-forwarded-for"];
+    });
+  }
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
 

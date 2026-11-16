@@ -362,6 +362,24 @@ describe("comments", () => {
 });
 
 describe("platform", () => {
+  it("takes the client IP only from the configured header, never from a forged X-Forwarded-For", async () => {
+    const seen = vi.fn<RecaptchaVerifier>(async () => true);
+    const proxied = await buildApp({ db, corsOrigins: [], verifyRecaptcha: seen, clientIpHeader: "True-Client-IP", commentLimitPerMinute: 2 });
+    const article = await insertArticle(db);
+    const send = (headers: Record<string, string>) =>
+      proxied.inject({ method: "POST", url: `/api/v2/articles/${article.id}/comments`, payload: { body: "x", recaptchaToken: "t" }, headers });
+
+    expect((await send({ "true-client-ip": "1.2.3.4", "x-forwarded-for": "6.6.6.6" })).statusCode).toBe(201);
+    expect(seen).toHaveBeenLastCalledWith("t", "1.2.3.4");
+    expect((await send({ "x-forwarded-for": "6.6.6.6" })).statusCode).toBe(201);
+    expect(seen).toHaveBeenLastCalledWith("t", "127.0.0.1");
+    // A new forged address each time doesn't get round the limit.
+    expect((await send({ "true-client-ip": "1.2.3.4", "x-forwarded-for": "7.7.7.7" })).statusCode).toBe(201);
+    expect((await send({ "true-client-ip": "1.2.3.4", "x-forwarded-for": "8.8.8.8" })).statusCode).toBe(429);
+    expect((await send({ "true-client-ip": "5.5.5.5" })).statusCode).toBe(201);
+    await proxied.close();
+  });
+
   it("reports health", async () => {
     const response = await app.inject({ method: "GET", url: "/health" });
     expect(response.statusCode).toBe(200);

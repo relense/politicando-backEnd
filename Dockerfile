@@ -8,6 +8,8 @@ RUN npm run build
 
 FROM node:22-alpine
 ENV NODE_ENV=production
+# The contracts import streams BASE's yearly zips through unzip; busybox's can't read zip64.
+RUN apk add --no-cache unzip
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
