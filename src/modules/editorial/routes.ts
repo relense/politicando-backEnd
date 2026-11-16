@@ -40,7 +40,7 @@ const adminPostSchema = postSchema.extend({
 });
 
 const httpsUrl = z.url({ protocol: /^https$/ }).max(1000);
-const inputSchema = z.object({
+export const editorialInputSchema = z.object({
   title: z.string().trim().min(3).max(200),
   subtitle: z.string().trim().max(300).nullable(),
   slug: z
@@ -144,7 +144,7 @@ export const editorialRoutes =
       return row;
     };
 
-    const fields = async (input: z.infer<typeof inputSchema>, me: Admin, id: number | null) => {
+    const fields = async (input: z.infer<typeof editorialInputSchema>, me: Admin, id: number | null) => {
       if (input.mediaUrl && !parseMedia(input.mediaUrl)) {
         throw new ApiError(400, "unsupported_media", "Use a YouTube, Vimeo, Spotify, SoundCloud or Apple Podcasts link");
       }
@@ -199,7 +199,7 @@ export const editorialRoutes =
     app.post(
       "/admin/editorial",
       {
-        schema: { tags: ["admin"], summary: "Write a new post (a draft)", body: inputSchema, response: { 201: adminPostSchema, 409: errorSchema, ...errors } },
+        schema: { tags: ["admin"], summary: "Write a new post (a draft)", body: editorialInputSchema, response: { 201: adminPostSchema, 409: errorSchema, ...errors } },
       },
       async (request, reply) => {
         const me = await requireAdmin(request);
@@ -216,7 +216,7 @@ export const editorialRoutes =
           tags: ["admin"],
           summary: "Replace a post's content (it keeps its status)",
           params: idParams,
-          body: inputSchema,
+          body: editorialInputSchema,
           response: { 200: adminPostSchema, 409: errorSchema, ...errors },
         },
       },

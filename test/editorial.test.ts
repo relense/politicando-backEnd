@@ -1,8 +1,9 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { hashPassword } from "../src/admin/password.js";
 import { buildApp } from "../src/app.js";
-import { admins } from "../src/db/schema.js";
+import { admins, editorialPosts } from "../src/db/schema.js";
 import { parseMedia, slugify } from "../src/editorial/media.js";
+import { cleanBody, parseFrontMatter, parseMarkdownPost, saveMarkdownPosts } from "../src/editorial/markdownFiles.js";
 import { createTestDb, resetDb } from "./helpers.js";
 
 describe("media and slugs", () => {
@@ -121,5 +122,73 @@ describe("readingMinutes", () => {
     expect(readingMinutes("palavra ".repeat(200))).toBe(1);
     expect(readingMinutes("palavra ".repeat(201))).toBe(2);
     expect(readingMinutes("## Título\n\n[uma ligação](https://example.pt/muito/longa) e **negrito** - ---")).toBe(1);
+  });
+});
+
+describe("posts from Markdown files", () => {
+  const file = [
+    "---",
+    "slug: oe-explicado",
+    'title: "OE: como passa, fase a fase"',
+    "subtitle: 'Sem jargão'",
+    "tags: [Orçamento, parlamento, orçamento]",
+    "publish: now, with an update on 24 Nov",
+    "canonical_url: https://politicando.pt/editorial/outro  # placeholder",
+    "---",
+    "",
+    "# OE: como passa, fase a fase",
+    "",
+    "> **Nota de edição:** publicar já.",
+    "> Atualizar no dia 24.",
+    "",
+    "Intro.",
+    "",
+    "## Antes",
+    "",
+    "Texto.",
+    "",
+    "## Depois (24 de novembro)",
+    "",
+    "*[A preencher na noite de 24 de novembro.]*",
+    "",
+    "| Partido | Voto |",
+    "",
+    "## E depois?",
+    "",
+    "Fim.",
+  ].join("\n");
+
+  it("reads the front matter, ignoring keys it doesn't know and trailing comments", () => {
+    const { meta } = parseFrontMatter(file);
+    expect(meta).toMatchObject({ slug: "oe-explicado", title: "OE: como passa, fase a fase", subtitle: "Sem jargão", canonical_url: "https://politicando.pt/editorial/outro" });
+    expect(meta.tags).toEqual(["Orçamento", "parlamento", "orçamento"]);
+  });
+
+  it("drops the repeated title, notes for editors and sections not written yet", () => {
+    const post = parseMarkdownPost(file);
+    expect(post).toMatchObject({ slug: "oe-explicado", kind: "article", subtitle: "Sem jargão", tags: ["orçamento", "parlamento"] });
+    expect(post.body).toBe("Intro.\n\n## Antes\n\nTexto.\n\n## E depois?\n\nFim.\n");
+    expect(cleanBody("# Outro título\n\nTexto", "Título")).toBe("# Outro título\n\nTexto\n");
+  });
+
+  it("takes the slug from an editorial canonical URL, else from the title, and needs a title", () => {
+    expect(parseMarkdownPost("---\ntitle: Matching names\ncanonical_url: https://politicando.pt/editorial/matching-party-names\n---\nBody").slug).toBe("matching-party-names");
+    expect(parseMarkdownPost("---\ntitle: Método de Hondt\n---\nBody").slug).toBe("metodo-de-hondt");
+    expect(() => parseMarkdownPost("No front matter")).toThrow(/title/);
+  });
+
+  it("publishes, then updates by slug keeping the first publication date and featured", async () => {
+    const first = new Date("2026-11-16T10:00:00Z");
+    expect(await saveMarkdownPosts(db, [parseMarkdownPost(file)], { authorName: "Redação Politicando", publish: true, now: first }))
+      .toEqual([{ slug: "oe-explicado", created: true }]);
+    await db.update(editorialPosts).set({ featured: true });
+
+    const edited = parseMarkdownPost(file.replace("Intro.", "Nova intro."));
+    expect(await saveMarkdownPosts(db, [edited], { authorName: "Redação Politicando", publish: true, now: new Date("2026-11-17T10:00:00Z") }))
+      .toEqual([{ slug: "oe-explicado", created: false }]);
+
+    const response = await app.inject({ method: "GET", url: "/api/v2/editorial/oe-explicado" });
+    expect(response.json()).toMatchObject({ authorName: "Redação Politicando", featured: true, publishedAt: first.toISOString() });
+    expect(response.json().body).toMatch(/^Nova intro\./);
   });
 });

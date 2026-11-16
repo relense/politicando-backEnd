@@ -91,3 +91,19 @@ Body for `POST` and `PUT`:
 - `tags` are lower-cased; up to 10.
 
 There's no image upload yet: use an https link to an image hosted elsewhere.
+
+## Posts imported from Markdown
+
+Some posts are written as Markdown files and published with `npm run editorial:import`
+instead of the admin. They come out of the API exactly like posts written in the admin, with
+these differences:
+
+- `authorName` is `"Redação Politicando"` and there's no author account behind it.
+- No `coverImageUrl` yet, so the cards need a fallback without an image.
+- Bodies use GitHub-flavoured Markdown **tables** (party results, vote counts), plus
+  footnote-style lines in italics and a `---` rule before the "Como fizemos" note at the end.
+  Render tables (e.g. `remark-gfm`) and let them scroll sideways on phones.
+- Links inside bodies are absolute `https://politicando.pt/...` links to our own pages
+  (`/partido/:slug`, `/parlamento`, `/eleicoes`, `/editorial/:slug`). Treat them as internal links.
+- `matching-party-names` is in **English** (a technical post about how news is matched to
+  parties); the others are in Portuguese.
