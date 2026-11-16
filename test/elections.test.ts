@@ -5,6 +5,7 @@ import { importElection, type ElectionSource } from "../src/elections/import.js"
 import { dicofreOf, levelOf, maiUrls, parseResults, partiesInList } from "../src/elections/mai.js";
 import { parseV3Election, parseV3Options, placeNameKey, v3Urls } from "../src/elections/maiV3.js";
 import { importMayors } from "../src/elections/mayors.js";
+import { HISTORIC_LEGISLATIVAS, importHistoricLegislativas } from "../src/elections/historic.js";
 import { candidatesUrl, importCandidates, looselySame, parseCandidates, properName } from "../src/elections/candidates.js";
 import { deputies, parties } from "../src/db/schema.js";
 import { eq } from "drizzle-orm";
@@ -502,5 +503,38 @@ describe("election endpoints", () => {
     const { body } = await get("/places/LOCAL-010100");
     expect(body).toMatchObject({ name: "Águeda", level: "municipality", dicofre: "0101", parent: { name: "Aveiro" } });
     expect(body.children.map((c: { name: string }) => c.name)).toEqual(["Aguada de Cima", "Barrô"]);
+  });
+});
+
+describe("historic legislativas", () => {
+  it("holds every election from the Constituinte to 2009, with seats adding up and known party slugs", () => {
+    expect(HISTORIC_LEGISLATIVAS.map((e) => e.id.slice(-4))).toEqual(
+      ["1975", "1976", "1979", "1980", "1983", "1985", "1987", "1991", "1995", "1999", "2002", "2005", "2009"],
+    );
+    const slugs = new Set(["ps", "psd", "cds-pp", "pcp", "pev", "ppm", "mpt", "be", "pctp-mrpp", "ptp"]);
+    for (const e of HISTORIC_LEGISLATIVAS) {
+      expect(e.lists.reduce((sum, l) => sum + l.mandates, 0), e.id).toBe(e.seats);
+      // The official maps are off by at most a few hundred votes (2002 is the worst, 804).
+      const counted = e.lists.reduce((sum, l) => sum + l.votes, 0) + (e.blank ?? 0) + e.null;
+      expect(Math.abs(counted - e.voters), e.id).toBeLessThanOrEqual(804);
+      expect(new Set(e.lists.map((l) => l.list)).size, e.id).toBe(e.lists.length);
+      for (const l of e.lists) for (const s of l.partySlugs) expect(slugs.has(s), `${e.id} ${l.list} ${s}`).toBe(true);
+    }
+  });
+
+  it("serves them in the same shape as newer elections, at the country level, and can be re-run", async () => {
+    await importHistoricLegislativas(db);
+    await importHistoricLegislativas(db, HISTORIC_LEGISLATIVAS.filter((e) => e.id === "legislativas-1979"));
+
+    const list = await get("/elections?type=legislativas");
+    expect(list.body.items).toHaveLength(13);
+    expect(list.body.items.at(-1)).toMatchObject({ id: "legislativas-1975", name: "Assembleia Constituinte 1975", deepestLevel: "country" });
+
+    const e = await get("/elections/legislativas-1979");
+    expect(e.status).toBe(200);
+    expect(e.body.place.key).toBe("GLOBAL-990000");
+    expect(e.body.turnout).toMatchObject({ registered: 7_249_346, voters: 6_007_453, blank: 42_863, null: 120_851, totalMandates: 250, turnoutPct: 82.87 });
+    expect(e.body.lists[0]).toMatchObject({ list: "AD", partySlugs: ["psd", "cds-pp", "ppm"], coalition: true, votes: 2_554_458, mandates: 121 });
+    expect(e.body.lists).toHaveLength(12);
   });
 });

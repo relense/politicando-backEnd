@@ -2,6 +2,7 @@ import { loadDatabaseConfig } from "../config.js";
 import { createDb } from "../db/client.js";
 import { ELECTIONS } from "../elections/catalog.js";
 import { importCandidates } from "../elections/candidates.js";
+import { HISTORIC_LEGISLATIVAS, importHistoricLegislativas } from "../elections/historic.js";
 import { importElection } from "../elections/import.js";
 import { importMayors } from "../elections/mayors.js";
 import { createPoliteClient } from "../ingestion/politeClient.js";
@@ -14,13 +15,18 @@ import { createPoliteClient } from "../ingestion/politeClient.js";
  *   npm run elections:import -- legislativas-2025    just one (or several)
  *   npm run elections:import -- --parishes           every body down to parishes (slow)
  *   npm run elections:import -- --refresh            re-download what's already stored
+ *   npm run elections:import -- --historic           only the legislativas 1975–2009 (curated, no download)
+ *
+ * The historic legislativas (src/elections/historic.ts) are loaded with every full run.
  */
 const args = process.argv.slice(2);
 const ids = args.filter((a) => !a.startsWith("--"));
-const chosen = ids.length > 0 ? ELECTIONS.filter((e) => ids.includes(e.id)) : ELECTIONS;
-const unknown = ids.filter((id) => !ELECTIONS.some((e) => e.id === id));
+const historicOnly = args.includes("--historic");
+const chosen = historicOnly ? [] : ids.length > 0 ? ELECTIONS.filter((e) => ids.includes(e.id)) : ELECTIONS;
+const historic = historicOnly || ids.length === 0 ? HISTORIC_LEGISLATIVAS : HISTORIC_LEGISLATIVAS.filter((e) => ids.includes(e.id));
+const unknown = ids.filter((id) => !ELECTIONS.some((e) => e.id === id) && !HISTORIC_LEGISLATIVAS.some((e) => e.id === id));
 if (unknown.length > 0) {
-  console.error(`Unknown election(s): ${unknown.join(", ")}. Known: ${ELECTIONS.map((e) => e.id).join(", ")}`);
+  console.error(`Unknown election(s): ${unknown.join(", ")}. Known: ${[...HISTORIC_LEGISLATIVAS, ...ELECTIONS].map((e) => e.id).join(", ")}`);
   process.exit(1);
 }
 
@@ -30,6 +36,7 @@ const { db, pool } = createDb(config.DATABASE_URL);
 const client = createPoliteClient({ defaultDelayMs: 1_000 });
 
 try {
+  if (historic.length > 0) console.log(JSON.stringify({ historic: await importHistoricLegislativas(db, historic) }));
   for (const election of chosen) {
     const stats = await importElection(db, client, election, {
       parishes: args.includes("--parishes"),

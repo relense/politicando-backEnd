@@ -210,7 +210,7 @@ export const electionRoutes =
       {
         schema: {
           tags: ["elections"],
-          summary: "Elections since 2011, newest first, with who won, and the next ones",
+          summary: "Elections, newest first (legislativas since 1975, the rest since 2011), with who won, and the next ones",
           querystring: z.object({ type: electionSummarySchema.shape.type.optional() }),
           response: {
             200: z.object({

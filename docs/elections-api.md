@@ -1,4 +1,4 @@
-# Elections API (results since 2011)
+# Elections API (results since 2011; legislativas since 1975)
 
 Base URL: `/api/v2`. Spec at `/docs`.
 
@@ -9,7 +9,7 @@ country to a town.
 
 | Type | Elections | Bodies (`organ`) |
 |---|---|---|
-| `legislativas` | 2011, 2015, 2019, 2022, 2024, 2025 | `AR`: Assembleia da República |
+| `legislativas` | 1975 (Constituinte), 1976, 1979, 1980, 1983, 1985, 1987, 1991, 1995, 1999, 2002, 2005, 2009, 2011, 2015, 2019, 2022, 2024, 2025 | `AR`: Assembleia da República |
 | `europeias` | 2014, 2019 (`EUR`), 2024 (`PE`) | European Parliament |
 | `presidenciais` | 2011, 2016, 2021 | `PR` |
 | `autarquicas` | 2013, 2017, 2021, 2025 | `CM` câmara, `AM` assembleia municipal, `AF` assembleia de freguesia |
@@ -17,6 +17,30 @@ country to a town.
 Not yet available: **presidenciais 2026**, which isn't on the MAI site.
 
 Election ids are `<type>-<year>`, e.g. `legislativas-2025`.
+
+### Legislativas 1975–2009 (whole country only)
+
+These come from the CNE's official maps (*mapas oficiais*) rather than the MAI site, and only
+the national totals exist: the response has the same shape as other elections, but
+`deepestLevel` is `country`, `place.key` is `GLOBAL-990000` and `children` is empty. Don't
+offer a map or a drill-down for these.
+
+- `legislativas-1975` is named **"Assembleia Constituinte 1975"**: it elected the assembly that
+  wrote the Constitution, not a parliament. Keep it in the seats animation, but label it.
+- `turnout.totalMandates` changes over time: **250** in 1975 (one more seat went to Macau,
+  listed as ADIM) and 1979–1987, **263** in 1976, **230** since 1991. Draw the hemicycle
+  from `totalMandates`, not a fixed 230.
+- Before 1979 blank votes were counted with the null ones, so `blank` is `0` for 1975 and 1976.
+- `list` is the acronym printed on the ballot (`PPD` in 1975, `PPD/PSD` later, `AD`, `APU`,
+  `FRS`, `CDU`/`PCP-PEV`, `B.E.`…). Use `partySlugs` to colour and link: `AD` is
+  `["psd","cds-pp","ppm"]`, `APU` is `["pcp"]` (`["pcp","pev"]` from 1983), `FRS` is `["ps"]`,
+  `PCP-PEV` is `["pcp","pev"]`. Parties that no longer exist (UDP, PRD, MDP/CDE, PSN…) have
+  `partySlugs: []`: show them by `name` in a neutral colour.
+- In 1979 and 1980 the PSD and CDS ran alone in the Azores and Madeira, so those years have
+  both an `AD` row and separate `PSD` and `CDS` rows.
+- Figures are exactly as published. In a few maps the lists plus blank and null votes are
+  off from `voters` by a handful of votes (2002 is the worst, 804); percentages are worked
+  out from the published figures.
 
 ## `GET /elections?type=`
 
