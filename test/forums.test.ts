@@ -21,7 +21,7 @@ afterAll(async () => {
   await pool.end();
 });
 
-const call = async (method: "GET" | "POST", url: string, payload?: object, headers: Record<string, string> = {}) => {
+const call = async (method: "GET" | "POST" | "PUT", url: string, payload?: object, headers: Record<string, string> = {}) => {
   const response = await app.inject({ method, url: `/api/v2${url}`, headers, ...(payload && { payload }), remoteAddress: headers["x-ip"] ?? "10.0.0.1" });
   return { status: response.statusCode, body: response.body ? response.json() : null };
 };
@@ -47,6 +47,7 @@ describe("boards and threads", () => {
     await openThread("ps");
     const { body } = await call("GET", "/forums");
     expect(body.items[0]).toMatchObject({ board: "geral", name: "Geral", threads: 0 });
+    expect(body.items[1]).toMatchObject({ board: "ideias", name: "Ideias", acronym: null });
     expect(body.items.find((b: { board: string }) => b.board === "ps")).toMatchObject({ acronym: "PS", threads: 1, posts: 1 });
   });
 
@@ -144,5 +145,51 @@ describe("moderation", () => {
 
     const log = await call("GET", "/admin/audit", undefined, { cookie });
     expect(log.body.items.map((i: { action: string }) => i.action)).toEqual(["report.dismiss", "report.hide"]);
+  });
+});
+
+describe("ideas board and votes", () => {
+  const ids = (body: { items: { id: number }[] }) => body.items.map((t) => t.id);
+
+  it("counts one upvote per reader and sorts top threads by score, then replies", async () => {
+    const a = (await openThread("ideias", { title: "Alertas por partido" })).body.id;
+    const b = (await openThread("ideias", { title: "Modo escuro" })).body.id;
+    const c = (await openThread("ideias", { title: "Mapa de contratos" })).body.id;
+    await call("POST", `/forums/threads/${c}/posts`, { body: "Sim!", recaptchaToken: "t" });
+
+    expect((await call("POST", `/forums/threads/${b}/vote`, undefined, as("1.1.1.1"))).body).toEqual({ score: 1 });
+    expect((await call("POST", `/forums/threads/${b}/vote`, undefined, as("1.1.1.1"))).body).toEqual({ score: 1 });
+    expect((await call("POST", `/forums/threads/${b}/vote`, undefined, as("2.2.2.2"))).body).toEqual({ score: 2 });
+    expect((await call("POST", `/forums/threads/${a}/vote`, undefined, as("1.1.1.1"))).body).toEqual({ score: 1 });
+    expect((await call("POST", "/forums/threads/999999/vote")).status).toBe(404);
+
+    const top = await call("GET", "/forums/ideias/threads?sort=top");
+    // b has 2 votes; a and c have 1 and 0, but c's reply doesn't beat a's vote.
+    expect(ids(top.body)).toEqual([b, a, c]);
+    expect(top.body.items[0]).toMatchObject({ score: 2, status: null, answer: null, answeredAt: null });
+    expect((await call("GET", `/forums/threads/${b}`)).body.thread).toMatchObject({ score: 2 });
+    // On equal scores, most replies first.
+    await call("POST", `/forums/threads/${c}/vote`, undefined, as("3.3.3.3"));
+    expect(ids((await call("GET", "/forums/ideias/threads?sort=top")).body)).toEqual([b, c, a]);
+  });
+
+  it("lets moderators give ideas a status and an answer, and filters by status", async () => {
+    const { cookie } = await modCookie();
+    const idea = (await openThread("ideias")).body.id;
+    const other = (await openThread("ideias")).body.id;
+    const partyThread = (await openThread("ps")).body.id;
+
+    const set = (id: number, body: object, headers: Record<string, string> = { cookie }) => call("PUT", `/admin/forum/threads/${id}/status`, body, headers);
+    expect((await set(idea, { status: "done", answer: "Feito" }, {})).status).toBe(401);
+    expect((await set(partyThread, { status: "done", answer: null })).body.error.code).toBe("not_an_idea");
+    const first = await set(idea, { status: "done", answer: "Feito em novembro: já podes filtrar por distrito" });
+    expect(first.body).toMatchObject({ status: "done", answer: "Feito em novembro: já podes filtrar por distrito", answeredAt: expect.any(String) });
+    expect((await set(idea, { status: "done", answer: "Feito em novembro: já podes filtrar por distrito" })).body.answeredAt).toBe(first.body.answeredAt);
+    await set(other, { status: "planned", answer: "" });
+
+    expect(ids((await call("GET", "/forums/ideias/threads?status=planned")).body)).toEqual([other]);
+    expect((await call("GET", "/forums/ideias/threads?status=done")).body.items[0]).toMatchObject({ id: idea, status: "done", answer: expect.stringContaining("distrito") });
+    expect((await call("GET", `/forums/threads/${other}`)).body.thread).toMatchObject({ status: "planned", answer: null, answeredAt: null });
+    expect((await call("GET", "/forums/ideias/threads?status=nope")).status).toBe(400);
   });
 });

@@ -1,5 +1,6 @@
 import { loadIngestConfig } from "../config.js";
 import { createDb } from "../db/client.js";
+import { purgeFeedback } from "../feedback/purge.js";
 import { ingest, refreshGenericHeadlines } from "../ingestion/ingest.js";
 import { createPoliteClient } from "../ingestion/politeClient.js";
 import { NEWS_SOURCES } from "../ingestion/sources.js";
@@ -18,6 +19,8 @@ try {
   });
   for (const source of stats) console.log(JSON.stringify(source));
   console.log(JSON.stringify({ refreshedHeadlines: await refreshGenericHeadlines({ db, client }) }));
+  // Not news, but this job runs every hour: old feedback screenshots go here too.
+  await purgeFeedback(db);
 
   // A few sites failing is normal. Most failing means the scanner itself is broken.
   const unreadable = stats.filter((source) => source.listingError).length;

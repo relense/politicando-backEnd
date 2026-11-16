@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
   type AnyPgColumn,
+  customType,
   date,
   index,
   boolean,
@@ -15,6 +16,8 @@ import {
   timestamp,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
+
+const bytea = customType<{ data: Buffer; driverData: Buffer }>({ dataType: () => "bytea" });
 
 export const parties = pgTable("parties", {
   id: integer().primaryKey().generatedAlwaysAsIdentity(),
@@ -827,11 +830,31 @@ export const forumThreads = pgTable(
     pinned: boolean().notNull().default(false),
     lockedAt: timestamp("locked_at", { withTimezone: true }),
     hiddenAt: timestamp("hidden_at", { withTimezone: true }),
+    /** Readers' upvotes (forum_votes), kept here for sorting. */
+    score: integer().notNull().default(0),
+    /** The team's verdict on an idea (board "ideias"), with an optional public answer. */
+    status: text().$type<"reviewing" | "planned" | "in_progress" | "done" | "declined">(),
+    answer: text(),
+    answeredAt: timestamp("answered_at", { withTimezone: true }),
   },
   (table) => [
     index("forum_threads_board_bumped_idx").on(table.board, table.bumpedAt.desc()),
     index("forum_threads_board_created_idx").on(table.board, table.createdAt.desc()),
+    index("forum_threads_board_score_idx").on(table.board, table.score.desc()),
   ],
+);
+
+/** One upvote per reader per thread; `voter` is a keyed hash of the IP, never the IP. */
+export const forumVotes = pgTable(
+  "forum_votes",
+  {
+    threadId: integer("thread_id")
+      .notNull()
+      .references(() => forumThreads.id, { onDelete: "cascade" }),
+    voter: text().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.threadId, table.voter] })],
 );
 
 export const forumPosts = pgTable(
@@ -961,4 +984,53 @@ export const agendaEvents = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [index("agenda_events_starts_idx").on(table.startsAt, table.id), index("agenda_events_until_idx").on(table.until)],
+);
+
+/**
+ * Messages from the feedback form. The email (only when the reader wants an answer) is
+ * deleted when the message is closed; screenshots after 90 days (see src/feedback).
+ */
+export const feedbackMessages = pgTable(
+  "feedback_messages",
+  {
+    id: integer().primaryKey().generatedAlwaysAsIdentity(),
+    kind: text().$type<"error" | "idea" | "broken" | "other">().notNull(),
+    message: text().notNull(),
+    page: text(),
+    url: text(),
+    correction: text(),
+    source: text(),
+    email: text(),
+    screenshot: bytea(),
+    screenshotType: text("screenshot_type"),
+    status: text().$type<"open" | "answered" | "closed">().notNull().default("open"),
+    /** The team's reply, as sent (or noted when answered outside the admin). */
+    reply: text(),
+    /** Internal, never shown to the reader. */
+    note: text(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    answeredAt: timestamp("answered_at", { withTimezone: true }),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+  },
+  (table) => [index("feedback_messages_status_idx").on(table.status, table.createdAt.desc())],
+);
+
+/** The public corrections log ("Correções"): what readers pointed out and what we did. */
+export const corrections = pgTable(
+  "corrections",
+  {
+    id: integer().primaryKey().generatedAlwaysAsIdentity(),
+    status: text().$type<"fixed" | "checking" | "rejected">().notNull(),
+    /** The day it was fixed, or reported while still checking. */
+    date: date().notNull(),
+    /** The site's section, e.g. "Percursos". */
+    area: text().notNull(),
+    title: text().notNull(),
+    /** A path on the site or a full link. */
+    url: text(),
+    feedbackId: integer("feedback_id").references(() => feedbackMessages.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("corrections_date_idx").on(table.date.desc(), table.id.desc())],
 );
