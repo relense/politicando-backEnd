@@ -15,6 +15,8 @@ export const DATASETS = {
   biographies: "DARegistoBiografico",
   initiatives: "DAIniciativas",
   organs: "DAComposicaoOrgaos",
+  /** The coming days' agenda ("Agenda Parlamentar"). */
+  agenda: "DABoletimInformativo",
 } as const;
 
 export type Dataset = keyof typeof DATASETS;

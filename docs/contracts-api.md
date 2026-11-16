@@ -158,6 +158,31 @@ One NIF, which can be a public body, a company or both:
 - `directAwards`: how many of its contracts were ajustes diretos (simplified ones included).
 - 404 if the NIF is in no contract.
 
+## Performance
+
+The totals and charts (`/contracts/procedures`, `/contracts/stats`, `/contracts/parties/:nif`)
+add up all ~690k contracts, which takes 2–4 s per call on the production database. The data
+only changes once a week (the Monday import), so the API keeps these answers in memory until
+the next import:
+
+- The page with no filters (procedures, `stats` by year, plus entity, supplier and municipality
+  with `limit=8`) is computed when the server starts and right after each import, so it
+  answers in a few milliseconds.
+- Anything else (a town's page, another `limit`, a party page) is slow the first time it's
+  asked for after an import or a deploy, then instant.
+- `GET /contracts` (the list) isn't cached; it's paged and uses indexes (~0.2 s).
+
+What helps on the frontend side (`app/contratos/page.tsx`):
+
+- **Don't wait for `getProcedureTotals` before the rest.** It's awaited on its own (for the
+  404 → "coming soon" check), so every other request only starts after it finishes. Put it
+  in the same `Promise.all` and check for the 404 afterwards.
+- Ask for the same `limit` values the page already uses (8 for the top lists, the default for
+  years) so requests hit what's already computed.
+- Use the same filter values (`place`, nothing else) for the charts. The `tipo`, `q`,
+  `ordem`, `entidade` and `fornecedor` filters only affect the list, so keeping them out of
+  the stats calls keeps those requests cached.
+
 ## Notes for wording
 
 - Present facts, not accusations. An ajuste direto is legal within its limits; what's newsworthy

@@ -1,0 +1,123 @@
+import { z } from "zod";
+import { partySlugForGroup } from "../parliament/groups.js";
+import type { AgendaInput } from "./store.js";
+import { htmlToText, truncate } from "./text.js";
+
+/**
+ * The Assembleia da República's agenda, from its open data ("Agenda Parlamentar": the
+ * coming days' plenary sittings, committee meetings, working groups, the Leaders' Conference
+ * and the parliamentary groups' audiences). Visits and school groups are left out.
+ */
+
+const itemSchema = z.object({
+  Id: z.number(),
+  Section: z.string().nullable(),
+  Title: z.string().nullable(),
+  Subtitle: z.string().nullable(),
+  InternetText: z.string().nullable(),
+  OrgDes: z.string().nullable(),
+  Local: z.string().nullable(),
+  Link: z.string().nullable(),
+  AllDayEvent: z.boolean().nullable(),
+  EventStartDate: z.string(),
+  EventStartTime: z.string().nullable(),
+  EventEndDate: z.string().nullable(),
+  EventEndTime: z.string().nullable(),
+});
+
+export const PARLIAMENT_AGENDA_URL = "https://agenda.parlamento.pt/";
+const AR_PLACE = {
+  name: "Assembleia da República",
+  address: "Palácio de São Bento, Lisboa",
+  municipality: "Lisboa",
+  district: "Lisboa",
+  lat: 38.7135,
+  lng: -9.1561,
+};
+const OPEN_HOW = "Entrada pelo Palácio de São Bento, indicando a reunião. Lugares limitados; é preciso documento de identificação.";
+const CLOSED = { open: false, how: null, url: null };
+
+/** "18/11/2026" → "2026-11-18" */
+const isoDay = (day: string) => {
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(day.trim());
+  if (!m) throw new Error(`Bad parliament date: ${day}`);
+  return `${m[3]}-${m[2]}-${m[1]}`;
+};
+/** "14:30:00" → "14:30"; "23:59" is how the agenda says it doesn't know the end. */
+const hhmm = (time: string | null) => (time && !time.startsWith("23:59") ? time.slice(0, 5) : null);
+
+/** The plenary's first item of business: "ORDEM DO DIA / 10H00 / 1 - Debate …" → "Debate …". */
+export const plenaryTitle = (text: string) => {
+  const line = text
+    .split("\n")
+    .map((l) => l.replace(/^\d+\s*[-–.)]\s*/, "").trim())
+    .find((l) => l && !/^ordem do dia/i.test(l) && !/^\d{1,2}\s*h\s*\d{0,2}$/i.test(l) && !/^tempos/i.test(l));
+  return line ? truncate(line, 140) : "Reunião plenária";
+};
+
+export const parseParliamentAgenda = (raw: unknown): AgendaInput[] => {
+  const items = z.array(z.unknown()).parse(raw);
+  const events: AgendaInput[] = [];
+  for (const entry of items) {
+    const parsed = itemSchema.safeParse(entry);
+    if (!parsed.success) continue;
+    const item = parsed.data;
+    const section = item.Section ?? "";
+    const text = htmlToText(item.InternetText);
+    const startDay = isoDay(item.EventStartDate);
+    const endDay = item.EventEndDate ? isoDay(item.EventEndDate) : null;
+    const startTime = item.AllDayEvent ? null : hhmm(item.EventStartTime);
+    const base = {
+      id: `ar-${item.Id}`,
+      summary: text ? truncate(text, 1500) : null,
+      allDay: startTime === null,
+      startDay,
+      startTime,
+      endDay: endDay && endDay !== startDay ? endDay : null,
+      endTime: startTime ? hhmm(item.EventEndTime) : null,
+      status: "scheduled" as const,
+      organizer: "Assembleia da República",
+      partySlugs: [] as string[],
+      sourceUrl: item.Link?.startsWith("http") ? item.Link : PARLIAMENT_AGENDA_URL,
+      online: null,
+    };
+    const room = item.Local?.trim() && item.Local.trim() !== "Plenário" ? ` (${item.Local.trim()})` : "";
+    const place = { ...AR_PLACE, address: `${AR_PLACE.address}${room}` };
+
+    if (section === "Plenário") {
+      events.push({
+        ...base,
+        kind: "parliament",
+        title: plenaryTitle(text),
+        place,
+        online: { url: "https://canal.parlamento.pt/", label: "Canal Parlamento" },
+        attend: { open: true, how: OPEN_HOW, url: null },
+      });
+    } else if (section === "Comissões Parlamentares" || section === "Grupo de Trabalho") {
+      const name = (item.OrgDes ?? item.Title ?? "Reunião de comissão").trim();
+      events.push({
+        ...base,
+        kind: "committee",
+        title: name,
+        organizer: name,
+        place,
+        attend: { open: true, how: `${OPEN_HOW} Algumas reuniões são à porta fechada.`, url: null },
+      });
+    } else if (section === "Conferência de Líderes") {
+      events.push({ ...base, kind: "parliament", title: "Conferência de Líderes", place, attend: CLOSED });
+    } else if (section.startsWith("Grupos Parlamentares")) {
+      const group = /Grupo Parlamentar d[oa]s?\s+(.+)$/i.exec(item.Title ?? "")?.[1]?.trim();
+      const slug = partySlugForGroup(group?.replace(/^B\.E\.$/, "BE"));
+      events.push({
+        ...base,
+        kind: "party",
+        title: item.Title?.trim() || "Audiências de grupo parlamentar",
+        organizer: group ? `Grupo Parlamentar do ${group}` : "Assembleia da República",
+        partySlugs: slug ? [slug] : [],
+        place,
+        attend: CLOSED,
+      });
+    }
+  }
+  return events;
+};

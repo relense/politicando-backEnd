@@ -21,6 +21,7 @@ import { adminRecordRoutes } from "./modules/admin/records.js";
 import { adminRoutes } from "./modules/admin/routes.js";
 import { caseRoutes } from "./modules/cases/routes.js";
 import { forumRoutes } from "./modules/forums/routes.js";
+import { agendaRoutes } from "./modules/agenda/routes.js";
 import { editorialRoutes } from "./modules/editorial/routes.js";
 import { seoRoutes } from "./modules/seo/routes.js";
 import { placeRoutes } from "./modules/places/routes.js";
@@ -59,6 +60,8 @@ export interface AppOptions {
   forumSecret?: string;
   /** Mail and links for the newsletter; without it, sign-ups answer 503. */
   newsletter?: NewsletterSettings | null;
+  /** Precompute the contracts page's totals at start and after imports (the server, not tests). */
+  warmCaches?: boolean;
 }
 
 const errorBody = (code: string, message: string) => ({ error: { code, message } });
@@ -75,6 +78,7 @@ export const buildApp = async ({
   loginLimitPerMinute = 5,
   forumSecret = randomBytes(32).toString("hex"),
   newsletter = null,
+  warmCaches = false,
 }: AppOptions) => {
   const app = Fastify({ logger, trustProxy: trustProxy || clientIpHeader !== undefined, bodyLimit: 64 * 1024 });
   if (clientIpHeader !== undefined) {
@@ -151,11 +155,12 @@ export const buildApp = async ({
       await api.register(explainerRoutes(db));
       await api.register(historyRoutes(db));
       await api.register(legislatureRoutes(db));
-      await api.register(contractRoutes(db));
+      await api.register(contractRoutes(db, { warm: warmCaches, recheckMs: warmCaches ? 60_000 : 0 }));
       await api.register(adminRoutes({ db, secureCookies, loginLimitPerMinute }));
       await api.register(adminRecordRoutes(db));
       await api.register(adminForumRoutes(db));
       await api.register(editorialRoutes(db));
+      await api.register(agendaRoutes(db));
       await api.register(seoRoutes(db));
       await api.register(placeRoutes(db));
       await api.register(forumRoutes({ db, verifyRecaptcha, forumSecret, createLimitPerMinute: commentLimitPerMinute }));

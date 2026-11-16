@@ -89,6 +89,21 @@ services:
       - key: DATABASE_URL
         fromDatabase: { name: politicando-db, property: connectionString }
 
+  # The political calendar: parliament, President, European Parliament. Every 3 hours,
+  # since the parliament's and the President's agendas change during the day.
+  - type: cron
+    name: politicando-agenda
+    runtime: docker
+    region: frankfurt
+    plan: starter
+    schedule: "20 */3 * * *"
+    dockerCommand: node dist/jobs/syncAgenda.js
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase: { name: politicando-db, property: connectionString }
+      - key: PARLIAMENT_LEGISLATURE
+        value: XVII
+
   # BASE regenerates its yearly files weekly.
   - type: cron
     name: politicando-contracts
