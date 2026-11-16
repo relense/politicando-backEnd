@@ -105,5 +105,3 @@ these differences:
   Render tables (e.g. `remark-gfm`) and let them scroll sideways on phones.
 - Links inside bodies are absolute `https://politicando.pt/...` links to our own pages
   (`/partido/:slug`, `/parlamento`, `/eleicoes`, `/editorial/:slug`). Treat them as internal links.
-- `matching-party-names` is in **English** (a technical post about how news is matched to
-  parties); the others are in Portuguese.

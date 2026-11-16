@@ -2,7 +2,6 @@ import { sql } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import { editorialPosts } from "../db/schema.js";
 import { editorialInputSchema } from "../modules/editorial/routes.js";
-import { slugify } from "./media.js";
 
 /*
  * Editorial posts written as Markdown files with a front matter block, e.g. from the research
@@ -17,7 +16,8 @@ import { slugify } from "./media.js";
  *   ---
  *   Body in Markdown.
  *
- * Unknown keys (publish dates, notes) are ignored. Before storing, the body loses what is meant
+ * Only files with a `slug` are blog posts: anything else in the folder (internal write-ups,
+ * posts for other sites) is skipped. Unknown keys (publish dates, notes) are ignored. Before storing, the body loses what is meant
  * for us, not readers: a leading "# Title" repeating the title, "> **Nota de edição:**" blocks,
  * and sections still waiting to be written ("*[A preencher ...]*").
  */
@@ -68,18 +68,18 @@ export const cleanBody = (body: string, title: string) => {
 
 const str = (v: string | string[] | undefined) => (typeof v === "string" && v !== "" ? v : null);
 
-/** Reads one file's text into a post, or throws saying what's wrong with it. */
-export const parseMarkdownPost = (text: string): MarkdownPost => {
+/** Reads one file's text into a post; null if it isn't one (no slug). Throws saying what's wrong otherwise. */
+export const parseMarkdownPost = (text: string): MarkdownPost | null => {
   const { meta, body } = parseFrontMatter(text);
+  const slug = str(meta.slug);
+  if (!slug) return null;
   const title = str(meta.title);
   if (!title) throw new Error("no title in the front matter");
-  // A canonical URL on our editorial pages names the slug the post was promised under.
-  const canonicalSlug = /politicando\.pt\/editorial\/([a-z0-9-]+)/.exec(str(meta.canonical_url) ?? "")?.[1];
   const tags = Array.isArray(meta.tags) ? meta.tags : str(meta.tags)?.split(",") ?? [];
   const input = editorialInputSchema.parse({
     title,
     subtitle: str(meta.subtitle),
-    slug: str(meta.slug) ?? canonicalSlug ?? slugify(title).slice(0, 80).replace(/-+$/, ""),
+    slug,
     kind: str(meta.kind) ?? "article",
     body: cleanBody(body, title),
     authorName: null,

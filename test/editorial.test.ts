@@ -165,25 +165,25 @@ describe("posts from Markdown files", () => {
   });
 
   it("drops the repeated title, notes for editors and sections not written yet", () => {
-    const post = parseMarkdownPost(file);
+    const post = parseMarkdownPost(file)!;
     expect(post).toMatchObject({ slug: "oe-explicado", kind: "article", subtitle: "Sem jargão", tags: ["orçamento", "parlamento"] });
     expect(post.body).toBe("Intro.\n\n## Antes\n\nTexto.\n\n## E depois?\n\nFim.\n");
     expect(cleanBody("# Outro título\n\nTexto", "Título")).toBe("# Outro título\n\nTexto\n");
   });
 
-  it("takes the slug from an editorial canonical URL, else from the title, and needs a title", () => {
-    expect(parseMarkdownPost("---\ntitle: Matching names\ncanonical_url: https://politicando.pt/editorial/matching-party-names\n---\nBody").slug).toBe("matching-party-names");
-    expect(parseMarkdownPost("---\ntitle: Método de Hondt\n---\nBody").slug).toBe("metodo-de-hondt");
-    expect(() => parseMarkdownPost("No front matter")).toThrow(/title/);
+  it("skips files without a slug (internal write-ups), and needs a title", () => {
+    expect(parseMarkdownPost("---\ntitle: Matching names\ncanonical_url: https://politicando.pt/editorial/x\n---\nBody")).toBeNull();
+    expect(parseMarkdownPost("No front matter")).toBeNull();
+    expect(() => parseMarkdownPost("---\nslug: sem-titulo\n---\nBody")).toThrow(/title/);
   });
 
   it("publishes, then updates by slug keeping the first publication date and featured", async () => {
     const first = new Date("2026-11-16T10:00:00Z");
-    expect(await saveMarkdownPosts(db, [parseMarkdownPost(file)], { authorName: "Redação Politicando", publish: true, now: first }))
+    expect(await saveMarkdownPosts(db, [parseMarkdownPost(file)!], { authorName: "Redação Politicando", publish: true, now: first }))
       .toEqual([{ slug: "oe-explicado", created: true }]);
     await db.update(editorialPosts).set({ featured: true });
 
-    const edited = parseMarkdownPost(file.replace("Intro.", "Nova intro."));
+    const edited = parseMarkdownPost(file.replace("Intro.", "Nova intro."))!;
     expect(await saveMarkdownPosts(db, [edited], { authorName: "Redação Politicando", publish: true, now: new Date("2026-11-17T10:00:00Z") }))
       .toEqual([{ slug: "oe-explicado", created: false }]);
 

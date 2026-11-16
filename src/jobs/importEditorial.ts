@@ -6,7 +6,7 @@ import { parseMarkdownPost, saveMarkdownPosts } from "../editorial/markdownFiles
 
 /*
  * Publishes editorial posts written as Markdown files (see src/editorial/markdownFiles.ts).
- * Re-running it updates the posts with the same slug.
+ * Re-running it updates the posts with the same slug. Files without a slug are skipped.
  *
  *   npm run editorial:import -- ../politicando-research/articles      every .md in the folder
  *   npm run editorial:import -- a.md b.md                              just these
@@ -32,7 +32,9 @@ for (const path of paths) {
 const posts = [];
 for (const file of files) {
   try {
-    posts.push(parseMarkdownPost(await readFile(file, "utf8")));
+    const post = parseMarkdownPost(await readFile(file, "utf8"));
+    if (post) posts.push(post);
+    else console.log(JSON.stringify({ skipped: file, reason: "no slug: not a blog post" }));
   } catch (error) {
     console.error(`${file}: ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);
