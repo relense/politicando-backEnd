@@ -1,0 +1,102 @@
+# Render Blueprint: the API, its scheduled jobs and the database, all built from the Dockerfile.
+# Render › New › Blueprint, pick this repo. Values marked `sync: false` are asked for on the first
+# deploy only; change them later in each service's Environment page. Schedules are in UTC.
+# See "Deploy on Render" in the README.
+
+databases:
+  - name: politicando-db
+    databaseName: politicando
+    user: politicando
+    region: frankfurt
+    postgresMajorVersion: "17"
+    plan: basic-1gb
+    # About 1.1 GB today, nearly all public contracts, which grow every week.
+    diskSizeGB: 5
+
+services:
+  - type: web
+    name: politicando-api
+    runtime: docker
+    region: frankfurt
+    plan: starter
+    healthCheckPath: /health
+    preDeployCommand: node dist/db/migrate.js && node dist/db/seed.js
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase: { name: politicando-db, property: connectionString }
+      # Render passes on a client-sent X-Forwarded-For; Cloudflare's True-Client-IP can't be forged.
+      - key: CLIENT_IP_HEADER
+        value: true-client-ip
+      # The frontends, comma-separated, e.g. https://politicando.pt,https://www.politicando.pt
+      - key: CORS_ORIGINS
+        sync: false
+      - key: RECAPTCHA_SECRET
+        sync: false
+      # e.g. politicando.pt,www.politicando.pt
+      - key: RECAPTCHA_HOSTNAMES
+        sync: false
+      # Generated once and kept: changing them changes every poster ID / breaks sent newsletter links.
+      - key: FORUM_SECRET
+        generateValue: true
+      - key: NEWSLETTER_SECRET
+        generateValue: true
+      # smtps://user:password@host:465 from the mail provider; leave empty to keep the newsletter off.
+      - key: SMTP_URL
+        sync: false
+      - key: MAIL_FROM
+        value: Politicando <newsletter@politicando.pt>
+      - key: SITE_URL
+        sync: false
+      # This API's public address, e.g. https://api.politicando.pt
+      - key: PUBLIC_API_URL
+        sync: false
+
+  # RSS feeds only cover a few hours: run it every hour.
+  - type: cron
+    name: politicando-ingest
+    runtime: docker
+    region: frankfurt
+    plan: starter
+    schedule: "5 * * * *"
+    dockerCommand: node dist/jobs/ingest.js
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase: { name: politicando-db, property: connectionString }
+
+  - type: cron
+    name: politicando-parliament-sync
+    runtime: docker
+    region: frankfurt
+    plan: starter
+    schedule: "0 4 * * *"
+    dockerCommand: node dist/jobs/syncParliament.js
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase: { name: politicando-db, property: connectionString }
+      # Change when a new legislature starts (see src/parliament/legislatures.ts).
+      - key: PARLIAMENT_LEGISLATURE
+        value: XVII
+
+  # The Government and the President.
+  - type: cron
+    name: politicando-government-sync
+    runtime: docker
+    region: frankfurt
+    plan: starter
+    schedule: "30 4 * * *"
+    dockerCommand: node dist/jobs/syncGovernment.js
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase: { name: politicando-db, property: connectionString }
+
+  # BASE regenerates its yearly files weekly.
+  - type: cron
+    name: politicando-contracts
+    runtime: docker
+    region: frankfurt
+    plan: starter
+    schedule: "0 5 * * 1"
+    dockerCommand: node dist/jobs/importContracts.js
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase: { name: politicando-db, property: connectionString }

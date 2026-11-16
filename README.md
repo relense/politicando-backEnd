@@ -222,7 +222,47 @@ The file header records where the party list and seat counts came from. Update i
 
 ## Deploy
 
-Build the `Dockerfile` and set the variables from `.env.example`, using a real `RECAPTCHA_SECRET`. The test secret in the example accepts every token. Set `TRUST_PROXY=true` behind a reverse proxy so rate limits see real client IPs.
+### On Render
+
+`render.yaml` is a Render Blueprint for everything, in Frankfurt: the API (web service, Docker,
+health check on `/health`, migrations and party seed before each deploy), the database
+(Postgres 17) and the scheduled jobs (`ingest` hourly, the parliament and government syncs daily,
+contracts weekly). In Render: New › Blueprint, pick this repo, and fill in the values it asks for
+(`CORS_ORIGINS`, `RECAPTCHA_SECRET`, `RECAPTCHA_HOSTNAMES`, `SMTP_URL`, `SITE_URL`,
+`PUBLIC_API_URL`). `FORUM_SECRET` and `NEWSLETTER_SECRET` are generated once; never regenerate them.
+
+1. **Custom domain.** Give the API a subdomain of the site (`api.politicando.pt`) under
+   Settings › Custom Domains. The admin session cookie is `SameSite=strict`, so admin login only
+   works when the API and the frontend share a site; on `*.onrender.com` the public API works
+   but the admin doesn't.
+2. **Data.** Copy the imports from a local database rather than re-running them all (contracts
+   history, elections since 1975, past legislatures, blog posts). With the external connection
+   string from the database's page in Render (both sides on Postgres 17):
+
+   ```sh
+   pg_dump "$LOCAL_URL" -Fc --no-owner --no-privileges \
+     --exclude-table-data='admin*' --exclude-table-data=audit_log --exclude-table-data=comments \
+     --exclude-table-data='forum_*' --exclude-table-data=reports --exclude-table-data=newsletter_subscribers \
+     -f politicando.dump
+   pg_restore --no-owner --no-privileges --clean --if-exists -d "$RENDER_EXTERNAL_URL" politicando.dump
+   ```
+
+   Or start empty and run the imports from the API's Shell in Render:
+   `node dist/jobs/importElections.js`, `node dist/jobs/importPastLegislatures.js`,
+   `node dist/jobs/importContracts.js --from=2012`, `node dist/jobs/syncParliament.js`,
+   `node dist/jobs/syncGovernment.js`, `node dist/jobs/ingest.js`. Blog posts from Markdown:
+   `DATABASE_URL="$RENDER_EXTERNAL_URL" npm run editorial:import -- ../politicando-research/articles` from a laptop.
+3. **First admin.** In the API's Shell: `node dist/jobs/createAdmin.js <email> "<name>" admin`,
+   then invite the rest from the admin (`docs/admin-api.md`).
+
+Client IPs (rate limits, reCAPTCHA, forum poster IDs) come from `CLIENT_IP_HEADER=true-client-ip`:
+Render passes on whatever `X-Forwarded-For` a client sends, so that header can't be trusted there.
+The API and the jobs use Render's database user; `deploy/db-roles.sql` (separate owner and app
+roles) is for a Postgres where we have a superuser.
+
+### Anywhere else
+
+Build the `Dockerfile` and set the variables from `.env.example`, using a real `RECAPTCHA_SECRET`. The test secret in the example accepts every token. Behind a reverse proxy that replaces `X-Forwarded-For`, set `TRUST_PROXY=true` so rate limits see real client IPs; if the proxy only appends to it, set `CLIENT_IP_HEADER` to the header it sets instead.
 
 Production checklist:
 
@@ -233,6 +273,7 @@ Production checklist:
 - Database roles: run `deploy/db-roles.sql` once. Migrations run as `politicando_owner`; the API and jobs connect as `politicando_app`, which can't change the schema or rewrite the audit log.
 - Newsletter: `SMTP_URL=smtps://user:password@host:465` from a mail provider, `MAIL_FROM` on a domain whose SPF/DKIM that provider covers, `NEWSLETTER_SECRET` (`openssl rand -hex 32`, set once: changing it breaks every link already sent), `SITE_URL` (the website) and `PUBLIC_API_URL` (this API's public address). Without `SMTP_URL` and `NEWSLETTER_SECRET`, sign-ups answer 503.
 - Create the first admin with `node dist/jobs/createAdmin.js <email> "<name>" admin`, then invite the rest from the admin (`docs/admin-api.md`).
+- Schedule the jobs from the host's cron, with the same image: `node dist/jobs/ingest.js` hourly, `syncParliament.js` and `syncGovernment.js` daily, `importContracts.js` weekly.
 
 ```sh
 node dist/db/migrate.js   # on each release

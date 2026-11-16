@@ -21,6 +21,8 @@ const apiSchema = baseSchema.extend({
         .filter(Boolean),
     ),
   TRUST_PROXY: envBoolean,
+  /** On Render: "true-client-ip". The one header to take the client's IP from (see AppOptions). */
+  CLIENT_IP_HEADER: z.string().regex(/^[A-Za-z0-9-]+$/).optional(),
   RECAPTCHA_SECRET: z.string().min(1),
   /** Hostnames of our site; reCAPTCHA tokens solved elsewhere are rejected. Empty: no check (local only). */
   RECAPTCHA_HOSTNAMES: z
