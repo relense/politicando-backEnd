@@ -27,6 +27,10 @@ services:
       # Render passes on a client-sent X-Forwarded-For; Cloudflare's True-Client-IP can't be forged.
       - key: CLIENT_IP_HEADER
         value: true-client-ip
+      # The same secret as the frontend service's FRONTEND_API_KEY (server-only, not NEXT_PUBLIC_).
+      # Generate it once, e.g. `openssl rand -hex 32`, and set it on both services.
+      - key: FRONTEND_API_KEY
+        sync: false
       # The frontends, comma-separated, e.g. https://politicando.pt,https://www.politicando.pt
       - key: CORS_ORIGINS
         sync: false
