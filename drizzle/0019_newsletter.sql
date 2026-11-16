@@ -1,0 +1,5 @@
+CREATE TABLE "newsletter_subscribers" (
+	"email" text PRIMARY KEY NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"confirmed_at" timestamp with time zone
+);
