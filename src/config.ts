@@ -31,6 +31,14 @@ const apiSchema = baseSchema.extend({
   FORUM_SECRET: z.string().min(32),
   /** Send the admin session cookie over HTTPS only. Set to false for local HTTP. */
   COOKIE_SECURE: z.enum(["true", "false"]).default("true").transform((value) => value === "true"),
+  /** "" turns the newsletter off, "log" prints emails to the console (local only), or an smtp(s):// URL. */
+  SMTP_URL: z.string().default(""),
+  MAIL_FROM: z.string().default("Politicando <newsletter@politicando.pt>"),
+  /** Signs newsletter links. Long and random; changing it breaks every link already sent. */
+  NEWSLETTER_SECRET: z.string().min(32).optional(),
+  /** The website (where newsletter links land) and this API's public address (used in those links). */
+  SITE_URL: z.url().default("http://localhost:3000"),
+  PUBLIC_API_URL: z.url().default("http://localhost:4000"),
 });
 
 const ingestSchema = baseSchema.extend({

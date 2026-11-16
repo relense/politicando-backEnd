@@ -113,3 +113,13 @@ describe("editorial", () => {
     expect((await call("DELETE", `/admin/editorial/${body.id}`, ana)).status).toBe(204);
   });
 });
+
+describe("readingMinutes", () => {
+  it("counts words at 200 a minute, rounding up, ignoring markup and link addresses", async () => {
+    const { readingMinutes } = await import("../src/modules/editorial/routes.js");
+    expect(readingMinutes("")).toBe(1);
+    expect(readingMinutes("palavra ".repeat(200))).toBe(1);
+    expect(readingMinutes("palavra ".repeat(201))).toBe(2);
+    expect(readingMinutes("## Título\n\n[uma ligação](https://example.pt/muito/longa) e **negrito** - ---")).toBe(1);
+  });
+});

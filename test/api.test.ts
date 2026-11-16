@@ -167,6 +167,47 @@ describe("article list", () => {
   it("returns 404 for an unknown party", async () => {
     expect((await get("/articles?party=nope")).status).toBe(404);
   });
+
+  it("finds every word of q in the title or excerpt, ignoring accents and case", async () => {
+    await insertArticle(db, { sourceUri: "a", title: "Crédito à Habitação", excerpt: "O Governo aprovou.", source: "Observador", publishedAt: new Date("2026-10-03") });
+    await insertArticle(db, { sourceUri: "b", title: "Habitação jovem", excerpt: "Nada.", source: "publico.pt", publishedAt: new Date("2026-10-02") });
+    await insertArticle(db, { sourceUri: "c", title: "Orçamento", excerpt: "Sem casas.", source: "Observador" });
+    const titles = async (query: string) => (await get(`/articles?${query}`)).body.items.map((a: { title: string }) => a.title);
+    expect(await titles("q=habitacao")).toEqual(["Crédito à Habitação", "Habitação jovem"]);
+    expect(await titles("q=HABITACAO%20governo")).toEqual(["Crédito à Habitação"]);
+    expect(await titles("q=habitacao&source=Observador")).toEqual(["Crédito à Habitação"]);
+    expect(await titles("q=100%25")).toEqual([]);
+    expect(await titles("source=Observador&party=ps")).toEqual(["Crédito à Habitação", "Orçamento"]);
+
+    const first = await get("/articles?q=habitacao&limit=1");
+    const second = await get(`/articles?q=habitacao&limit=1&cursor=${first.body.nextCursor}`);
+    expect(second.body.items.map((a: { title: string }) => a.title)).toEqual(["Habitação jovem"]);
+    expect(second.body.nextCursor).toBeNull();
+
+    expect((await get("/articles/sources")).body).toEqual({
+      items: [{ name: "Observador", count: 2 }, { name: "publico.pt", count: 1 }],
+    });
+  });
+
+  it("sorts by visible comments within the last hours", async () => {
+    const now = Date.now();
+    const old = await insertArticle(db, { sourceUri: "old", title: "Antigo", publishedAt: new Date(now - 48 * 3_600_000) });
+    const one = await insertArticle(db, { sourceUri: "one", title: "Um", publishedAt: new Date(now - 3_600_000) });
+    const two = await insertArticle(db, { sourceUri: "two", title: "Dois", publishedAt: new Date(now - 2 * 3_600_000) });
+    await insertArticle(db, { sourceUri: "none", title: "Nenhum", publishedAt: new Date(now - 3_600_000) });
+    await db.insert(comments).values([
+      { articleId: old.id, body: "a" }, { articleId: old.id, body: "b" }, { articleId: old.id, body: "c" },
+      { articleId: one.id, body: "a" }, { articleId: one.id, body: "hidden", hiddenAt: new Date() }, { articleId: one.id, body: "hidden", hiddenAt: new Date() },
+      { articleId: two.id, body: "a" }, { articleId: two.id, body: "b" },
+    ]);
+    const first = await get("/articles?sort=comments&since=24h&limit=1");
+    expect(first.body.items.map((a: { title: string; commentCount: number }) => [a.title, a.commentCount])).toEqual([["Dois", 2]]);
+    const second = await get(`/articles?sort=comments&since=24&limit=1&cursor=${first.body.nextCursor}`);
+    expect(second.body.items.map((a: { title: string }) => a.title)).toEqual(["Um"]);
+    expect(second.body.nextCursor).toBeNull();
+    expect((await get("/articles?sort=comments")).body.items.map((a: { title: string }) => a.title)).toEqual(["Antigo", "Dois", "Um"]);
+    expect((await get("/articles?since=1d")).status).toBe(400);
+  });
 });
 
 describe("article detail", () => {
@@ -369,6 +410,7 @@ describe("platform", () => {
       "/api/v2/admin/reports",
       "/api/v2/admin/reports/resolve",
       "/api/v2/articles",
+      "/api/v2/articles/sources",
       "/api/v2/articles/{id}",
       "/api/v2/articles/{id}/comments",
       "/api/v2/cases",
@@ -401,12 +443,16 @@ describe("platform", () => {
       "/api/v2/initiatives/{id}",
       "/api/v2/interests",
       "/api/v2/interests/contracts",
+      "/api/v2/newsletter/confirm",
+      "/api/v2/newsletter/subscribe",
+      "/api/v2/newsletter/unsubscribe",
       "/api/v2/parliament",
       "/api/v2/parties",
       "/api/v2/parties/{slug}/votes",
       "/api/v2/people/featured",
       "/api/v2/people/{kind}/{id}/path",
       "/api/v2/places",
+      "/api/v2/places/locate",
       "/api/v2/places/{key}",
       "/api/v2/president",
       "/api/v2/reports",

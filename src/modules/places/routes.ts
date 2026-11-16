@@ -3,7 +3,8 @@ import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
 import type { Db } from "../../db/client.js";
 import { partiesInList } from "../../elections/mai.js";
-import { notFound } from "../../errors.js";
+import { ApiError, notFound } from "../../errors.js";
+import { municipalityAt } from "../../places/locate.js";
 import { photoUrl } from "../parliament/routes.js";
 import { errorSchema } from "../shared.js";
 
@@ -97,6 +98,37 @@ export const placeRoutes =
             key: r.key, name: r.name, level: r.level, parentKey: r.parent_key, dicofre: r.dicofre, mayor: byPlace.get(r.key) ?? null,
           })),
         };
+      },
+    );
+
+    app.get(
+      "/places/locate",
+      {
+        // The request log would record the coordinates in the URL; this route logs warnings only.
+        logLevel: "warn",
+        schema: {
+          tags: ["places"],
+          summary: "The municipality at a point (for \"use my location\"). Coordinates are neither logged nor stored",
+          querystring: z.object({
+            lat: z.coerce.number().min(-90).max(90),
+            lon: z.coerce.number().min(-180).max(180),
+          }),
+          response: {
+            200: ref.extend({ parentKey: z.string().nullable(), dicofre: z.string().nullable() }),
+            400: errorSchema,
+            404: errorSchema,
+          },
+        },
+      },
+      async (request) => {
+        const code = municipalityAt(request.query.lat, request.query.lon);
+        if (!code) throw new ApiError(404, "not_found", "That point is not in Portugal");
+        const rows = await db.execute<{ key: string; name: string; level: string; parent_key: string | null; dicofre: string | null }>(sql`
+          select key, name, level, parent_key, dicofre from places
+          where key like 'LOCAL-%' and level = 'municipality' and dicofre = ${code} limit 1`);
+        const r = rows.rows[0];
+        if (!r) throw new ApiError(404, "not_found", "That point is not in Portugal");
+        return { key: r.key, name: r.name, level: r.level, parentKey: r.parent_key, dicofre: r.dicofre };
       },
     );
 

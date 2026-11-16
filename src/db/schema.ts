@@ -871,3 +871,14 @@ export const editorialPosts = pgTable(
   },
   (table) => [index("editorial_published_idx").on(table.status, table.publishedAt.desc())],
 );
+
+/**
+ * Newsletter sign-ups, kept to the minimum: the address, when it signed up and whether it confirmed.
+ * Confirmation and unsubscribe links are signed tokens (src/newsletter/tokens.ts), not stored.
+ * Unsubscribing deletes the row; unconfirmed rows are deleted after a week.
+ */
+export const newsletterSubscribers = pgTable("newsletter_subscribers", {
+  email: text().primaryKey(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+});

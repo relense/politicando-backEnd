@@ -27,6 +27,7 @@ import { placeRoutes } from "./modules/places/routes.js";
 import { articleRoutes } from "./modules/articles/routes.js";
 import type { RecaptchaVerifier } from "./modules/comments/recaptcha.js";
 import { commentRoutes } from "./modules/comments/routes.js";
+import { type NewsletterSettings, newsletterRoutes } from "./modules/newsletter/routes.js";
 import { contractRoutes } from "./modules/contracts/routes.js";
 import { historyRoutes } from "./modules/history/routes.js";
 import { explainerRoutes } from "./modules/explainers/routes.js";
@@ -49,6 +50,8 @@ export interface AppOptions {
   loginLimitPerMinute?: number;
   /** Keys anonymous poster IDs. Keep it stable: changing it changes everyone's IDs. */
   forumSecret?: string;
+  /** Mail and links for the newsletter; without it, sign-ups answer 503. */
+  newsletter?: NewsletterSettings | null;
 }
 
 const errorBody = (code: string, message: string) => ({ error: { code, message } });
@@ -63,6 +66,7 @@ export const buildApp = async ({
   secureCookies = true,
   loginLimitPerMinute = 5,
   forumSecret = randomBytes(32).toString("hex"),
+  newsletter = null,
 }: AppOptions) => {
   const app = Fastify({ logger, trustProxy, bodyLimit: 64 * 1024 });
   app.setValidatorCompiler(validatorCompiler);
@@ -136,6 +140,9 @@ export const buildApp = async ({
       await api.register(placeRoutes(db));
       await api.register(forumRoutes({ db, verifyRecaptcha, forumSecret, createLimitPerMinute: commentLimitPerMinute }));
       await api.register(caseRoutes(db));
+      await api.register(
+        newsletterRoutes({ db, verifyRecaptcha, createLimitPerMinute: commentLimitPerMinute, settings: newsletter }),
+      );
       await api.register(
         commentRoutes({ db, verifyRecaptcha, createLimitPerMinute: commentLimitPerMinute }),
       );

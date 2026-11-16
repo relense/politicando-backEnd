@@ -29,6 +29,7 @@ The API docs are at `/docs` and the OpenAPI spec is at `/docs/json`.
 | `npm run admin:create -- <email> "<name>" admin` | Create the first admin (prints a one-time password) |
 | `npm run contracts:import` | Import public contracts from BASE for this year and last (weekly; `-- --from=2012` for history) |
 | `npm run parliament:link-news` | Link stored articles to deputies and initiatives. Add `-- --replace` after changing matching rules |
+| `npm run places:shapes -- <folder>` | Rebuild `data/municipalities.json` (for `/places/locate`) from the CAOP GeoPackages, only when CAOP changes |
 | `npm run db:generate` | Create a migration after changing `src/db/schema.ts` |
 | `npm run db:seed` | Create or update parties. Safe to re-run |
 
@@ -40,10 +41,12 @@ Everything is under `/api/v2`.
 |---|---|
 | `GET /parties?sort=name\|seats\|votes` | All parties, with seats, latest legislativas result, Government members and leader. See `docs/parties-api.md` |
 | `GET /parties/:slug/votes` | How a party voted in parliament, with totals and how often it votes with each other party |
-| `GET /articles?party=&deputy=&cursor=&limit=` | Newest first, returns `{ items, nextCursor }`. `limit` is 1-50, default 10 |
+| `GET /articles?party=&deputy=&q=&source=&sort=&since=&cursor=&limit=` | Newest first (or `sort=comments`), returns `{ items, nextCursor }`. See `docs/articles-api.md` |
+| `GET /articles/sources` | News outlets with their article counts |
 | `GET /articles/:id` | One article: excerpt, parties and source link |
 | `GET /articles/:id/comments` | Flat list; use `parentId` to build threads |
 | `POST /articles/:id/comments` | `{ username?, body, parentId?, recaptchaToken }` |
+| `POST /newsletter/subscribe` | Double opt-in sign-up. See `docs/newsletter-api.md` |
 
 Errors look like `{ "error": { "code": "...", "message": "..." } }`.
 
@@ -220,6 +223,7 @@ Production checklist:
 - `COOKIE_SECURE=true` (the default): the admin session cookie only travels over HTTPS.
 - `CORS_ORIGINS` lists only our frontends: the API allows credentials for them, for the admin.
 - Database roles: run `deploy/db-roles.sql` once. Migrations run as `politicando_owner`; the API and jobs connect as `politicando_app`, which can't change the schema or rewrite the audit log.
+- Newsletter: `SMTP_URL=smtps://user:password@host:465` from a mail provider, `MAIL_FROM` on a domain whose SPF/DKIM that provider covers, `NEWSLETTER_SECRET` (`openssl rand -hex 32`, set once: changing it breaks every link already sent), `SITE_URL` (the website) and `PUBLIC_API_URL` (this API's public address). Without `SMTP_URL` and `NEWSLETTER_SECRET`, sign-ups answer 503.
 - Create the first admin with `node dist/jobs/createAdmin.js <email> "<name>" admin`, then invite the rest from the admin (`docs/admin-api.md`).
 
 ```sh

@@ -23,6 +23,24 @@ const decodeCursor = (value: string): Cursor => {
   }
 };
 
+const offsetSchema = z.object({ offset: z.number().int().min(0).max(100_000) });
+const encodeOffset = (offset: number) => Buffer.from(JSON.stringify({ offset })).toString("base64url");
+const decodeOffset = (value: string) => {
+  try {
+    return offsetSchema.parse(JSON.parse(Buffer.from(value, "base64url").toString())).offset;
+  } catch {
+    throw new ApiError(400, "invalid_cursor", "The cursor is not valid");
+  }
+};
+
+/** Lowercase, without accents: "Habitação" → "habitacao". The SQL below folds the stored text the same way. */
+export const foldText = (text: string) => text.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+const searchWords = (q: string) => [...new Set(foldText(q).split(/[^\p{L}\p{N}]+/u).filter(Boolean))].slice(0, 10);
+const escapeLike = (word: string) => word.replace(/[\\%_]/g, (c) => `\\${c}`);
+// translate() instead of the unaccent extension: no extension to install, and it covers Portuguese.
+const FOLDED_TEXT = sql`translate(lower(articles.title || ' ' || articles.excerpt),
+  'áàâãäåéèêëíìîïóòôõöúùûüçñý', 'aaaaaaeeeeiiiiooooouuuucny')`;
+
 const articlePartySchema = z.object({
   slug: z.string(),
   acronym: z.string(),
@@ -143,6 +161,16 @@ export const articleRoutes =
             initiative: z.coerce.number().int().positive().max(2_147_483_647).optional().describe("Initiative ID"),
             governmentMember: z.string().regex(/^[0-9a-f]{32}$/).optional().describe("Government member ID"),
             president: z.string().regex(/^[a-z-]+$/).optional().describe('President ID, e.g. "antonio-jose-seguro"'),
+            q: z.string().trim().max(200).optional().describe("Words in the title or excerpt; all must match, ignoring accents and case"),
+            source: z.string().max(100).optional().describe("Outlet, exactly as in article.source (see /articles/sources)"),
+            sort: z.enum(["newest", "comments"]).default("newest").describe("comments: most commented first, only articles with comments"),
+            since: z
+              .string()
+              .regex(/^\d{1,4}h?$/)
+              .transform((value) => Number.parseInt(value, 10))
+              .pipe(z.number().int().min(1).max(8760))
+              .optional()
+              .describe('Only articles published in the last N hours, e.g. "24h"'),
             cursor: z.string().optional().describe("The nextCursor of the previous page"),
             limit: z.coerce.number().int().min(1).max(50).default(10),
           }),
@@ -157,15 +185,24 @@ export const articleRoutes =
         },
       },
       async (request) => {
-        const { party, deputy, initiative, governmentMember, president, cursor, limit } = request.query;
+        const { party, deputy, initiative, governmentMember, president, q, source, sort, since, cursor, limit } = request.query;
         const conditions: SQL[] = [];
 
+        // Newest first pages by (publishedAt, id); most commented by position, since counts change.
+        let offset = 0;
         if (cursor !== undefined) {
-          const { publishedAt, id } = decodeCursor(cursor);
-          conditions.push(
-            sql`(articles.published_at, articles.id) < (${publishedAt}::timestamptz, ${id}::int)`,
-          );
+          if (sort === "comments") offset = decodeOffset(cursor);
+          else {
+            const { publishedAt, id } = decodeCursor(cursor);
+            conditions.push(sql`(articles.published_at, articles.id) < (${publishedAt}::timestamptz, ${id}::int)`);
+          }
         }
+        for (const word of searchWords(q ?? "")) {
+          conditions.push(sql`${FOLDED_TEXT} like ${`%${escapeLike(word)}%`}`);
+        }
+        if (source !== undefined) conditions.push(eq(articles.source, source));
+        if (since !== undefined) conditions.push(sql`articles.published_at >= now() - make_interval(hours => ${since})`);
+        if (sort === "comments") conditions.push(sql`${commentCountSql} > 0`);
         if (party !== undefined) {
           const [found] = await db
             .select({ id: parties.id })
@@ -209,22 +246,45 @@ export const articleRoutes =
           )`);
         }
 
+        const order = sort === "comments" ? [desc(commentCountSql), desc(articles.publishedAt), desc(articles.id)] : [desc(articles.publishedAt), desc(articles.id)];
         const rows = await db
           .select(articleColumns)
           .from(articles)
           .where(and(...conditions))
-          .orderBy(desc(articles.publishedAt), desc(articles.id))
-          .limit(limit + 1);
+          .orderBy(...order)
+          .limit(limit + 1)
+          .offset(offset);
 
         const page = rows.slice(0, limit);
         const last = page.at(-1);
+        const more = rows.length > limit && last;
         return {
           items: page.map((row) => ({ ...row, publishedAt: row.publishedAt.toISOString() })),
-          nextCursor:
-            rows.length > limit && last
-              ? encodeCursor({ publishedAt: last.publishedAt.toISOString(), id: last.id })
-              : null,
+          nextCursor: !more
+            ? null
+            : sort === "comments"
+              ? encodeOffset(offset + limit)
+              : encodeCursor({ publishedAt: last.publishedAt.toISOString(), id: last.id }),
         };
+      },
+    );
+
+    app.get(
+      "/articles/sources",
+      {
+        schema: {
+          tags: ["articles"],
+          summary: "Every news outlet we have articles from, most articles first (for the source filter)",
+          response: { 200: z.object({ items: z.array(z.object({ name: z.string(), count: z.number() })) }) },
+        },
+      },
+      async () => {
+        const rows = await db
+          .select({ name: articles.source, count: sql<number>`count(*)::int` })
+          .from(articles)
+          .groupBy(articles.source)
+          .orderBy(desc(sql`count(*)`), articles.source);
+        return { items: rows };
       },
     );
 

@@ -28,6 +28,7 @@ const summarySchema = z.object({
   media: mediaSchema,
   tags: z.array(z.string()),
   featured: z.boolean(),
+  readingMinutes: z.number().describe("Words ÷ 200, rounded up; at least 1"),
   publishedAt: z.string().nullable(),
 });
 const postSchema = summarySchema.extend({ body: z.string().describe("Markdown. Render it without raw HTML") });
@@ -57,10 +58,16 @@ const inputSchema = z.object({
 });
 
 type Row = typeof editorialPosts.$inferSelect;
+/** Words in the Markdown, links' addresses and markup left out, at 200 words a minute. */
+export const readingMinutes = (markdown: string) => {
+  const text = markdown.replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/[#>*_`~|-]+/g, " ");
+  const words = text.split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w)).length;
+  return Math.max(1, Math.ceil(words / 200));
+};
 const present = (r: Row) => ({
   id: r.id, slug: r.slug, kind: r.kind, title: r.title, subtitle: r.subtitle, authorName: r.authorName,
   coverImageUrl: r.coverImageUrl, media: r.mediaUrl ? parseMedia(r.mediaUrl) : null, tags: r.tags, featured: r.featured,
-  publishedAt: r.publishedAt?.toISOString() ?? null,
+  readingMinutes: readingMinutes(r.body), publishedAt: r.publishedAt?.toISOString() ?? null,
 });
 const presentAdmin = (r: Row) => ({
   ...present(r), body: r.body, status: r.status, authorId: r.authorId, mediaUrl: r.mediaUrl, updatedAt: r.updatedAt.toISOString(),

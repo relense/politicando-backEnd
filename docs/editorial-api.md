@@ -28,6 +28,7 @@ Query: `featured=true|false`, `kind` (`article`, `opinion`, `podcast`, `intervie
       },
       "tags": ["orçamento"],
       "featured": true,
+      "readingMinutes": 4,
       "publishedAt": "2026-11-15T12:00:00.000Z"
     }
   ],
@@ -40,6 +41,8 @@ Query: `featured=true|false`, `kind` (`article`, `opinion`, `podcast`, `intervie
 - `media.embedUrl` is safe to use as an iframe `src`. It's always from an allowed provider:
   YouTube (privacy-enhanced domain), Vimeo, Spotify, SoundCloud or Apple Podcasts. Never
   build iframes from `media.url`.
+- `readingMinutes`: words in the body ÷ 200, rounded up, at least 1. Show "N min de leitura".
+  For podcasts and videos it reflects the text only; prefer the media's own length there.
 - `opinion`: label it clearly as opinion ("Opinião"), with the author.
 
 ## GET /editorial/:slug

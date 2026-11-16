@@ -40,6 +40,24 @@ place key). For the map:
 - Boundaries (GeoJSON) aren't served by us. Use the official CAOP files from DGT and join
   them on `dicofre`.
 
+## GET /places/locate
+
+For the "Usar a minha localização" button on `/sitios`: `GET /places/locate?lat=38.72&lon=-9.14`
+returns the municipality containing the point.
+
+```json
+{ "key": "LOCAL-110600", "name": "Lisboa", "level": "municipality", "parentKey": "LOCAL-110000", "dicofre": "1106" }
+```
+
+- **404** `not_found`: the point isn't in Portugal (including the open sea).
+- **400** `invalid_request`: `lat` or `lon` is missing, isn't a number, or is out of range.
+- Built from CAOP 2024 (DGT), the same boundaries as the frontend's maps, simplified to about
+  30 m. Points up to 1.5 km outside every outline count as in the nearest municipality, so
+  beaches and harbours work.
+- We don't log or store the coordinates: this route is left out of the request log.
+- Use the browser's location API, then navigate to `/sitios/<key>`. If the visitor declines,
+  or gets 404, keep the list or map.
+
 ## GET /places/:key
 
 The place page. The first fields are the same as before (`key`, `name`, `level`, `dicofre`,
@@ -67,6 +85,8 @@ empty.
   so we know which list won each junta (`elections`, organ `AF`) but not who leads it.
 - **Councillors' names:** the same; we have each list's seats, not the people.
 - Mayors before 2025.
+- **Mayors' photos:** no official source publishes them in one place, so `mayor` has no
+  `photoUrl`. Keep showing initials.
 
 ## Page ideas
 
