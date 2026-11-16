@@ -177,6 +177,23 @@ describe("posts from Markdown files", () => {
     expect(() => parseMarkdownPost("---\nslug: sem-titulo\n---\nBody")).toThrow(/title/);
   });
 
+  it("reads featured when the file says so", () => {
+    expect(parseMarkdownPost(file)!.featured).toBeNull();
+    expect(parseMarkdownPost(file.replace("slug: oe-explicado", "slug: oe-explicado\nfeatured: true"))!.featured).toBe(true);
+    expect(() => parseMarkdownPost(file.replace("slug: oe-explicado", "slug: oe-explicado\nfeatured: sim"))).toThrow(/featured/);
+  });
+
+  it("features from the file, and unfeatures only when the file says false", async () => {
+    const featuredFile = file.replace("slug: oe-explicado", "slug: oe-explicado\nfeatured: true");
+    await saveMarkdownPosts(db, [parseMarkdownPost(featuredFile)!], { authorName: "R", publish: true });
+    const featured = async () => (await app.inject({ method: "GET", url: "/api/v2/editorial/oe-explicado" })).json().featured;
+    expect(await featured()).toBe(true);
+    await saveMarkdownPosts(db, [parseMarkdownPost(file)!], { authorName: "R", publish: true });
+    expect(await featured()).toBe(true);
+    await saveMarkdownPosts(db, [parseMarkdownPost(featuredFile.replace("featured: true", "featured: false"))!], { authorName: "R", publish: true });
+    expect(await featured()).toBe(false);
+  });
+
   it("publishes, then updates by slug keeping the first publication date and featured", async () => {
     const first = new Date("2026-11-16T10:00:00Z");
     expect(await saveMarkdownPosts(db, [parseMarkdownPost(file)!], { authorName: "Redação Politicando", publish: true, now: first }))

@@ -26,7 +26,7 @@ The API docs are at `/docs` and the OpenAPI spec is at `/docs/json`.
 | `npm run ingest` | Scan news sources once |
 | `npm run parliament:sync` | Load deputies and initiatives from the parliament's open data |
 | `npm run elections:import` | Import election results since 2011, plus the curated legislativas 1975–2009 (one-off; add ids to import only some, `--historic` for just the curated ones) |
-| `npm run editorial:import -- <folder or .md files>` | Publish editorial posts written as Markdown with front matter (e.g. `../politicando-research/articles`); only files with a `slug` are published; re-running updates them by slug. `--draft` to keep them as drafts, `--author="Nome"` for the byline |
+| `npm run editorial:import -- <folder or .md files>` | Publish editorial posts written as Markdown with front matter (e.g. `../politicando-research/articles`); only files with a `slug` are published (`featured: true` makes a front-page pick); re-running updates them by slug. `--draft` to keep them as drafts, `--author="Nome"` for the byline |
 | `npm run admin:create -- <email> "<name>" admin` | Create the first admin (prints a one-time password) |
 | `npm run contracts:import` | Import public contracts from BASE for this year and last (weekly; `-- --from=2012` for history) |
 | `npm run parliament:link-news` | Link stored articles to deputies and initiatives. Add `-- --replace` after changing matching rules |

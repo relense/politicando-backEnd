@@ -13,6 +13,7 @@ import { editorialInputSchema } from "../modules/editorial/routes.js";
  *   title: "Método de Hondt: ..."
  *   subtitle: "..."
  *   tags: [eleições, explicador]
+ *   featured: true        # optional: a front-page pick (false takes it off; absent leaves it as is)
  *   ---
  *   Body in Markdown.
  *
@@ -31,6 +32,8 @@ export interface MarkdownPost {
   tags: string[];
   coverImageUrl: string | null;
   mediaUrl: string | null;
+  /** Null when the file doesn't say, so a choice made in the admin stays. */
+  featured: boolean | null;
 }
 
 const unquote = (value: string) => {
@@ -87,12 +90,15 @@ export const parseMarkdownPost = (text: string): MarkdownPost | null => {
     mediaUrl: str(meta.media_url),
     tags: tags.map((t) => t.trim()).filter(Boolean),
   });
-  return { ...input, slug: input.slug!, tags: [...new Set(input.tags)] };
+  const featured = str(meta.featured)?.toLowerCase();
+  if (featured !== undefined && featured !== "true" && featured !== "false") throw new Error(`featured must be true or false, not "${featured}"`);
+  const { authorName: _byline, ...fields } = input;
+  return { ...fields, slug: input.slug!, tags: [...new Set(input.tags)], featured: featured === undefined ? null : featured === "true" };
 };
 
 /**
  * Stores posts by slug: new ones are created, existing ones get the new text. Publishing keeps
- * the first publication date; featured and the author account are left as they are.
+ * the first publication date. Featured changes only when the file says so; drafts are never featured.
  */
 export const saveMarkdownPosts = async (
   db: Db,
@@ -104,7 +110,8 @@ export const saveMarkdownPosts = async (
     const [row] = await db
       .insert(editorialPosts)
       .values({
-        ...post, authorName, status: publish ? "published" : "draft", publishedAt: publish ? now : null, createdAt: now, updatedAt: now,
+        ...post, featured: publish && post.featured === true, authorName,
+        status: publish ? "published" : "draft", publishedAt: publish ? now : null, createdAt: now, updatedAt: now,
       })
       .onConflictDoUpdate({
         target: editorialPosts.slug,
@@ -112,6 +119,7 @@ export const saveMarkdownPosts = async (
           kind: post.kind, title: post.title, subtitle: post.subtitle, body: post.body, tags: post.tags,
           coverImageUrl: post.coverImageUrl, mediaUrl: post.mediaUrl, authorName, updatedAt: now,
           ...(publish && { status: "published" as const, publishedAt: sql`coalesce(${editorialPosts.publishedAt}, ${now.toISOString()}::timestamptz)` }),
+          ...(post.featured !== null && { featured: publish && post.featured }),
         },
       })
       .returning({ slug: editorialPosts.slug, created: sql<boolean>`${editorialPosts.createdAt} = ${now.toISOString()}::timestamptz` });

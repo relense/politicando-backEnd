@@ -99,6 +99,9 @@ instead of the admin. They come out of the API exactly like posts written in the
 these differences:
 
 - `authorName` is `"Redação Politicando"` and there's no author account behind it.
+- `featured` comes from the file (`featured: true`); `GET /editorial?featured=true&limit=1`
+  gives the newest pick. A moderator can also change it in the admin, and re-importing keeps
+  that unless the file says otherwise.
 - No `coverImageUrl` yet, so the cards need a fallback without an image.
 - Bodies use GitHub-flavoured Markdown **tables** (party results, vote counts), plus
   footnote-style lines in italics and a `---` rule before the "Como fizemos" note at the end.
