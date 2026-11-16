@@ -166,4 +166,16 @@ describe("hardening", () => {
     expect(await createRecaptchaVerifier("s", google("evil.example"), ["politicando.pt"])("t", "1.1.1.1")).toBe(false);
     expect(await createRecaptchaVerifier("s", google("anything"))("t", "1.1.1.1")).toBe(true);
   });
+
+  it("says why a reCAPTCHA token was rejected", async () => {
+    const warnings: string[] = [];
+    const warn = (message: string) => warnings.push(message);
+    const google = (body: object) => (async () => new Response(JSON.stringify(body))) as unknown as typeof fetch;
+    await createRecaptchaVerifier("s", google({ success: false, "error-codes": ["invalid-input-secret"] }), [], warn)("t", "1.1.1.1");
+    await createRecaptchaVerifier("s", google({ success: true, hostname: "www.politicando.pt" }), ["politicando.pt"], warn)("t", "1.1.1.1");
+    expect(warnings).toEqual([
+      "reCAPTCHA rejected by Google: invalid-input-secret",
+      'reCAPTCHA solved on "www.politicando.pt", which isn\'t in RECAPTCHA_HOSTNAMES (politicando.pt)',
+    ]);
+  });
 });
