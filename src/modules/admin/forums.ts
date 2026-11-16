@@ -4,7 +4,8 @@ import { z } from "zod";
 import { adminGuard, audit } from "../../admin/sessions.js";
 import type { Db } from "../../db/client.js";
 import { comments, forumPosts, forumThreads, reports } from "../../db/schema.js";
-import { notFound } from "../../errors.js";
+import { ApiError, notFound } from "../../errors.js";
+import { IDEA_STATUSES, IDEAS_BOARD } from "../forums/routes.js";
 import { errorSchema } from "../shared.js";
 
 /* Forum moderation and the reports queue (role moderator). Every action is audited. */
@@ -142,6 +143,44 @@ export const adminForumRoutes =
       { kind: "post", name: "hide", set: () => ({ hiddenAt: new Date() }) },
       { kind: "post", name: "unhide", set: () => ({ hiddenAt: null }) },
     ] as const;
+
+    app.put(
+      "/admin/forum/threads/:id/status",
+      {
+        schema: {
+          tags: ["admin"],
+          summary: "Give an idea (ideias board) the team's status and, optionally, a public answer",
+          params: idParams,
+          body: z.object({
+            status: z.enum(IDEA_STATUSES).nullable(),
+            answer: z
+              .string()
+              .trim()
+              .max(1000)
+              .nullable()
+              .transform((value) => value || null)
+              .describe('e.g. "Feito em novembro: já podes filtrar por distrito"'),
+          }),
+          response: { 200: z.object({ status: z.enum(IDEA_STATUSES).nullable(), answer: z.string().nullable(), answeredAt: z.string().nullable() }), ...errors },
+        },
+      },
+      async (request) => {
+        const me = await requireAdmin(request, "moderator");
+        const [before] = await db.select().from(forumThreads).where(eq(forumThreads.id, request.params.id));
+        if (!before) throw notFound("Thread");
+        if (before.board !== IDEAS_BOARD) throw new ApiError(400, "not_an_idea", "Only threads on the ideas board get a status");
+        const { status, answer } = request.body;
+        // The answer's date moves only when its text changes.
+        const answeredAt = answer === null ? null : answer === before.answer ? before.answeredAt : new Date();
+        const [after] = await db
+          .update(forumThreads)
+          .set({ status, answer, answeredAt })
+          .where(eq(forumThreads.id, before.id))
+          .returning({ status: forumThreads.status, answer: forumThreads.answer, answeredAt: forumThreads.answeredAt });
+        await audit(db, me.id, "thread.status", "thread", before.id, { status: before.status, answer: before.answer }, { status, answer });
+        return { status: after!.status, answer: after!.answer, answeredAt: after!.answeredAt?.toISOString() ?? null };
+      },
+    );
 
     for (const action of actions) {
       app.post(

@@ -3,13 +3,20 @@ import type { FastifyBaseLogger } from "fastify";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
 import type { Db } from "../../db/client.js";
-import { articles, comments, forumPosts, forumThreads, initiatives, parties, reports } from "../../db/schema.js";
+import { articles, comments, forumPosts, forumThreads, forumVotes, initiatives, parties, reports } from "../../db/schema.js";
 import { ApiError, notFound } from "../../errors.js";
-import { posterId, reporterKey } from "../../forums/identity.js";
+import { posterId, reporterKey, voterKey } from "../../forums/identity.js";
 import type { RecaptchaVerifier } from "../comments/recaptcha.js";
 import { errorSchema } from "../shared.js";
 
 export const GENERAL_BOARD = "geral";
+/** Readers' ideas for the site, which the team answers with a status (see /feedback/ideias). */
+export const IDEAS_BOARD = "ideias";
+const OWN_BOARDS = [
+  { board: GENERAL_BOARD, name: "Geral", acronym: null },
+  { board: IDEAS_BOARD, name: "Ideias", acronym: null },
+];
+export const IDEA_STATUSES = ["reviewing", "planned", "in_progress", "done", "declined"] as const;
 const MAX_INT = 2_147_483_647;
 
 const nickname = z
@@ -39,6 +46,10 @@ const threadSummarySchema = z.object({
   pinned: z.boolean(),
   locked: z.boolean(),
   link: linkSchema,
+  score: z.number().describe("Readers' upvotes"),
+  status: z.enum(IDEA_STATUSES).nullable().describe("The team's verdict (ideas board): null until they look at it"),
+  answer: z.string().nullable().describe("The team's public answer, if any"),
+  answeredAt: z.string().nullable(),
 });
 
 const postSchema = z.object({
@@ -78,7 +89,7 @@ export const forumRoutes =
     };
 
     const assertBoard = async (board: string) => {
-      if (board === GENERAL_BOARD) return;
+      if (OWN_BOARDS.some((b) => b.board === board)) return;
       const [party] = await db.select({ id: parties.id }).from(parties).where(eq(parties.slug, board));
       if (!party) throw notFound("Board");
     };
@@ -86,10 +97,12 @@ export const forumRoutes =
     type ThreadRow = {
       id: number; board: string; title: string; body: string; nickname: string | null; poster_id: string; reply_count: number;
       created_at: string; bumped_at: string; pinned: boolean; locked: boolean;
+      score: number; status: (typeof IDEA_STATUSES)[number] | null; answer: string | null; answered_at: string | null;
       article_id: number | null; article_title: string | null; initiative_id: number | null; initiative_title: string | null;
     };
     const threadColumns = sql`t.id, t.board, t.title, t.body, t.nickname, t.poster_id, t.reply_count,
       ${iso("t.created_at")} as created_at, ${iso("t.bumped_at")} as bumped_at, t.pinned, t.locked_at is not null as locked,
+      t.score, t.status, t.answer, ${iso("t.answered_at")} as answered_at,
       a.id as article_id, a.title as article_title, i.id as initiative_id, i.title as initiative_title`;
     const threadFrom = sql`forum_threads t
       left join articles a on a.id = t.article_id
@@ -97,7 +110,7 @@ export const forumRoutes =
     const summary = (r: ThreadRow) => ({
       id: r.id, board: r.board, title: r.title, excerpt: r.body.length > 300 ? `${r.body.slice(0, 299)}…` : r.body,
       nickname: r.nickname, posterId: r.poster_id, replyCount: r.reply_count, createdAt: r.created_at, bumpedAt: r.bumped_at,
-      pinned: r.pinned, locked: r.locked,
+      pinned: r.pinned, locked: r.locked, score: r.score, status: r.status, answer: r.answer, answeredAt: r.answered_at,
       link: {
         article: r.article_id !== null ? { id: r.article_id, title: r.article_title! } : null,
         initiative: r.initiative_id !== null ? { id: r.initiative_id, title: r.initiative_title! } : null,
@@ -109,7 +122,7 @@ export const forumRoutes =
       {
         schema: {
           tags: ["forums"],
-          summary: "The boards: a general one, then one per party, with activity",
+          summary: "The boards: a general one, the ideas board, then one per party (by seats), with activity",
           response: {
             200: z.object({
               items: z.array(
@@ -137,7 +150,7 @@ export const forumRoutes =
           .from(parties)
           .orderBy(sql`${parties.assemblySeats} desc`, parties.name);
         const boards = [
-          { board: GENERAL_BOARD, name: "Geral", acronym: null },
+          ...OWN_BOARDS,
           ...partyRows.map((p) => ({ board: p.slug, name: p.name, acronym: p.acronym })),
         ];
         return {
@@ -157,7 +170,8 @@ export const forumRoutes =
           summary: "Threads on a board. Pinned threads come first",
           params: z.object({ board: z.string().regex(/^[a-z0-9-]{1,50}$/) }),
           querystring: z.object({
-            sort: z.enum(["active", "new", "top"]).default("active").describe("active: last reply; new: newest; top: most replies"),
+            sort: z.enum(["active", "new", "top"]).default("active").describe("active: last reply; new: newest; top: most upvoted (then most replies)"),
+            status: z.enum(IDEA_STATUSES).optional().describe("Only threads the team gave this status (ideas board)"),
             page: z.coerce.number().int().min(1).max(1000).default(1),
             limit: z.coerce.number().int().min(1).max(50).default(25),
           }),
@@ -167,9 +181,10 @@ export const forumRoutes =
       async (request) => {
         const { board } = request.params;
         await assertBoard(board);
-        const { sort, page, limit } = request.query;
-        const order = sort === "new" ? sql`t.created_at desc` : sort === "top" ? sql`t.reply_count desc, t.bumped_at desc` : sql`t.bumped_at desc`;
-        const where = sql`t.board = ${board} and t.hidden_at is null`;
+        const { sort, status, page, limit } = request.query;
+        const order =
+          sort === "new" ? sql`t.created_at desc` : sort === "top" ? sql`t.score desc, t.reply_count desc, t.bumped_at desc` : sql`t.bumped_at desc`;
+        const where = sql`t.board = ${board} and t.hidden_at is null ${status ? sql`and t.status = ${status}` : sql``}`;
         const [rows, total] = await Promise.all([
           db.execute<ThreadRow>(sql`select ${threadColumns} from ${threadFrom} where ${where}
             order by t.pinned desc, ${order}, t.id desc limit ${limit} offset ${(page - 1) * limit}`),
@@ -317,11 +332,43 @@ export const forumRoutes =
             .returning({ id: forumPosts.id });
           await tx
             .update(forumThreads)
-            .set({ replyCount: sql`${forumThreads.replyCount} + 1`, bumpedAt: new Date() })
+            .set({ replyCount: sql`${forumThreads.replyCount} + 1`, bumpedAt: sql`now()` })
             .where(eq(forumThreads.id, threadId));
           return created!.id;
         });
         return reply.status(201).send({ id, posterId: poster });
+      },
+    );
+
+    app.post(
+      "/forums/threads/:id/vote",
+      {
+        config: { rateLimit: { max: 30, timeWindow: "1 minute" } },
+        schema: {
+          tags: ["forums"],
+          summary: "Upvote a thread. Once per reader: voting again returns the same score",
+          params: idParams,
+          response: { 200: z.object({ score: z.number() }), 400: errorSchema, 404: errorSchema, 429: errorSchema },
+        },
+      },
+      async (request) => {
+        const threadId = request.params.id;
+        const [thread] = await db
+          .select({ id: forumThreads.id })
+          .from(forumThreads)
+          .where(and(eq(forumThreads.id, threadId), isNull(forumThreads.hiddenAt)));
+        if (!thread) throw notFound("Thread");
+        return db.transaction(async (tx) => {
+          const added = await tx
+            .insert(forumVotes)
+            .values({ threadId, voter: voterKey(forumSecret, request.ip, threadId) })
+            .onConflictDoNothing()
+            .returning({ threadId: forumVotes.threadId });
+          const [row] = added.length
+            ? await tx.update(forumThreads).set({ score: sql`${forumThreads.score} + 1` }).where(eq(forumThreads.id, threadId)).returning({ score: forumThreads.score })
+            : await tx.select({ score: forumThreads.score }).from(forumThreads).where(eq(forumThreads.id, threadId));
+          return { score: row!.score };
+        });
       },
     );
 

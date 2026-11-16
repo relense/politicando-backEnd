@@ -25,6 +25,7 @@ const app = await buildApp({
   newsletter,
   logger: true,
   warmCaches: true,
+  mailer,
 });
 
 const shutdown = async () => {

@@ -23,12 +23,14 @@ import { caseRoutes } from "./modules/cases/routes.js";
 import { forumRoutes } from "./modules/forums/routes.js";
 import { agendaRoutes } from "./modules/agenda/routes.js";
 import { editorialRoutes } from "./modules/editorial/routes.js";
+import { feedbackRoutes } from "./modules/feedback/routes.js";
 import { seoRoutes } from "./modules/seo/routes.js";
 import { placeRoutes } from "./modules/places/routes.js";
 import { articleRoutes } from "./modules/articles/routes.js";
 import type { RecaptchaVerifier } from "./modules/comments/recaptcha.js";
 import { commentRoutes } from "./modules/comments/routes.js";
 import { type NewsletterSettings, newsletterRoutes } from "./modules/newsletter/routes.js";
+import type { Mailer } from "./newsletter/mailer.js";
 import { contractRoutes } from "./modules/contracts/routes.js";
 import { historyRoutes } from "./modules/history/routes.js";
 import { legislatureRoutes } from "./modules/legislatures/routes.js";
@@ -62,6 +64,9 @@ export interface AppOptions {
   newsletter?: NewsletterSettings | null;
   /** Precompute the contracts page's totals at start and after imports (the server, not tests). */
   warmCaches?: boolean;
+  /** Sends the team's answers to feedback; without it, answers are only noted. */
+  mailer?: Mailer | null;
+  feedbackLimitPerHour?: number;
 }
 
 const errorBody = (code: string, message: string) => ({ error: { code, message } });
@@ -79,6 +84,8 @@ export const buildApp = async ({
   forumSecret = randomBytes(32).toString("hex"),
   newsletter = null,
   warmCaches = false,
+  mailer = null,
+  feedbackLimitPerHour = 10,
 }: AppOptions) => {
   const app = Fastify({ logger, trustProxy: trustProxy || clientIpHeader !== undefined, bodyLimit: 64 * 1024 });
   if (clientIpHeader !== undefined) {
@@ -161,6 +168,7 @@ export const buildApp = async ({
       await api.register(adminForumRoutes(db));
       await api.register(editorialRoutes(db));
       await api.register(agendaRoutes(db));
+      await api.register(feedbackRoutes({ db, verifyRecaptcha, mailer, limitPerHour: feedbackLimitPerHour }));
       await api.register(seoRoutes(db));
       await api.register(placeRoutes(db));
       await api.register(forumRoutes({ db, verifyRecaptcha, forumSecret, createLimitPerMinute: commentLimitPerMinute }));

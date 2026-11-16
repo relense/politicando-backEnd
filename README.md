@@ -160,8 +160,12 @@ rules for the frontend.
 
 Anonymous party forums (`/forums`, `docs/forums-api.md`): no accounts, reCAPTCHA and rate
 limits on posting, a per-thread poster ID keyed by `FORUM_SECRET` (set it once and never
-change it), and reports that feed the moderation queue. Our own posts and podcasts live
-under `/editorial` (`docs/editorial-api.md`), written in the admin.
+change it), upvotes (one per reader per thread, keyed the same way), and reports that feed
+the moderation queue. The `ideias` board holds readers' ideas for the site, which the team
+answers with a status. The feedback form, the public corrections log and their admin are in
+`docs/feedback-api.md`; screenshots are kept in the database for 90 days and the hourly
+ingest deletes older ones. Our own posts and podcasts live under `/editorial`
+(`docs/editorial-api.md`), written in the admin.
 
 ## News scanner
 
