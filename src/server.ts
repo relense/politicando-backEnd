@@ -19,7 +19,7 @@ const app = await buildApp({
   corsOrigins: config.CORS_ORIGINS,
   trustProxy: config.TRUST_PROXY,
   clientIpHeader: config.CLIENT_IP_HEADER,
-  verifyRecaptcha: createRecaptchaVerifier(config.RECAPTCHA_SECRET, fetch, config.RECAPTCHA_HOSTNAMES),
+  verifyRecaptcha: createRecaptchaVerifier(config.RECAPTCHA_SECRET, fetch, config.RECAPTCHA_HOSTNAMES, (message) => console.warn(message)),
   secureCookies: config.COOKIE_SECURE,
   forumSecret: config.FORUM_SECRET,
   newsletter,
