@@ -30,6 +30,7 @@ import { commentRoutes } from "./modules/comments/routes.js";
 import { type NewsletterSettings, newsletterRoutes } from "./modules/newsletter/routes.js";
 import { contractRoutes } from "./modules/contracts/routes.js";
 import { historyRoutes } from "./modules/history/routes.js";
+import { legislatureRoutes } from "./modules/legislatures/routes.js";
 import { explainerRoutes } from "./modules/explainers/routes.js";
 import { peopleRoutes } from "./modules/people/routes.js";
 import { electionRoutes } from "./modules/elections/routes.js";
@@ -131,6 +132,7 @@ export const buildApp = async ({
       await api.register(peopleRoutes(db));
       await api.register(explainerRoutes(db));
       await api.register(historyRoutes(db));
+      await api.register(legislatureRoutes(db));
       await api.register(contractRoutes(db));
       await api.register(adminRoutes({ db, secureCookies, loginLimitPerMinute }));
       await api.register(adminRecordRoutes(db));

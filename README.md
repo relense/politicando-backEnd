@@ -26,6 +26,7 @@ The API docs are at `/docs` and the OpenAPI spec is at `/docs/json`.
 | `npm run ingest` | Scan news sources once |
 | `npm run parliament:sync` | Load deputies and initiatives from the parliament's open data |
 | `npm run elections:import` | Import election results since 2011, plus the curated legislativas 1975–2009 (one-off; add ids to import only some, `--historic` for just the curated ones) |
+| `npm run parliament:history` | Import earlier legislatures' initiatives (I to XVI) from the parliament's open data, for the legislature pages (one-off; add ids for only some) |
 | `npm run editorial:import -- <folder or .md files>` | Publish editorial posts written as Markdown with front matter (e.g. `../politicando-research/articles`); only files with a `slug` are published (`featured: true` makes a front-page pick); re-running updates them by slug. `--draft` to keep them as drafts, `--author="Nome"` for the byline |
 | `npm run admin:create -- <email> "<name>" admin` | Create the first admin (prints a one-time password) |
 | `npm run contracts:import` | Import public contracts from BASE for this year and last (weekly; `-- --from=2012` for history) |
@@ -104,6 +105,12 @@ every body).
 Presidents since 1976, kept by hand in `src/government/history.ts` and
 `src/presidency/presidents.ts`. When a government takes office, add it to the history: the
 daily government sync warns until you do. See `docs/history-api.md`.
+
+`GET /legislatures` and `GET /legislatures/:id` give each legislature's page: elections,
+governments, Presidents, initiatives by author, curated events (laws, crises, controversies,
+each with sources, in `src/parliament/legislatureEvents.ts`) and cases from the record. Earlier
+legislatures' initiatives come from `npm run parliament:history` (one-off). See
+`docs/legislatures-api.md`.
 
 ## Explainers
 

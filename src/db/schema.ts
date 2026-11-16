@@ -183,6 +183,35 @@ export interface VoteRecord {
   named: { name: string; group: string; position: "favor" | "against" | "abstention" }[];
 }
 
+/**
+ * Initiatives of earlier legislatures, for each legislature's record (counts by author and
+ * outcome). Kept apart from `initiatives`, which is the current legislature: news matching,
+ * party pages and lists work on that one only. Older legislatures' records in the open data
+ * are incomplete (the 1980s have a few hundred initiatives each).
+ */
+export const pastInitiatives = pgTable(
+  "past_initiatives",
+  {
+    id: integer().primaryKey(),
+    legislature: text().notNull(),
+    type: text().notNull(),
+    number: text().notNull(),
+    title: text().notNull(),
+    /** approved, rejected, withdrawn, or lapsed (still pending when the legislature ended). */
+    status: text().$type<"approved" | "rejected" | "withdrawn" | "lapsed">().notNull(),
+    submittedAt: date("submitted_at"),
+    publishedAt: date("published_at"),
+    /** Parliamentary groups as the parliament wrote them, e.g. ["PS", "PSD"] or ["UEDS"]. */
+    authorGroups: text("author_groups").array().notNull(),
+    /** Our party slugs for those groups, where we have the party. */
+    partySlugs: text("party_slugs").array().notNull(),
+    /** "Governo", a regional assembly, citizens... when no group signed it. */
+    otherAuthor: text("other_author"),
+    textUrl: text("text_url"),
+  },
+  (table) => [index("past_initiatives_legislature_idx").on(table.legislature)],
+);
+
 /** Bills, resolutions and other proposals ("iniciativas"), keyed by the parliament's ID. */
 export const initiatives = pgTable(
   "initiatives",

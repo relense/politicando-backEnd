@@ -47,6 +47,7 @@
     "db:seed": "tsx --env-file=.env src/db/seed.ts",
     "ingest": "tsx --env-file=.env src/jobs/ingest.ts",
     "parliament:sync": "tsx --env-file=.env src/jobs/syncParliament.ts",
+    "parliament:history": "tsx --env-file=.env src/jobs/importPastLegislatures.ts",
     "parliament:link-news": "tsx --env-file=.env src/jobs/linkNews.ts",
     "government:sync": "tsx --env-file=.env src/jobs/syncGovernment.ts",
     "elections:import": "tsx --env-file=.env src/jobs/importElections.ts",

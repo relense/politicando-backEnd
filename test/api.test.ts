@@ -443,6 +443,8 @@ describe("platform", () => {
       "/api/v2/initiatives/{id}",
       "/api/v2/interests",
       "/api/v2/interests/contracts",
+      "/api/v2/legislatures",
+      "/api/v2/legislatures/{id}",
       "/api/v2/newsletter/confirm",
       "/api/v2/newsletter/subscribe",
       "/api/v2/newsletter/unsubscribe",

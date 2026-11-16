@@ -11,9 +11,9 @@ const endReasonSchema = z.enum([
   "resignation", "dismissed", "death", "provisional", "in_office",
 ]);
 
-const partySchema = z.object({ slug: z.string(), acronym: z.string(), name: z.string() });
+export const partySchema = z.object({ slug: z.string(), acronym: z.string(), name: z.string() });
 
-const governmentSchema = z.object({
+export const governmentSchema = z.object({
   code: z.string().describe('"gc01"-"gc25" (constitutional), "gp1"-"gp6" (provisional, 1974-76)'),
   kind: z.enum(["constitutional", "provisional"]),
   name: z.string(),
@@ -35,24 +35,24 @@ const daysBetween = (from: string, to: string | null) =>
 
 const timelineKind = z.enum(["government", "election", "president"]);
 
+/** Every government, oldest first, with its parties resolved. */
+export const historicGovernments = async (db: Db) => {
+  const known = new Map(
+    (await db.select({ slug: parties.slug, acronym: parties.acronym, name: parties.name }).from(parties)).map((p) => [p.slug, p]),
+  );
+  return GOVERNMENTS.map((gov) => ({
+    ...gov,
+    days: daysBetween(gov.start, gov.end),
+    parties: gov.parties.flatMap((slug) => (known.has(slug) ? [known.get(slug)!] : [])),
+    portalUrl: portalUrl(gov.code),
+    current: gov.end === null,
+  }));
+};
+
 export const historyRoutes =
   (db: Db): FastifyPluginAsyncZod =>
   async (app) => {
-    const partyMap = async () =>
-      new Map(
-        (await db.select({ slug: parties.slug, acronym: parties.acronym, name: parties.name }).from(parties)).map((p) => [p.slug, p]),
-      );
-
-    const governments = async () => {
-      const known = await partyMap();
-      return GOVERNMENTS.map((gov) => ({
-        ...gov,
-        days: daysBetween(gov.start, gov.end),
-        parties: gov.parties.flatMap((slug) => (known.has(slug) ? [known.get(slug)!] : [])),
-        portalUrl: portalUrl(gov.code),
-        current: gov.end === null,
-      }));
-    };
+    const governments = () => historicGovernments(db);
 
     app.get(
       "/governments/history",

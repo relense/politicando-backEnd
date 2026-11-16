@@ -48,7 +48,9 @@ export async function* streamJsonArray(body: Readable): AsyncIterable<unknown> {
 const decode = (href: string) => href.replace(/&amp;/g, "&");
 
 export const findFolderLink = (html: string, legislature: string) => {
-  const match = new RegExp(`title="Pasta ${legislature} Legislatura"[^>]*href="([^"]+)"`).exec(html);
+  // The Constituent Assembly's folder is just "Pasta Constituinte".
+  const folder = legislature === "Constituinte" ? "Pasta Constituinte" : `Pasta ${legislature} Legislatura`;
+  const match = new RegExp(`title="${folder}"[^>]*href="([^"]+)"`).exec(html);
   return match ? new URL(decode(match[1]!), SITE).href : null;
 };
 
