@@ -71,12 +71,13 @@ The very first admin is created on the server: `npm run admin:create -- <email> 
 Readers report threads, replies, comments and news articles (`POST /reports`, see
 `docs/forums-api.md`). `kind` is `thread`, `post`, `comment` or `article`.
 
-**Most of it runs on its own.** Items reported by 3 different readers (2 for `hate`,
-`personal_data`, `illegal`; for news, 3 of `duplicate`, `broken_link`, `not_politics`) are
-hidden automatically. Their reports show as resolved with `resolution: "hidden"`, and the
-audit log has `report.auto_hide` with no admin. The queue holds what hasn't reached that yet.
-Unhiding an item (any of the unhide endpoints) dismisses its reports, and then it takes twice
-as many new reports to hide it again.
+**Most of it runs on its own, 4chan style: only what's illegal or spam is hidden.** Items
+reported by 2 different readers as `hate`, `personal_data` or `illegal`, or by 3 as `spam`,
+are hidden automatically; `insult` and `other` never hide anything. For news, 3 reports of
+`duplicate`, `broken_link` or `not_politics`. Hidden items' reports show as resolved with
+`resolution: "hidden"`, and the audit log has `report.auto_hide` with no admin. The queue
+holds the rest. Unhiding an item (any of the unhide endpoints) dismisses its reports, and then
+it takes twice as many new reports to hide it again.
 
 Without an admin screen, the same can be done from the backend repo:
 `npm run moderation` lists the last 14 days of reports (open, hidden, dismissed) with the

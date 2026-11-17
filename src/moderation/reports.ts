@@ -4,42 +4,42 @@ import type { Db } from "../db/client.js";
 import { articles, comments, forumPosts, forumThreads, reports } from "../db/schema.js";
 
 /*
- * Moderation without anyone watching the queue: when enough different readers report the
- * same item, it's hidden on its own. A moderator (or `npm run moderation -- restore`) can
- * bring it back, and an item that was brought back needs twice as many reports next time,
- * so a group can't keep hiding something that was found fine.
+ * Moderation without anyone watching the queue, 4chan style: rudeness stays up, so reports of
+ * "insult" or "other" only go to the queue. What's hidden on its own is what's illegal
+ * (hate, personal data, anything else illegal) and spam, once enough different readers say
+ * so. A moderator (or `npm run moderation -- restore`) can bring it back, and an item that
+ * was brought back needs twice as many reports next time, so a group can't keep hiding
+ * something that was found fine.
  */
 
 export type ReportKind = "thread" | "post" | "comment" | "article";
 
-/** Different readers whose reports hide an item. */
-export const HIDE_AFTER = 3;
-/** Fewer when they report something illegal or harmful whoever reads it. */
-export const HIDE_AFTER_SEVERE = 2;
-const SEVERE = ["hate", "personal_data", "illegal"];
-/** News articles are hidden only for these; "wrong_tags" is our mistake to fix, not a reason to hide. */
-const ARTICLE_HIDE_REASONS = ["duplicate", "not_politics", "broken_link"];
+/** Illegal content: 2 different readers saying so (in any mix of these reasons) hide it. */
+const ILLEGAL = ["hate", "personal_data", "illegal"];
+export const HIDE_AFTER_ILLEGAL = 2;
+/** Spam: 3 readers. "insult" and "other" never hide anything. */
+export const HIDE_AFTER_SPAM = 3;
+/** News articles that aren't news we should list; "wrong_tags" is our mistake to fix, not a reason to hide. */
+const ARTICLE_REASONS = ["duplicate", "not_politics", "broken_link"];
+export const HIDE_AFTER_ARTICLE = 3;
 
 export const tableOf = (kind: ReportKind) =>
   kind === "thread" ? forumThreads : kind === "post" ? forumPosts : kind === "article" ? articles : comments;
 
 /** Hides the item if its open reports reach the limit. Returns whether it was hidden now. */
 export const autoModerate = async (db: Db, kind: ReportKind, targetId: number): Promise<boolean> => {
-  const [counts] = (
-    await db.execute<{ open: number; severe: number; eligible: number; restored: boolean }>(sql`
-      select
-        count(*) filter (where resolved_at is null)::int as open,
-        count(*) filter (where resolved_at is null and reason in (${sql.join(SEVERE.map((r) => sql`${r}`), sql`, `)}))::int as severe,
-        count(*) filter (where resolved_at is null and reason in (${sql.join(ARTICLE_HIDE_REASONS.map((r) => sql`${r}`), sql`, `)}))::int as eligible,
-        bool_or(resolution = 'dismissed') as restored
-      from reports where kind = ${kind} and target_id = ${targetId}`)
+  const rows = (
+    await db.execute<{ reason: string; resolution: string | null; open: number }>(sql`
+      select reason, resolution, count(*) filter (where resolved_at is null)::int as open
+      from reports where kind = ${kind} and target_id = ${targetId} group by reason, resolution`)
   ).rows;
-  if (!counts) return false;
-  const factor = counts.restored ? 2 : 1;
+  if (rows.length === 0) return false;
+  const factor = rows.some((r) => r.resolution === "dismissed") ? 2 : 1;
+  const open = (reasons: string[]) => rows.filter((r) => reasons.includes(r.reason)).reduce((n, r) => n + r.open, 0);
   const reached =
     kind === "article"
-      ? counts.eligible >= HIDE_AFTER * factor
-      : counts.open >= HIDE_AFTER * factor || counts.severe >= HIDE_AFTER_SEVERE * factor;
+      ? open(ARTICLE_REASONS) >= HIDE_AFTER_ARTICLE * factor
+      : open(ILLEGAL) >= HIDE_AFTER_ILLEGAL * factor || open(["spam"]) >= HIDE_AFTER_SPAM * factor;
   if (!reached) return false;
 
   const table = tableOf(kind);

@@ -15,17 +15,17 @@ Posting works like comments: a reCAPTCHA v2 token on every post (`recaptchaToken
 per-IP limit (5 posts a minute by default; 429 `rate_limited`). If Google can't be reached,
 posting fails with 503 `recaptcha_unavailable`. A failed check is 403 `recaptcha_failed`.
 
-**Refused text (400).** Posts, threads and comments (news, stories and editorial posts) are
-screened before they're saved. Rudeness and swearing pass; these don't, and the error's
+**Refused text (400). The rules are 4chan's: anything goes except what's illegal.**
+Swearing, insults, rudeness towards politicians or each other all pass. Posts, threads and
+comments (news, stories and editorial posts) are refused only for these. The error's
 `message` is in Portuguese, written to show as is next to the form (keep what they typed so
 they can fix it):
 
 | code | when |
 | --- | --- |
 | `personal_data` | An email or a Portuguese phone number, theirs or someone else's |
-| `hate` | A slur, or an insult aimed at a group ("… de merda") |
+| `hate` | Insulting a whole group for its origin, colour, religion, sexuality or disability, or calling for violence against it ("… de merda", "morte aos …"). Criticising immigration, a religion's ideas or a person is fine |
 | `threat` | A threat of violence ("vou-te matar", "sei onde moras") |
-| `too_many_links` | More than 2 links |
 
 The nickname or username is screened too.
 
@@ -176,11 +176,14 @@ when the same person reports twice (counted once). There is no captcha; it's lim
 minute per IP. Show a "Denunciar" link on every post and comment, with these reasons as
 options. 404 for unknown or already hidden items.
 
-**Reported items hide themselves.** When 3 different readers report the same thread, reply
-or comment, it's hidden at once (2 when they say `hate`, `personal_data` or `illegal`). A
-moderator can bring it back, and then it takes twice as many new reports. So after a reader
-reports something, saying "Obrigado, vamos rever" is accurate; don't promise it'll be
-removed.
+**Reported items hide themselves, but only for what's illegal or spam.** When 2 different
+readers report the same thread, reply or comment as `hate`, `personal_data` or `illegal`,
+it's hidden at once; 3 readers for `spam`. `insult` and `other` never hide anything (rudeness
+stays up); they only reach the moderators. A moderator can bring an item back, and then it
+takes twice as many new reports. After a reader reports something, "Obrigado, vamos rever" is
+accurate; don't promise it'll be removed. Suggested labels: `illegal` "Ilegal (difamação,
+crime…)", `hate` "Ataque a um grupo", `personal_data` "Dados pessoais", `spam` "Spam",
+`insult` "Insulto", `other` "Outro".
 
 News articles (`"kind": "article"`) take their own reasons, about our tagging or the item
 rather than what the outlet wrote: `wrong_tags` ("Partido ou pessoa errados"),

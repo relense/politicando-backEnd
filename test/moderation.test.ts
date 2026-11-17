@@ -28,22 +28,25 @@ const report = (kind: string, id: number, reason: string, ip: string) => call("P
 const commentHidden = async (id: number) => (await db.select().from(comments).where(eq(comments.id, id)))[0]!.hiddenAt !== null;
 
 describe("screening what readers write", () => {
-  it("lets rudeness and opinions through", () => {
-    expect(screenText("Este governo é uma merda e o ministro é um incompetente")).toBeNull();
+  it("lets rudeness, insults and opinions through", () => {
+    expect(screenText("Este governo é uma merda e o ministro é um incompetente do caralho")).toBeNull();
+    expect(screenText("És mesmo burro, paneleiro")).toBeNull();
     expect(screenText("O OE2027 prevê 200 000 000 euros, ou 2000000000 no total, e 9 312 345 de pessoas")).toBeNull();
     expect(screenText("Os imigrantes contribuem para a Segurança Social", "Zé")).toBeNull();
-    expect(screenText("Ver https://www.parlamento.pt e https://dre.pt")).toBeNull();
+    expect(screenText("Menos imigração, já! Fronteiras controladas")).toBeNull();
+    expect(screenText("a.com b.pt c.net d.org https://x.pt")).toBeNull();
   });
 
-  it("refuses contact details, slurs, threats and link spam", () => {
+  it("refuses what's illegal: contact details, attacks on a group, threats", () => {
     expect(screenText("Liguem-lhe: 912 345 678")?.code).toBe("personal_data");
     expect(screenText("o número dele é +351 213 456 789")?.code).toBe("personal_data");
     expect(screenText("escrevam para fulano.silva@gmail.com")?.code).toBe("personal_data");
     expect(screenText("Esses CIGANOS de merda")?.code).toBe("hate");
-    expect(screenText("bom texto", "paneleiro")?.code).toBe("hate");
+    expect(screenText("morte aos imigrantes")?.code).toBe("hate");
+    expect(screenText("os pretos são macacos")?.code).toBe("hate");
+    expect(screenText("bom texto", "judeus de merda")?.code).toBe("hate");
     expect(screenText("Vou-te matar, ministro")?.code).toBe("threat");
     expect(screenText("sei onde moras")?.code).toBe("threat");
-    expect(screenText("a.com b.pt c.net")?.code).toBe("too_many_links");
   });
 
   it("refuses them when posting, with a message to show", async () => {
@@ -62,34 +65,37 @@ describe("hiding what readers report", () => {
     return (await call("POST", `/articles/${article.id}/comments`, { body: "Comentário", recaptchaToken: "t" })).body.id as number;
   };
 
-  it("hides an item reported by 3 different readers, or 2 for something harmful", async () => {
-    const id = await comment();
-    await report("comment", id, "insult", "1.1.1.1");
-    await report("comment", id, "insult", "1.1.1.1");
-    await report("comment", id, "spam", "2.2.2.2");
-    expect(await commentHidden(id)).toBe(false);
-    await report("comment", id, "other", "3.3.3.3");
-    expect(await commentHidden(id)).toBe(true);
+  it("hides what 2 readers call illegal and what 3 call spam, never what's only rude", async () => {
+    const rude = await comment();
+    for (const ip of ["1.1.1.1", "2.2.2.2", "3.3.3.3", "4.4.4.4", "5.5.5.5"]) await report("comment", rude, "insult", ip);
+    await report("comment", rude, "other", "6.6.6.6");
+    expect(await commentHidden(rude)).toBe(false);
+
+    const illegal = await comment();
+    await report("comment", illegal, "hate", "1.1.1.1");
+    await report("comment", illegal, "hate", "1.1.1.1");
+    expect(await commentHidden(illegal)).toBe(false);
+    await report("comment", illegal, "personal_data", "2.2.2.2");
+    expect(await commentHidden(illegal)).toBe(true);
     expect((await db.select().from(auditLog)).map((a) => a.action)).toContain("report.auto_hide");
 
-    const other = await comment();
-    await report("comment", other, "hate", "1.1.1.1");
-    await report("comment", other, "personal_data", "2.2.2.2");
-    expect(await commentHidden(other)).toBe(true);
-
     const [thread] = await db.insert(forumThreads).values({ board: "geral", title: "Tópico", body: "x", posterId: "p" }).returning();
-    for (const ip of ["1.1.1.1", "2.2.2.2", "3.3.3.3"]) await report("thread", thread!.id, "spam", ip);
-    expect((await db.select().from(forumThreads)).find((t) => t.id === thread!.id)!.hiddenAt).not.toBeNull();
+    await report("thread", thread!.id, "spam", "1.1.1.1");
+    await report("thread", thread!.id, "spam", "2.2.2.2");
+    expect((await db.select().from(forumThreads))[0]!.hiddenAt).toBeNull();
+    await report("thread", thread!.id, "spam", "3.3.3.3");
+    expect((await db.select().from(forumThreads))[0]!.hiddenAt).not.toBeNull();
   });
 
   it("needs twice as many reports once an item was restored", async () => {
     const id = await comment();
-    for (const ip of ["1.1.1.1", "2.2.2.2", "3.3.3.3"]) await report("comment", id, "insult", ip);
+    for (const ip of ["1.1.1.1", "2.2.2.2"]) await report("comment", id, "illegal", ip);
+    expect(await commentHidden(id)).toBe(true);
     expect(await restore(db, "comment", id)).toBe(true);
     expect(await commentHidden(id)).toBe(false);
-    for (const ip of ["4.4.4.4", "5.5.5.5", "6.6.6.6", "7.7.7.7", "8.8.8.8"]) await report("comment", id, "insult", ip);
+    for (const ip of ["3.3.3.3", "4.4.4.4", "5.5.5.5"]) await report("comment", id, "illegal", ip);
     expect(await commentHidden(id)).toBe(false);
-    await report("comment", id, "insult", "9.9.9.9");
+    await report("comment", id, "hate", "6.6.6.6");
     expect(await commentHidden(id)).toBe(true);
   });
 

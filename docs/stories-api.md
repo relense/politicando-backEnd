@@ -182,7 +182,7 @@ id), plus likes and a side:
 - `GET /stories/:id/comments`: the story's comments, oldest first, including older ones made
   on its articles. Each is `{ id, storyId, parentId, username, parentUsername, body, stance, likes, createdAt }`.
 - `POST /stories/:id/comments` with `{ "body": "…", "username": null, "parentId": null, "stance": "agree", "recaptchaToken": "…" }`.
-  Text is screened as everywhere else: 400 `personal_data`, `hate`, `threat` or `too_many_links` (see `docs/forums-api.md`).
+  Text is screened as everywhere else: 400 `personal_data`, `hate` or `threat` (see `docs/forums-api.md`).
   `stance` is optional: `"agree"` ("Concordo") or `"disagree"` ("Discordo"), the
   commenter's own choice. We never guess it. Offer the picker when the story is about a
   proposal (it has `initiatives`); leave it out otherwise.

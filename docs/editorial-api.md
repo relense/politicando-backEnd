@@ -93,7 +93,7 @@ one level of replies, and the same report button and moderation.
 - `POST /editorial/:slug/comments` with `{ "username": "Zé" or null, "body": "…", "parentId": null, "recaptchaToken": "…" }`
   returns 201 with the comment. The errors are the same as on news (`recaptcha_failed`,
   `invalid_parent`, `rate_limited`, `recaptcha_unavailable`, and the refused-text codes in
-  `docs/forums-api.md`: `personal_data`, `hate`, `threat`, `too_many_links`); 404 for unknown
+  `docs/forums-api.md`: `personal_data`, `hate`, `threat`); 404 for unknown
   or unpublished slugs.
 - The only difference from news comments is `postId` (the post's id) instead of `articleId`.
   Reuse the news comment component.
