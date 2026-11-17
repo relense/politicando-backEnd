@@ -7,6 +7,8 @@ import { articles, comments, forumPosts, forumThreads, forumVotes, initiatives, 
 import { ApiError, notFound } from "../../errors.js";
 import { posterId, reporterKey, voterKey } from "../../forums/identity.js";
 import type { RecaptchaVerifier } from "../comments/recaptcha.js";
+import { autoModerate } from "../../moderation/reports.js";
+import { assertPublishable } from "../../moderation/screen.js";
 import { errorSchema } from "../shared.js";
 
 export const GENERAL_BOARD = "geral";
@@ -262,6 +264,7 @@ export const forumRoutes =
       async (request, reply) => {
         const { board } = request.params;
         const { title, body, nickname: name, articleId, initiativeId } = request.body;
+        assertPublishable(title, body, name);
         await checkHuman(request.body.recaptchaToken, request.ip, request.log);
         await assertBoard(board);
         if (articleId) {
@@ -312,6 +315,7 @@ export const forumRoutes =
       async (request, reply) => {
         const threadId = request.params.id;
         const { body, nickname: name, replyTo } = request.body;
+        assertPublishable(body, name);
         await checkHuman(request.body.recaptchaToken, request.ip, request.log);
         const [thread] = await db
           .select({ id: forumThreads.id, lockedAt: forumThreads.lockedAt })
@@ -407,6 +411,7 @@ export const forumRoutes =
           .insert(reports)
           .values({ kind, targetId: id, reason, details: details || null, reporter: reporterKey(forumSecret, request.ip) })
           .onConflictDoNothing();
+        await autoModerate(db, kind, id);
         return reply.status(202).send(null);
       },
     );

@@ -1,8 +1,8 @@
-import { and, asc, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
 import type { Db } from "../../db/client.js";
-import { agendaEvents, articles, comments, deputies, editorialPosts, initiatives, parties, stories, storyVotes } from "../../db/schema.js";
+import { agendaEvents, articles, deputies, editorialPosts, initiatives, parties, stories, storyVotes } from "../../db/schema.js";
 import { ApiError, notFound } from "../../errors.js";
 import { storyVoterKey } from "../../forums/identity.js";
 import { stemsOf } from "../../stories/similarity.js";
@@ -24,7 +24,6 @@ import {
   searchWords,
   visibleArticle,
 } from "../articles/routes.js";
-import { publicCommentColumns, storyCommentScope } from "../comments/routes.js";
 import { errorSchema } from "../shared.js";
 
 /*
@@ -51,6 +50,14 @@ const storyTagSchema = z.object({
   kind: z.enum(["event", "topic"]).describe("event: a specific subject (curated); topic: a broad one"),
 });
 
+const debateCommentSchema = z.object({
+  id: z.number(),
+  username: z.string().nullable(),
+  body: z.string(),
+  likes: z.number(),
+  createdAt: z.string(),
+});
+
 export const storySchema = z.object({
   id: z.number(),
   title: z.string().describe("The headline most like the others (what most outlets said)"),
@@ -72,14 +79,9 @@ export const storySchema = z.object({
     .number()
     .describe("0 to 1: how its Importa marks compare with the stories of the last 24 hours (the share it ties or beats). 0 with no marks"),
   commentCount: z.number(),
-});
-
-const debateCommentSchema = z.object({
-  id: z.number(),
-  username: z.string().nullable(),
-  body: z.string(),
-  likes: z.number(),
-  createdAt: z.string(),
+  debate: z
+    .object({ agree: debateCommentSchema.nullable(), disagree: debateCommentSchema.nullable() })
+    .describe('The most liked comment that agrees, and that disagrees (at least 1 like each). Show the pair ("A favor" / "Contra") only when both exist'),
 });
 
 const storyDetailSchema = storySchema.extend({
@@ -94,9 +96,6 @@ const storyDetailSchema = storySchema.extend({
     })
     .describe('For the "Contexto" box, with its parties ("Partido")'),
   articles: z.array(articleSchema).describe("Every outlet's version, first published first"),
-  debate: z
-    .object({ agree: debateCommentSchema.nullable(), disagree: debateCommentSchema.nullable() })
-    .describe('The most liked comment that agrees, and that disagrees (at least 1 like each). Show the pair only when both exist'),
 });
 
 type Story = z.infer<typeof storySchema>;
@@ -198,11 +197,44 @@ export const storyRoutes =
       return new Map(rows.rows.map((r) => [r.id, r.n]));
     };
 
+    /** Per story, the most liked comment on each side ("A favor" / "Contra"), counting those made on its articles too. */
+    const debates = async (ids: number[]) => {
+      type Side = z.infer<typeof debateCommentSchema>;
+      const result = new Map<number, { agree: Side | null; disagree: Side | null }>();
+      if (ids.length === 0) return result;
+      const list = sql.join(ids.map((id) => sql`${id}`), sql`, `);
+      const rows = await db.execute<{
+        sid: number;
+        stance: "agree" | "disagree";
+        id: number;
+        username: string | null;
+        body: string;
+        likes: number;
+        created_at: string | Date;
+      }>(sql`
+        select distinct on (sid, c.stance) coalesce(c.story_id, a.story_id) as sid, c.stance, c.id, c.username, c.body, c.likes, c.created_at
+        from comments c left join articles a on a.id = c.article_id
+        where c.hidden_at is null and c.stance is not null and c.likes > 0
+          and (c.story_id in (${list}) or (a.hidden_at is null and a.story_id in (${list})))
+        order by sid, c.stance, c.likes desc, c.created_at asc, c.id asc`);
+      for (const r of rows.rows) {
+        const debate = result.get(r.sid) ?? { agree: null, disagree: null };
+        debate[r.stance] = { id: r.id, username: r.username, body: r.body, likes: r.likes, createdAt: new Date(r.created_at).toISOString() };
+        result.set(r.sid, debate);
+      }
+      return result;
+    };
+
     /** Cards for these stories, in the order given, with their articles. */
     const hydrate = async (rows: StatsRow[]) => {
       const ids = rows.map((r) => r.id);
       if (ids.length === 0) return [];
-      const [all, counts, importance] = await Promise.all([selectArticles(db, ids), commentCounts(ids), importanceScale()]);
+      const [all, counts, importance, debateOf] = await Promise.all([
+        selectArticles(db, ids),
+        commentCounts(ids),
+        importanceScale(),
+        debates(ids),
+      ]);
       const byStory = new Map<number, ArticleRow[]>();
       for (const article of all) byStory.set(article.storyId!, [...(byStory.get(article.storyId!) ?? []), article]);
       return rows
@@ -238,6 +270,7 @@ export const storyRoutes =
             importa: r.importa,
             importance: importance(r.importa),
             commentCount: counts.get(r.id) ?? 0,
+            debate: debateOf.get(r.id) ?? { agree: null, disagree: null },
           };
           return { card, articles: list };
         });
@@ -458,21 +491,11 @@ export const storyRoutes =
           select st.*, s.importa, s.tags from ${storyStats} st join stories s on s.id = st.id where st.id = ${id}`);
         const [story] = await hydrate(stats.rows);
         if (!story) throw notFound("Story");
-        const best = async (stance: "agree" | "disagree") => {
-          const [row] = await db
-            .select(publicCommentColumns)
-            .from(comments)
-            .where(and(storyCommentScope(id), isNull(comments.hiddenAt), eq(comments.stance, stance), sql`${comments.likes} > 0`))
-            .orderBy(desc(comments.likes), asc(comments.createdAt))
-            .limit(1);
-          return row ? { id: row.id, username: row.username, body: row.body, likes: row.likes, createdAt: row.createdAt.toISOString() } : null;
-        };
-        const [agree, disagree, context] = await Promise.all([best("agree"), best("disagree"), contextOf(story.card)]);
+        const context = await contextOf(story.card);
         return {
           ...story.card,
           context,
           articles: story.articles.map((a) => ({ ...a, publishedAt: a.publishedAt.toISOString() })),
-          debate: { agree, disagree },
         };
       },
     );

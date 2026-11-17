@@ -6,6 +6,7 @@ import type { Db } from "../../db/client.js";
 import { articles, comments, forumPosts, forumThreads, reports } from "../../db/schema.js";
 import { ApiError, notFound } from "../../errors.js";
 import { IDEA_STATUSES, IDEAS_BOARD } from "../forums/routes.js";
+import { dismissReports, tableOf } from "../../moderation/reports.js";
 import { errorSchema } from "../shared.js";
 
 /* Forum moderation and the reports queue (role moderator). Every action is audited. */
@@ -15,8 +16,6 @@ const errors = { 400: errorSchema, 401: errorSchema, 403: errorSchema, 404: erro
 const kindSchema = z.enum(["thread", "post", "comment", "article"]);
 type Kind = z.infer<typeof kindSchema>;
 
-const tableOf = (kind: Kind) =>
-  kind === "thread" ? forumThreads : kind === "post" ? forumPosts : kind === "article" ? articles : comments;
 
 export const adminForumRoutes =
   (db: Db): FastifyPluginAsyncZod =>
@@ -190,6 +189,7 @@ export const adminForumRoutes =
             .where(eq(articles.id, request.params.id))
             .returning({ id: articles.id });
           if (updated.length === 0) throw notFound("Article");
+          if (name === "unhide") await dismissReports(db, "article", request.params.id, me.id);
           await audit(db, me.id, `article.${name}`, "article", request.params.id);
           return reply.status(204).send(null);
         },
@@ -254,6 +254,7 @@ export const adminForumRoutes =
             .where(eq(table.id, request.params.id))
             .returning({ id: table.id });
           if (updated.length === 0) throw notFound(action.kind === "thread" ? "Thread" : "Post");
+          if (action.name === "unhide") await dismissReports(db, action.kind, request.params.id, me.id);
           await audit(db, me.id, `${action.kind}.${action.name}`, action.kind, request.params.id);
           return reply.status(204).send(null);
         },

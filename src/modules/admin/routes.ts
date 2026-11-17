@@ -14,6 +14,7 @@ import {
 import type { Db } from "../../db/client.js";
 import { admins, auditLog, comments } from "../../db/schema.js";
 import { ApiError, notFound } from "../../errors.js";
+import { dismissReports } from "../../moderation/reports.js";
 import { errorSchema } from "../shared.js";
 
 const roleSchema = z.enum(["author", "moderator", "admin"]);
@@ -288,6 +289,7 @@ export const adminRoutes =
             if (!exists) throw notFound("Comment");
             return reply.status(204).send(null); // Already in that state.
           }
+          if (!hide) await dismissReports(db, "comment", id, me.id);
           await audit(db, me.id, hide ? "comment.hide" : "comment.unhide", "comment", id, null, { reason: request.body?.reason ?? null });
           return reply.status(204).send(null);
         },
