@@ -52,11 +52,13 @@ The very first admin is created on the server: `npm run admin:create -- <email> 
 
 ## Comment moderation (role moderator)
 
-- `GET /admin/comments?status=visible|hidden|all&articleId=&postId=&before=&limit=` (default
+- `GET /admin/comments?status=visible|hidden|all&articleId=&storyId=&postId=&before=&limit=` (default
   `visible`, 50, newest first) returns
-  `{ items: [{ id, articleId, articleTitle, postId, postSlug, postTitle, parentId, username, body, createdAt, hiddenAt }] }`.
-  A comment is on a news article (`articleId`, `articleTitle`) or on one of our editorial
-  posts (`postId`, `postSlug`, `postTitle`); the other side is null. For the next page, pass
+  `{ items: [{ id, articleId, articleTitle, storyId, storyTitle, postId, postSlug, postTitle, parentId, username, body, stance, likes, createdAt, hiddenAt }] }`.
+  A comment is on a news article (`articleId`, `articleTitle`), a story (`storyId`,
+  `storyTitle`; link to `/stories/:id`) or one of our editorial posts (`postId`, `postSlug`,
+  `postTitle`); the others are null. `stance` is the side the commenter picked, if any.
+  In the reports queue, a reported comment's `target` also has `storyId`. For the next page, pass
   `before=<last id>`.
 - `POST /admin/comments/:id/hide` with an optional `{ "reason": "Spam" }` returns 204. The
   comment disappears from the public comments (news or editorial). Its replies stay; show them as replies

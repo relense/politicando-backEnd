@@ -49,6 +49,7 @@
     "ingest": "tsx --env-file=.env src/jobs/ingest.ts",
     "parliament:sync": "tsx --env-file=.env src/jobs/syncParliament.ts",
     "agenda:sync": "tsx --env-file=.env src/jobs/syncAgenda.ts",
+    "stories:assign": "tsx --env-file=.env src/jobs/assignStories.ts",
     "parliament:history": "tsx --env-file=.env src/jobs/importPastLegislatures.ts",
     "parliament:link-news": "tsx --env-file=.env src/jobs/linkNews.ts",
     "government:sync": "tsx --env-file=.env src/jobs/syncGovernment.ts",

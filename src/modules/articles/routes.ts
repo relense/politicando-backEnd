@@ -25,8 +25,8 @@ const decodeCursor = (value: string): Cursor => {
 };
 
 const offsetSchema = z.object({ offset: z.number().int().min(0).max(100_000) });
-const encodeOffset = (offset: number) => Buffer.from(JSON.stringify({ offset })).toString("base64url");
-const decodeOffset = (value: string) => {
+export const encodeOffset = (offset: number) => Buffer.from(JSON.stringify({ offset })).toString("base64url");
+export const decodeOffset = (value: string) => {
   try {
     return offsetSchema.parse(JSON.parse(Buffer.from(value, "base64url").toString())).offset;
   } catch {
@@ -36,32 +36,37 @@ const decodeOffset = (value: string) => {
 
 /** Lowercase, without accents: "Habitação" → "habitacao". The SQL below folds the stored text the same way. */
 export const foldText = (text: string) => text.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
-const searchWords = (q: string) => [...new Set(foldText(q).split(/[^\p{L}\p{N}]+/u).filter(Boolean))].slice(0, 10);
-const escapeLike = (word: string) => word.replace(/[\\%_]/g, (c) => `\\${c}`);
+export const searchWords = (q: string) => [...new Set(foldText(q).split(/[^\p{L}\p{N}]+/u).filter(Boolean))].slice(0, 10);
+export const escapeLike = (word: string) => word.replace(/[\\%_]/g, (c) => `\\${c}`);
 // translate() instead of the unaccent extension: no extension to install, and it covers Portuguese.
-const FOLDED_TEXT = sql`translate(lower(articles.title || ' ' || articles.excerpt),
+export const FOLDED_TEXT = sql`translate(lower(articles.title || ' ' || articles.excerpt),
   'áàâãäåéèêëíìîïóòôõöúùûüçñý', 'aaaaaaeeeeiiiiooooouuuucny')`;
 
-const articlePartySchema = z.object({
+export const articlePartySchema = z.object({
   slug: z.string(),
   acronym: z.string(),
   name: z.string(),
 });
 
-const articleDeputySchema = z.object({
+export const articleDeputySchema = z.object({
   id: z.number(),
   name: z.string(),
   party: z.string().nullable().describe("Party slug"),
 });
 
-const articleInitiativeSchema = z.object({
+export const articleInitiativeSchema = z.object({
   id: z.number(),
   type: z.string(),
   number: z.string(),
   title: z.string(),
+  status: z.enum(["approved", "rejected", "in_progress", "withdrawn"]),
+  lastVote: z
+    .object({ date: z.string(), phase: z.string(), result: z.string(), unanimous: z.boolean() })
+    .nullable()
+    .describe('Its latest vote in parliament, if any: show "Ver como votou cada partido" only then'),
 });
 
-const articleGovernmentSchema = z.object({ id: z.string(), name: z.string() });
+export const articleGovernmentSchema = z.object({ id: z.string(), name: z.string() });
 
 export const articleSchema = z.object({
   id: z.number(),
@@ -71,6 +76,7 @@ export const articleSchema = z.object({
   source: z.string(),
   imageUrl: z.string().nullable(),
   publishedAt: z.string(),
+  storyId: z.number().nullable().describe("The story it belongs to, with the other outlets' versions (null for a few minutes after it's found)"),
   commentCount: z.number(),
   upvotes: z.number(),
   downvotes: z.number(),
@@ -126,7 +132,11 @@ const presidentSql = sql<{ id: string; name: string } | null>`(
 
 const initiativesSql = sql<z.infer<typeof articleInitiativeSchema>[]>`coalesce((
   select json_agg(
-    json_build_object('id', i.id, 'type', i.type, 'number', i.number, 'title', i.title)
+    json_build_object('id', i.id, 'type', i.type, 'number', i.number, 'title', i.title, 'status', i.status,
+      'lastVote', (
+        select json_build_object('date', v->>'date', 'phase', v->>'phase', 'result', v->>'result', 'unanimous', (v->>'unanimous')::boolean)
+        from jsonb_array_elements(i.votes) v order by v->>'date' desc limit 1
+      ))
     order by ai.score desc nulls first, i.id
   )
   from article_initiatives ai
@@ -142,6 +152,7 @@ export const articleColumns = {
   source: articles.source,
   imageUrl: articles.imageUrl,
   publishedAt: articles.publishedAt,
+  storyId: articles.storyId,
   commentCount: commentCountSql,
   upvotes: articles.upvotes,
   downvotes: articles.downvotes,
@@ -157,7 +168,7 @@ const controversySql = sql`power((articles.upvotes + articles.downvotes)::float8
   least(articles.upvotes, articles.downvotes)::float8 / greatest(articles.upvotes, articles.downvotes))`;
 
 /** Midnight in Lisbon, `days` days before today, as a timestamp. */
-const lisbonMidnight = (days: number) =>
+export const lisbonMidnight = (days: number) =>
   sql`((date_trunc('day', now() at time zone 'Europe/Lisbon') - make_interval(days => ${days})) at time zone 'Europe/Lisbon')`;
 
 /** Published in the period, in Lisbon days: today since midnight, yesterday whole, week and month today included. */
@@ -172,7 +183,7 @@ const PERIODS = {
 export const visibleArticle = isNull(articles.hiddenAt);
 
 /** "1,2,3" → [1, 2, 3]: article ids, no repeats, at most `max`. */
-const idList = (max: number) =>
+export const idList = (max: number) =>
   z
     .string()
     .max(max * 11)
@@ -180,7 +191,7 @@ const idList = (max: number) =>
     .pipe(z.array(z.string().regex(/^\d{1,10}$/).transform(Number).pipe(z.number().int().positive().max(2_147_483_647))).min(1).max(max));
 
 /** "a,b,c" → ["a", "b", "c"]: trimmed, no empties or repeats, at most `max` values. */
-const commaList = (max: number) =>
+export const commaList = (max: number) =>
   z
     .string()
     .max(2_000)

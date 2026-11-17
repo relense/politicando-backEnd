@@ -47,11 +47,38 @@ export const articles = pgTable(
     downvotes: integer().notNull().default(0),
     /** Hidden by a moderator (duplicate, not about politics…): left out everywhere readers look. */
     hiddenAt: timestamp("hidden_at", { withTimezone: true }),
+    /** The story it tells, with other outlets' versions (src/stories). Null until grouped. */
+    storyId: integer("story_id").references((): AnyPgColumn => stories.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
     index("articles_feed_idx").on(table.publishedAt.desc(), table.id.desc()),
+    index("articles_story_idx").on(table.storyId),
   ],
+);
+
+/**
+ * One story told by one or more outlets. What a card shows (title, outlets, dates) comes from
+ * its visible articles; only readers' "Importa" marks are kept here.
+ */
+export const stories = pgTable("stories", {
+  id: integer().primaryKey().generatedAlwaysAsIdentity(),
+  /** Readers who marked it as mattering, kept in step with story_votes. */
+  importa: integer().notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** One "Importa" per reader per story; `voter` is a keyed hash of the IP, never the IP. */
+export const storyVotes = pgTable(
+  "story_votes",
+  {
+    storyId: integer("story_id")
+      .notNull()
+      .references(() => stories.id, { onDelete: "cascade" }),
+    voter: text().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.storyId, table.voter] })],
 );
 
 /** One vote (+1 or -1) per reader per article; `voter` is a keyed hash of the IP, never the IP. */
@@ -93,14 +120,19 @@ export const comments = pgTable(
   "comments",
   {
     id: integer().primaryKey().generatedAlwaysAsIdentity(),
-    /** What it's on: a news article or one of our editorial posts (exactly one of the two). */
+    /** What it's on: a news article, a story or one of our editorial posts (exactly one). */
     articleId: integer("article_id").references(() => articles.id, { onDelete: "cascade" }),
+    storyId: integer("story_id").references((): AnyPgColumn => stories.id, { onDelete: "cascade" }),
     editorialPostId: integer("editorial_post_id").references((): AnyPgColumn => editorialPosts.id, { onDelete: "cascade" }),
     parentId: integer("parent_id").references((): AnyPgColumn => comments.id, {
       onDelete: "cascade",
     }),
     username: text(),
     body: text().notNull(),
+    /** The commenter's own side, if they picked one: "Concordo" or "Discordo". */
+    stance: text().$type<"agree" | "disagree">(),
+    /** Readers who liked it, kept in step with comment_likes. */
+    likes: integer().notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .default(sql`now()`),
@@ -110,9 +142,24 @@ export const comments = pgTable(
   (table) => [
     index("comments_article_idx").on(table.articleId, table.createdAt),
     index("comments_editorial_idx").on(table.editorialPostId, table.createdAt),
+    index("comments_story_idx").on(table.storyId, table.createdAt),
     index("comments_parent_idx").on(table.parentId),
-    check("comments_one_target", sql`num_nonnulls(${table.articleId}, ${table.editorialPostId}) = 1`),
+    check("comments_one_target", sql`num_nonnulls(${table.articleId}, ${table.storyId}, ${table.editorialPostId}) = 1`),
+    check("comments_stance_check", sql`${table.stance} in ('agree', 'disagree')`),
   ],
+);
+
+/** One like per reader per comment; `voter` is a keyed hash of the IP, never the IP. */
+export const commentLikes = pgTable(
+  "comment_likes",
+  {
+    commentId: integer("comment_id")
+      .notNull()
+      .references(() => comments.id, { onDelete: "cascade" }),
+    voter: text().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.commentId, table.voter] })],
 );
 
 /** Articles that matched no party, kept so later runs don't score them again. */

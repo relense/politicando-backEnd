@@ -4,6 +4,7 @@ import { purgeFeedback } from "../feedback/purge.js";
 import { ingest, refreshGenericHeadlines } from "../ingestion/ingest.js";
 import { createPoliteClient } from "../ingestion/politeClient.js";
 import { NEWS_SOURCES } from "../ingestion/sources.js";
+import { assignStories } from "../stories/assign.js";
 
 const config = loadIngestConfig();
 const { db, pool } = createDb(config.DATABASE_URL);
@@ -19,6 +20,8 @@ try {
   });
   for (const source of stats) console.log(JSON.stringify(source));
   console.log(JSON.stringify({ refreshedHeadlines: await refreshGenericHeadlines({ db, client }) }));
+  // After the headlines are final: every new article joins a story, or starts one.
+  console.log(JSON.stringify({ stories: await assignStories(db) }));
   // Not news, but this job runs every hour: old feedback screenshots go here too.
   await purgeFeedback(db);
 

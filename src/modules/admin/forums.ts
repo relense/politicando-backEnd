@@ -25,7 +25,10 @@ export const adminForumRoutes =
 
     /** What a report points at, for the moderator to judge without leaving the queue. */
     const targets = async (kind: Kind, ids: number[]) => {
-      const map = new Map<number, { text: string; hidden: boolean; threadId: number | null; articleId: number | null; postId: number | null }>();
+      const map = new Map<
+        number,
+        { text: string; hidden: boolean; threadId: number | null; articleId: number | null; postId: number | null; storyId?: number | null }
+      >();
       if (ids.length === 0) return map;
       if (kind === "thread") {
         const rows = await db
@@ -49,10 +52,15 @@ export const adminForumRoutes =
         }
       } else {
         const rows = await db
-          .select({ id: comments.id, body: comments.body, hiddenAt: comments.hiddenAt, articleId: comments.articleId, postId: comments.editorialPostId })
+          .select({
+            id: comments.id, body: comments.body, hiddenAt: comments.hiddenAt, articleId: comments.articleId, postId: comments.editorialPostId,
+            storyId: comments.storyId,
+          })
           .from(comments)
           .where(inArray(comments.id, ids));
-        for (const r of rows) map.set(r.id, { text: r.body, hidden: r.hiddenAt !== null, threadId: null, articleId: r.articleId, postId: r.postId });
+        for (const r of rows) {
+          map.set(r.id, { text: r.body, hidden: r.hiddenAt !== null, threadId: null, articleId: r.articleId, postId: r.postId, storyId: r.storyId });
+        }
       }
       return map;
     };
@@ -85,6 +93,7 @@ export const adminForumRoutes =
                       threadId: z.number().nullable(),
                       articleId: z.number().nullable(),
                       postId: z.number().nullable().describe("An editorial post's id, for comments on our posts"),
+                      storyId: z.number().nullable().optional().describe("A story's id, for comments on stories"),
                     })
                     .nullable()
                     .describe("null if it no longer exists"),

@@ -2,8 +2,14 @@
 
 Base path: `/api/v2`. Article items look the same everywhere (`id`, `title`, `excerpt`, `url`,
 `source`, `imageUrl`, `publishedAt`, `commentCount`, `upvotes`, `downvotes`, `parties`, `deputies`, `government`,
-`president`, `initiatives`). That includes the article lists in `/deputies/:id`, `/initiatives/:id`,
+`president`, `initiatives`, `storyId`). That includes the article lists in `/deputies/:id`, `/initiatives/:id`,
 `/government/...` and `/president`.
+
+- `storyId`: the story the article belongs to, with the other outlets' versions. **The feed
+  should use stories** (`docs/stories-api.md`); articles remain for search and for the news
+  on deputy, initiative, Government and President pages.
+- Each item in `initiatives` also has `status` and `lastVote` (`{ date, phase, result, unanimous }`
+  or `null`), for the "Ver como votou cada partido" chip.
 
 ## GET /articles
 

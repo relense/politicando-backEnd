@@ -28,6 +28,7 @@ import { feedbackRoutes } from "./modules/feedback/routes.js";
 import { seoRoutes } from "./modules/seo/routes.js";
 import { placeRoutes } from "./modules/places/routes.js";
 import { articleRoutes } from "./modules/articles/routes.js";
+import { storyRoutes } from "./modules/stories/routes.js";
 import type { RecaptchaVerifier } from "./modules/comments/recaptcha.js";
 import { commentRoutes } from "./modules/comments/routes.js";
 import { type NewsletterSettings, newsletterRoutes } from "./modules/newsletter/routes.js";
@@ -180,6 +181,7 @@ export const buildApp = async ({
     async (api) => {
       await api.register(partyRoutes(db));
       await api.register(articleRoutes(db, { voteSecret: forumSecret }));
+      await api.register(storyRoutes(db, { voteSecret: forumSecret }));
       await api.register(parliamentRoutes(db));
       await api.register(governmentRoutes(db));
       await api.register(presidencyRoutes(db));
@@ -203,7 +205,7 @@ export const buildApp = async ({
         newsletterRoutes({ db, verifyRecaptcha, createLimitPerMinute: commentLimitPerMinute, settings: newsletter }),
       );
       await api.register(
-        commentRoutes({ db, verifyRecaptcha, createLimitPerMinute: commentLimitPerMinute }),
+        commentRoutes({ db, verifyRecaptcha, createLimitPerMinute: commentLimitPerMinute, voteSecret: forumSecret }),
       );
     },
     { prefix: "/api/v2" },

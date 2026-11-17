@@ -510,6 +510,7 @@ describe("platform", () => {
       "/api/v2/cases",
       "/api/v2/cases/glossary",
       "/api/v2/cases/{id}",
+      "/api/v2/comments/{id}/like",
       "/api/v2/contracts",
       "/api/v2/contracts/parties/{nif}",
       "/api/v2/contracts/procedures",
@@ -560,7 +561,12 @@ describe("platform", () => {
       "/api/v2/reports",
       "/api/v2/sitemap",
       "/api/v2/sitemap/{kind}",
+      "/api/v2/stories",
+      "/api/v2/stories/{id}",
+      "/api/v2/stories/{id}/comments",
+      "/api/v2/stories/{id}/vote",
       "/api/v2/timeline",
+      "/api/v2/today",
     ]);
   });
 });
