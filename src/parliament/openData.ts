@@ -65,10 +65,18 @@ export const createOpenDataClient = ({
   legislature,
   fetch: fetchImpl = fetch,
   timeoutMs = 300_000,
+  retryDelaysMs = [120_000, 300_000, 600_000],
+  log = (message: string) => console.warn(message),
 }: {
   legislature: string;
   fetch?: typeof fetch;
   timeoutMs?: number;
+  /**
+   * Waits before trying again when a dataset's file can't be found or a page fails. The
+   * parliament regenerates its files at night, and for a while a folder can list no file.
+   */
+  retryDelaysMs?: number[];
+  log?: (message: string) => void;
 }): OpenDataLoader => {
   const request = async (url: string) => {
     const response = await fetchImpl(url, {
@@ -80,13 +88,25 @@ export const createOpenDataClient = ({
   };
   const get = async (url: string) => (await request(url)).text();
 
-  const fileUrl = async (dataset: Dataset) => {
+  const findFile = async (dataset: Dataset) => {
     const page = `${SITE}/Cidadania/Paginas/${DATASETS[dataset]}.aspx`;
     const folder = findFolderLink(await get(page), legislature);
     if (!folder) throw new Error(`No ${legislature} folder on ${page}`);
     const file = findJsonLink(await get(folder));
     if (!file) throw new Error(`No JSON file in the ${legislature} folder of ${page}`);
     return file;
+  };
+  const fileUrl = async (dataset: Dataset) => {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await findFile(dataset);
+      } catch (error) {
+        const wait = retryDelaysMs[attempt];
+        if (wait === undefined) throw error;
+        log(`${error instanceof Error ? error.message : String(error)}; trying again in ${Math.round(wait / 1000)} s`);
+        await new Promise((resolve) => setTimeout(resolve, wait));
+      }
+    }
   };
 
   return {
