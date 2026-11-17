@@ -2,10 +2,11 @@ import { and, asc, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm"
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
 import type { Db } from "../../db/client.js";
-import { articles, comments, deputies, initiatives, parties, stories, storyVotes } from "../../db/schema.js";
+import { agendaEvents, articles, comments, deputies, editorialPosts, initiatives, parties, stories, storyVotes } from "../../db/schema.js";
 import { ApiError, notFound } from "../../errors.js";
 import { storyVoterKey } from "../../forums/identity.js";
 import { stemsOf } from "../../stories/similarity.js";
+import { editorialTagWords, textHasTag, type StoryTag } from "../../stories/tags.js";
 import {
   articleColumns,
   articleDeputySchema,
@@ -43,9 +44,18 @@ const storySourceSchema = z.object({
   publishedAt: z.string(),
 });
 
+const storyTagSchema = z.object({
+  slug: z.string(),
+  label: z.string().describe('Short, for a hashtag: "OE2027", "Habitação"'),
+  name: z.string().describe('In full: "Orçamento do Estado para 2027"'),
+  kind: z.enum(["event", "topic"]).describe("event: a specific subject (curated); topic: a broad one"),
+});
+
 export const storySchema = z.object({
   id: z.number(),
   title: z.string().describe("The headline most like the others (what most outlets said)"),
+  excerpt: z.string().describe("The excerpt of the version whose headline is the title"),
+  tags: z.array(storyTagSchema).describe("Events first, then at most 2 topics"),
   imageUrl: z.string().nullable(),
   firstPublishedAt: z.string(),
   lastPublishedAt: z.string().describe("The latest version: newest sorts by it"),
@@ -73,6 +83,16 @@ const debateCommentSchema = z.object({
 });
 
 const storyDetailSchema = storySchema.extend({
+  context: z
+    .object({
+      explainers: z
+        .array(z.object({ slug: z.string(), title: z.string(), kind: z.string(), publishedAt: z.string().nullable() }))
+        .describe('Our own posts about its tags ("Explica"), newest first, up to 3'),
+      agenda: z
+        .array(z.object({ id: z.string(), title: z.string(), kind: z.string(), startsAt: z.string(), allDay: z.boolean() }))
+        .describe("Coming events (next 14 days), up to 3: about its tags first, then of its main parties; soonest first within each"),
+    })
+    .describe('For the "Contexto" box, with its parties ("Partido")'),
   articles: z.array(articleSchema).describe("Every outlet's version, first published first"),
   debate: z
     .object({ agree: debateCommentSchema.nullable(), disagree: debateCommentSchema.nullable() })
@@ -99,6 +119,7 @@ const storyStats = sql`(
 
 interface StatsRow extends Record<string, unknown> {
   id: number;
+  tags: StoryTag[] | null;
   article_count: number;
   source_count: number;
   first_at: Date | string;
@@ -126,7 +147,7 @@ const byFrequency = <T>(lists: T[][], key: (item: T) => string | number) => {
  * one can be written before the news happened: "Ventura vai a votos" before "Ventura
  * reeleito"). Ties go to the later headline.
  */
-const representativeTitle = (titles: string[]) => {
+const representative = (titles: string[]) => {
   const stems = titles.map((t) => stemsOf(t));
   let best = 0;
   let bestScore = -1;
@@ -142,8 +163,12 @@ const representativeTitle = (titles: string[]) => {
       best = i;
     }
   });
-  return titles[best]!;
+  return best;
 };
+
+/** Visible comments on a story, counting those made on its articles (for sort=comments). */
+const storyCommentsSql = sql`(select count(*)::int from comments c left join articles ca on ca.id = c.article_id
+  where c.hidden_at is null and (c.story_id = st.id or (ca.story_id = st.id and ca.hidden_at is null)))`;
 
 /** "Hoje em 5": outlets that told it, plus half a point per Importa mark (up to 5 points). */
 const TODAY_SCORE = sql`(st.source_count + least(s.importa, 10) / 2.0)`;
@@ -187,9 +212,12 @@ export const storyRoutes =
           const outlets = new Map<string, ArticleRow>();
           for (const a of list) if (!outlets.has(a.source)) outlets.set(a.source, a);
           const presidents = byFrequency(list.map((a) => (a.president ? [a.president] : [])), (p) => p.id);
+          const lead = list[representative(list.map((a) => a.title))]!;
           const card: Story = {
             id: r.id,
-            title: representativeTitle(list.map((a) => a.title)),
+            title: lead.title,
+            excerpt: lead.excerpt,
+            tags: r.tags ?? [],
             imageUrl: list.find((a) => a.imageUrl)?.imageUrl ?? null,
             firstPublishedAt: new Date(r.first_at).toISOString(),
             lastPublishedAt: new Date(r.last_at).toISOString(),
@@ -233,10 +261,11 @@ export const storyRoutes =
             exclude: idList(500).optional().describe("Leave these stories out (hidden ones)"),
             excludeSource: commaList(30).optional().describe("Leave out stories told only by these outlets"),
             excludeParty: commaList(30).optional().describe("Leave out stories about any of these parties. Unknown slugs are ignored"),
+            tag: z.string().regex(/^[a-z0-9-]{1,40}$/).optional().describe('A tag slug from the story\'s tags, e.g. "oe2027" or "habitacao"'),
             sort: z
-              .enum(["newest", "top", "coverage"])
+              .enum(["newest", "top", "coverage", "comments"])
               .default("newest")
-              .describe("newest: latest version first. top: most Importa marks. coverage: most outlets. Ties: newest"),
+              .describe("newest: latest version first. top: most Importa marks. coverage: most outlets. comments: most comments, only stories with some. Ties: newest"),
             period: z
               .enum(["today", "yesterday", "week", "month"])
               .optional()
@@ -301,6 +330,8 @@ export const storyRoutes =
             where x.story_id = st.id and x.hidden_at is null and p.slug in (${sql.join(query.excludeParty.map((s) => sql`${s}`), sql`, `)}))`);
         }
         if (query.since !== undefined) conditions.push(sql`st.last_at >= now() - make_interval(hours => ${query.since})`);
+        if (query.tag) conditions.push(sql`s.tags @> ${JSON.stringify([{ slug: query.tag }])}::jsonb`);
+        if (query.sort === "comments") conditions.push(sql`${storyCommentsSql} > 0`);
         if (query.period === "today") conditions.push(sql`st.last_at >= ${lisbonMidnight(0)}`);
         if (query.period === "week") conditions.push(sql`st.last_at >= ${lisbonMidnight(6)}`);
         if (query.period === "month") conditions.push(sql`st.last_at >= ${lisbonMidnight(29)}`);
@@ -315,12 +346,13 @@ export const storyRoutes =
           newest: sql`st.last_at desc, st.id desc`,
           top: sql`s.importa desc, st.last_at desc, st.id desc`,
           coverage: sql`st.source_count desc, st.article_count desc, st.last_at desc, st.id desc`,
+          comments: sql`${storyCommentsSql} desc, st.last_at desc, st.id desc`,
         }[query.sort];
         const [page, total] = await Promise.all([
           db.execute<StatsRow>(sql`
-            select st.*, s.importa from ${storyStats} st join stories s on s.id = st.id
+            select st.*, s.importa, s.tags from ${storyStats} st join stories s on s.id = st.id
             where ${where} order by ${order} limit ${query.limit + 1} offset ${offset}`),
-          db.execute<{ n: number }>(sql`select count(*)::int as n from ${storyStats} st where ${where}`),
+          db.execute<{ n: number }>(sql`select count(*)::int as n from ${storyStats} st join stories s on s.id = st.id where ${where}`),
         ]);
         const rows = page.rows.slice(0, query.limit);
         return {
@@ -328,6 +360,85 @@ export const storyRoutes =
           nextCursor: page.rows.length > query.limit ? encodeOffset(offset + query.limit) : null,
           total: total.rows[0]?.n ?? 0,
         };
+      },
+    );
+
+    /** "Contexto": our posts about the story's tags, and coming agenda events about its tags or main parties. */
+    const contextOf = async (story: Story) => {
+      const fold = (text: string) => text.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().trim();
+      const words = new Set(story.tags.flatMap(editorialTagWords));
+      const posts =
+        words.size === 0
+          ? []
+          : await db
+              .select({ slug: editorialPosts.slug, title: editorialPosts.title, kind: editorialPosts.kind, tags: editorialPosts.tags, publishedAt: editorialPosts.publishedAt })
+              .from(editorialPosts)
+              .where(and(eq(editorialPosts.status, "published"), sql`cardinality(${editorialPosts.tags}) > 0`))
+              .orderBy(desc(editorialPosts.publishedAt))
+              .limit(200);
+      const explainers = posts
+        .filter((p) => p.tags.some((t) => words.has(fold(t))))
+        .slice(0, 3)
+        .map((p) => ({ slug: p.slug, title: p.title, kind: p.kind, publishedAt: p.publishedAt?.toISOString() ?? null }));
+
+      const mainParties = new Set(story.parties.slice(0, 2).map((p) => p.slug));
+      const events = await db
+        .select({
+          id: agendaEvents.id, title: agendaEvents.title, summary: agendaEvents.summary, kind: agendaEvents.kind,
+          startsAt: agendaEvents.startsAt, allDay: agendaEvents.allDay, partySlugs: agendaEvents.partySlugs,
+        })
+        .from(agendaEvents)
+        .where(
+          and(
+            eq(agendaEvents.hidden, false),
+            eq(agendaEvents.status, "scheduled"),
+            sql`${agendaEvents.startsAt} >= now() and ${agendaEvents.startsAt} < now() + interval '14 days'`,
+          ),
+        )
+        .orderBy(asc(agendaEvents.startsAt))
+        .limit(300);
+      // Events about the story's subject first, then those of its main parties; soonest first within each.
+      const aboutSubject = (e: (typeof events)[number]) => story.tags.some((t) => textHasTag(`${e.title} ${e.summary ?? ""}`, t));
+      const agenda = [...events.filter(aboutSubject), ...events.filter((e) => !aboutSubject(e) && e.partySlugs.some((p) => mainParties.has(p)))]
+        .slice(0, 3)
+        .map((e) => ({ id: e.id, title: e.title, kind: e.kind, startsAt: e.startsAt.toISOString(), allDay: e.allDay }));
+      return { explainers, agenda };
+    };
+
+    app.get(
+      "/stories/tags",
+      {
+        schema: {
+          tags: ["stories"],
+          summary: '"Em debate": the tags of recent stories, most commented first (#OE2027 · 214 comentários)',
+          querystring: z.object({
+            days: z.coerce.number().int().min(1).max(30).default(7).describe("Stories with a version in the last N Lisbon days, today included"),
+            kind: z.enum(["event", "topic"]).optional(),
+            limit: z.coerce.number().int().min(1).max(20).default(8),
+          }),
+          response: {
+            200: z.object({
+              items: z.array(storyTagSchema.extend({ stories: z.number(), comments: z.number(), importa: z.number() })),
+            }),
+            400: errorSchema,
+          },
+        },
+      },
+      async (request) => {
+        const { days, kind, limit } = request.query;
+        const rows = await db.execute<{ slug: string; label: string; name: string; kind: "event" | "topic"; stories: number; comments: number; importa: number }>(sql`
+          select t->>'slug' as slug, t->>'label' as label, t->>'name' as name, t->>'kind' as kind,
+            count(*)::int as stories, sum(x.comments)::int as comments, sum(x.importa)::int as importa
+          from (
+            select s.tags, s.importa, ${storyCommentsSql} as comments
+            from ${storyStats} st join stories s on s.id = st.id
+            where st.last_at >= ${lisbonMidnight(days - 1)} and s.tags is not null
+          ) x, jsonb_array_elements(x.tags) t
+          where ${kind ? sql`t->>'kind' = ${kind}` : sql`true`}
+          group by 1, 2, 3, 4
+          order by comments desc, stories desc, slug
+          limit ${limit}`);
+        return { items: rows.rows };
       },
     );
 
@@ -344,7 +455,7 @@ export const storyRoutes =
       async (request) => {
         const id = request.params.id;
         const stats = await db.execute<StatsRow>(sql`
-          select st.*, s.importa from ${storyStats} st join stories s on s.id = st.id where st.id = ${id}`);
+          select st.*, s.importa, s.tags from ${storyStats} st join stories s on s.id = st.id where st.id = ${id}`);
         const [story] = await hydrate(stats.rows);
         if (!story) throw notFound("Story");
         const best = async (stance: "agree" | "disagree") => {
@@ -356,9 +467,10 @@ export const storyRoutes =
             .limit(1);
           return row ? { id: row.id, username: row.username, body: row.body, likes: row.likes, createdAt: row.createdAt.toISOString() } : null;
         };
-        const [agree, disagree] = await Promise.all([best("agree"), best("disagree")]);
+        const [agree, disagree, context] = await Promise.all([best("agree"), best("disagree"), contextOf(story.card)]);
         return {
           ...story.card,
+          context,
           articles: story.articles.map((a) => ({ ...a, publishedAt: a.publishedAt.toISOString() })),
           debate: { agree, disagree },
         };
@@ -420,7 +532,7 @@ export const storyRoutes =
       async (request) => {
         const since = new Date(Date.now() - 24 * 3_600_000);
         const rows = await db.execute<StatsRow>(sql`
-          select st.*, s.importa from ${storyStats} st join stories s on s.id = st.id
+          select st.*, s.importa, s.tags from ${storyStats} st join stories s on s.id = st.id
           where st.last_at >= ${since.toISOString()}::timestamptz
           order by ${TODAY_SCORE} desc, st.last_at desc, st.id desc
           limit ${request.query.limit}`);

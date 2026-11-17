@@ -564,6 +564,7 @@ describe("platform", () => {
       "/api/v2/sitemap",
       "/api/v2/sitemap/{kind}",
       "/api/v2/stories",
+      "/api/v2/stories/tags",
       "/api/v2/stories/{id}",
       "/api/v2/stories/{id}/comments",
       "/api/v2/stories/{id}/vote",

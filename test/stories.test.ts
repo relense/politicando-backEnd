@@ -1,9 +1,10 @@
 import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { buildApp } from "../src/app.js";
-import { articleInitiatives, articles, comments, initiatives, stories } from "../src/db/schema.js";
+import { agendaEvents, articleInitiatives, articles, comments, editorialPosts, initiatives, stories } from "../src/db/schema.js";
 import { assignStories } from "../src/stories/assign.js";
 import { rarity, sameStory, termsOf, titlePartiesOf } from "../src/stories/similarity.js";
+import { storyTagsOf } from "../src/stories/tags.js";
 import { createTestDb, insertArticle, resetDb } from "./helpers.js";
 
 const { db, pool } = createTestDb();
@@ -72,7 +73,7 @@ describe("assignStories", () => {
     const b = await article("André Ventura reeleito presidente do Chega com 98% dos votos", "O líder do Chega foi reeleito na convenção de Viseu.", "dn.pt", 4);
     const c = await article("Chega: André Ventura reeleito presidente com 98% dos votos", "Ventura obteve 98% na convenção em Viseu.", "expresso.pt", 3);
     const other = await article("Bombeiros combatem incêndio em Odemira", "As chamas lavram desde a madrugada em zona de mato.", "tsf.pt", 3);
-    expect(await assignStories(db)).toEqual({ assigned: 50, created: 48 });
+    expect(await assignStories(db)).toMatchObject({ assigned: 50, created: 48 });
     const story = await storyOf(a.id);
     expect(await storyOf(b.id)).toBe(story);
     expect(await storyOf(c.id)).toBe(story);
@@ -80,9 +81,9 @@ describe("assignStories", () => {
 
     // A later version joins the story; running again with nothing new does nothing.
     const d = await article("André Ventura reeleito presidente do Chega", "A convenção de Viseu deu 98% dos votos a Ventura.", "jn.pt", 1);
-    expect(await assignStories(db)).toEqual({ assigned: 1, created: 0 });
+    expect(await assignStories(db)).toMatchObject({ assigned: 1, created: 0, tagged: 1 });
     expect(await storyOf(d.id)).toBe(story);
-    expect(await assignStories(db)).toEqual({ assigned: 0, created: 0 });
+    expect(await assignStories(db)).toEqual({ assigned: 0, created: 0, tagged: 0 });
   });
 
   it("doesn't join news days apart", async () => {
@@ -256,5 +257,85 @@ describe("articles link to their story and their initiatives' votes", () => {
     });
     expect((await call("GET", `/stories/${ventura}`)).body.initiatives).toHaveLength(1);
     expect(await db.select({ n: sql<number>`count(*)::int` }).from(stories)).toEqual([{ n: 48 }]);
+  });
+});
+
+describe("tags, Em debate and context", () => {
+  it("tags events named in a headline, and topics most versions share", () => {
+    const tags = storyTagsOf([
+      { title: "OE2027: PS garante fim da taxa no crédito à habitação", excerpt: "Proposta de alteração ao orçamento." },
+      { title: "PS quer acabar com comissão no crédito à habitação", excerpt: "Para o Orçamento do Estado para 2027." },
+      { title: "Socialistas e a comissão de amortização", excerpt: "Habitação no centro da discussão." },
+    ]);
+    expect(tags).toEqual([
+      { slug: "oe2027", label: "OE2027", name: "Orçamento do Estado para 2027", kind: "event" },
+      { slug: "habitacao", label: "Habitação", name: "Habitação e urbanismo", kind: "topic" },
+    ]);
+    // A topic one version in three mentions isn't enough.
+    expect(storyTagsOf([
+      { title: "Ventura reeleito", excerpt: "Fala de habitação." },
+      { title: "Ventura reeleito no Chega", excerpt: "Convenção." },
+      { title: "Chega reelege Ventura", excerpt: "Viseu." },
+    ])).toEqual([]);
+  });
+
+  /** A story about the budget and housing, with 3 versions, and the fire story. */
+  const budgetStory = async () => {
+    await background();
+    const a = await article("OE2027: PS garante fim da comissão no crédito à habitação", "Proposta de alteração ao Orçamento do Estado para 2027 elimina comissão de reembolso antecipado.", "publico.pt", 5, ["ps"]);
+    await article("OE2027: PS garante fim da comissão no crédito à habitação", "Os socialistas vão eliminar a comissão de reembolso antecipado no crédito à habitação.", "eco.sapo.pt", 4, ["ps"]);
+    await article("PS garante fim da comissão de reembolso antecipado no crédito à habitação", "No Orçamento do Estado para 2027, a comissão de reembolso antecipado acaba.", "dn.pt", 3, ["ps"]);
+    const o = await article("Bombeiros combatem incêndio em Odemira", "As chamas lavram desde a madrugada em zona de mato.", "tsf.pt", 2);
+    await assignStories(db);
+    return { budget: (await storyOf(a.id))!, fire: (await storyOf(o.id))! };
+  };
+
+  it("gives cards an excerpt and tags, filters by tag and sorts by comments", async () => {
+    const { budget, fire } = await budgetStory();
+    const card = (await call("GET", `/stories?ids=${budget}`)).body.items[0];
+    expect(card.excerpt.length).toBeGreaterThan(10);
+    expect(card.tags.map((t: { slug: string }) => t.slug)).toEqual(["oe2027", "habitacao"]);
+    expect((await call("GET", "/stories?tag=oe2027")).body).toMatchObject({ total: 1, items: [{ id: budget }] });
+    expect((await call("GET", "/stories?tag=OE 2027")).status).toBe(400);
+
+    expect((await call("GET", "/stories?sort=comments")).body.total).toBe(0);
+    await db.insert(comments).values([{ storyId: fire, body: "um" }, { storyId: budget, body: "dois" }, { storyId: budget, body: "três" }]);
+    expect((await call("GET", "/stories?sort=comments")).body.items.map((s: { id: number }) => s.id)).toEqual([budget, fire]);
+  });
+
+  it("adds up comments per tag for Em debate", async () => {
+    const { budget, fire } = await budgetStory();
+    await db.insert(comments).values([{ storyId: budget, body: "um" }, { storyId: budget, body: "dois" }, { storyId: fire, body: "três" }]);
+    const { body } = await call("GET", "/stories/tags?days=7");
+    expect(body.items.slice(0, 2)).toEqual([
+      // The background has another housing story (Lisbon's budget), without comments.
+      { slug: "habitacao", label: "Habitação", name: "Habitação e urbanismo", kind: "topic", stories: 2, comments: 2, importa: 0 },
+      { slug: "oe2027", label: "OE2027", name: "Orçamento do Estado para 2027", kind: "event", stories: 1, comments: 2, importa: 0 },
+    ]);
+    expect((await call("GET", "/stories/tags?kind=event")).body.items.map((t: { slug: string }) => t.slug)).toEqual(["oe2027"]);
+  });
+
+  it("finds our posts and coming agenda events for the context box", async () => {
+    const { budget } = await budgetStory();
+    await db.insert(editorialPosts).values([
+      { slug: "como-passa-um-orcamento", title: "Como passa um Orçamento", kind: "article", body: "x", authorName: "Ana", tags: ["Orçamento"], status: "published", publishedAt: new Date() },
+      { slug: "sobre-outra-coisa", title: "Outra coisa", kind: "article", body: "x", authorName: "Ana", tags: ["defesa"], status: "published", publishedAt: new Date() },
+      { slug: "rascunho-oe", title: "Rascunho", kind: "article", body: "x", authorName: "Ana", tags: ["oe2027"], status: "draft" },
+    ]);
+    const soon = (days: number) => new Date(Date.now() + days * 24 * HOUR);
+    const event = (id: string, title: string, startsAt: Date, partySlugs: string[] = []) => ({
+      id, source: "editorial" as const, kind: "parliament", title, allDay: false, startsAt, startDay: startsAt.toISOString().slice(0, 10),
+      until: new Date(startsAt.getTime() + HOUR), attend: { open: false, how: null, url: null }, partySlugs,
+    });
+    await db.insert(agendaEvents).values([
+      event("a", "Jornadas do PS", soon(1), ["ps"]),
+      event("b", "Votação final global do Orçamento do Estado para 2027", soon(3)),
+      event("c", "Debate sobre defesa", soon(2)),
+      event("d", "Votação do OE2027 na generalidade", soon(-2)),
+      event("e", "Debate do OE2027 daqui a um mês", soon(30)),
+    ]);
+    const { context } = (await call("GET", `/stories/${budget}`)).body;
+    expect(context.explainers.map((p: { slug: string }) => p.slug)).toEqual(["como-passa-um-orcamento"]);
+    expect(context.agenda.map((e: { id: string }) => e.id)).toEqual(["b", "a"]);
   });
 });

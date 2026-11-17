@@ -26,6 +26,8 @@ The feed as stories. Returns `{ items, nextCursor, total }`, paged like `/articl
 {
   "id": 29,
   "title": "André Ventura reeleito presidente do Chega com 98% dos votos",
+  "excerpt": "A convenção do Chega em Viseu reelegeu…",
+  "tags": [{ "slug": "legislativas", "label": "Legislativas", "name": "Eleições legislativas", "kind": "event" }],
   "imageUrl": "https://…",
   "firstPublishedAt": "2026-11-15T09:10:00.000Z",
   "lastPublishedAt": "2026-11-15T19:42:00.000Z",
@@ -48,6 +50,8 @@ The feed as stories. Returns `{ items, nextCursor, total }`, paged like `/articl
 - `title`: the headline **most like the others**, i.e. what most outlets said. The first
   headline can be written before the news happened ("Ventura vai a votos" before "Ventura
   reeleito"), so it isn't used.
+- `excerpt`: the excerpt of the version whose headline is the `title`.
+- `tags`: see [Tags and "Em debate"](#tags-and-em-debate).
 - `sourceCount`: "N jornais contaram isto". `sources`: one per outlet, first to publish
   first, each with **its own headline**. Use them for the stack of logos, and for "how each
   one headlined it" when opened.
@@ -58,7 +62,8 @@ The feed as stories. Returns `{ items, nextCursor, total }`, paged like `/articl
 
 | query | what |
 | --- | --- |
-| `sort` | `newest` (default: latest version first), `top` (most Importa), `coverage` (most outlets). Ties: newest |
+| `sort` | `newest` (default: latest version first), `top` (most Importa), `coverage` (most outlets: "Mais noticiadas"), `comments` (most comments: "Mais debatidas", only stories with some). Ties: newest |
+| `tag` | A tag slug (`oe2027`, `habitacao`): stories with that tag |
 | `period` | `today`, `yesterday`, `week`, `month`: stories with a version published then, in Lisbon days (as on `/articles`) |
 | `since` | Stories with a version in the last N hours: `24h` |
 | `q` | Words in any version's title or excerpt (all must match, ignoring accents) |
@@ -75,9 +80,47 @@ reader's choices by **story id** in the browser. Report a story by reporting the
 reader was looking at (`kind: "article"`). Lists filtered by one reader's choices must be
 fetched from the browser, not through Next's shared cache.
 
+## Tags and "Em debate"
+
+Every story has `tags`, events first and then at most 2 topics, each
+`{ slug, label, name, kind }`:
+
+- **events** (`kind: "event"`): specific subjects, curated in the backend: `OE2027` (any
+  year's budget), `Legislativas`, `Autárquicas`, `Presidenciais`, `EstadoDaNação`,
+  `MoçãoDeCensura`, `LeiDasRendas`. Ask the backend to add one when a subject dominates the
+  news. An event tags a story when any version's headline names it, or a third of the versions
+  mention it.
+- **topics** (`kind: "topic"`): the broad subjects initiatives use (Habitação, Saúde,
+  Impostos…). A topic needs half of the versions to mention it.
+
+`label` is short, for the hashtag ("#OE2027", "#Habitação"); `name` is in full ("Orçamento
+do Estado para 2027") for a tooltip or a page title.
+
+`GET /stories/tags?days=7&limit=8` is the **"Em debate"** row: the tags of stories with a
+version in the last `days` Lisbon days (1–30), most commented first (then most stories):
+
+```json
+{ "items": [{ "slug": "oe2027", "label": "OE2027", "name": "Orçamento do Estado para 2027", "kind": "event", "stories": 10, "comments": 214, "importa": 57 }] }
+```
+
+Show "#OE2027 · 214 comentários", linking to `/stories?tag=oe2027`. `kind=event` keeps only
+events, if you'd rather the row skip broad topics. `comments` counts every visible comment on
+those stories.
+
 ## GET /stories/:id
 
 The card plus:
+
+- `context`, for the **"Contexto"** box:
+  - `explainers` (**Explica**): up to 3 of our published blog posts whose tags match the
+    story's (e.g. a post tagged "orçamento" or "oe2027" for #OE2027; "habitação" for
+    #Habitação), newest first: `{ slug, title, kind, publishedAt }`. Tag our posts with the
+    subjects they explain and they show up here.
+  - `agenda` (**Agenda**): up to 3 coming events (next 14 days) about the story's tags first,
+    then of its two main parties, soonest first within each: `{ id, title, kind, startsAt, allDay }`.
+    Link to the agenda.
+  - **Partido**: use the story's `parties`.
+  Hide the box when all three are empty.
 
 - `articles`: every outlet's version, first published first, each a full article item (as
   on `/articles`). This is "how each one told it".

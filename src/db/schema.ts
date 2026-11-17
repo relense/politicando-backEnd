@@ -65,6 +65,8 @@ export const stories = pgTable("stories", {
   id: integer().primaryKey().generatedAlwaysAsIdentity(),
   /** Readers who marked it as mattering, kept in step with story_votes. */
   importa: integer().notNull().default(0),
+  /** Events and topics it's about (src/stories/tags.ts), refreshed as versions join. Null until computed. */
+  tags: jsonb().$type<{ slug: string; label: string; name: string; kind: "event" | "topic" }[]>(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

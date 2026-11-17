@@ -204,6 +204,13 @@
       "when": 1794915029673,
       "tag": "0028_post_votes_article_views",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1794918690309,
+      "tag": "0029_story_tags",
+      "breakpoints": true
     }
   ]
 }
