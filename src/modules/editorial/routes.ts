@@ -5,9 +5,10 @@ import { lisbonDay } from "../../agenda/time.js";
 import { z } from "zod";
 import { type Admin, adminGuard, audit, hasRole } from "../../admin/sessions.js";
 import type { Db } from "../../db/client.js";
-import { editorialPosts, editorialViews } from "../../db/schema.js";
+import { editorialPosts, editorialViews, editorialVotes } from "../../db/schema.js";
 import { parseMedia, slugify } from "../../editorial/media.js";
 import { ApiError, notFound } from "../../errors.js";
+import { postVoterKey } from "../../forums/identity.js";
 import { errorSchema } from "../shared.js";
 
 const kindSchema = z.enum(["article", "opinion", "podcast", "interview", "video"]);
@@ -31,6 +32,8 @@ const summarySchema = z.object({
   tags: z.array(z.string()),
   featured: z.boolean(),
   readingMinutes: z.number().describe("Words ÷ 200, rounded up; at least 1"),
+  upvotes: z.number(),
+  downvotes: z.number(),
   publishedAt: z.string().nullable(),
 });
 const bodySchema = z.string().describe("Markdown. Render it without raw HTML");
@@ -76,7 +79,7 @@ export const readingMinutes = (markdown: string) => {
 const present = (r: Row) => ({
   id: r.id, slug: r.slug, kind: r.kind, title: r.title, subtitle: r.subtitle, authorName: r.authorName,
   coverImageUrl: r.coverImageUrl, media: r.mediaUrl ? parseMedia(r.mediaUrl) : null, tags: r.tags, featured: r.featured,
-  readingMinutes: readingMinutes(r.body), publishedAt: r.publishedAt?.toISOString() ?? null,
+  readingMinutes: readingMinutes(r.body), upvotes: r.upvotes, downvotes: r.downvotes, publishedAt: r.publishedAt?.toISOString() ?? null,
 });
 const presentAdmin = (r: Row) => ({
   ...present(r), body: r.body, status: r.status, authorId: r.authorId, mediaUrl: r.mediaUrl, updatedAt: r.updatedAt.toISOString(),
@@ -91,13 +94,13 @@ const commentCount = sql<number>`(select count(*)::int from comments c where c.e
 const totalViews = sql<number>`(select coalesce(sum(v.views), 0)::int from editorial_views v where v.post_id = "editorial_posts"."id")`;
 
 /** Today in Lisbon, in SQL, so reads are counted by the same day everywhere. */
-const lisbonToday = sql`(now() at time zone 'Europe/Lisbon')::date`;
+export const lisbonToday = sql`(now() at time zone 'Europe/Lisbon')::date`;
 
 /**
  * Who already counted as a read of a post today, so reloads and repeated beacons count once.
  * Kept in memory only, as hashes, and forgotten at the end of the day (or past its size).
  */
-const createReadDedupe = (max = 200_000) => {
+export const createReadDedupe = (max = 200_000) => {
   let day = "";
   let seen = new Set<string>();
   return (ip: string, postId: number, today: string) => {
@@ -114,7 +117,7 @@ const createReadDedupe = (max = 200_000) => {
 const errors = { 400: errorSchema, 401: errorSchema, 403: errorSchema, 404: errorSchema };
 
 export const editorialRoutes =
-  (db: Db): FastifyPluginAsyncZod =>
+  (db: Db, { voteSecret }: { voteSecret: string }): FastifyPluginAsyncZod =>
   async (app) => {
     const requireAdmin = adminGuard(db);
 
@@ -202,6 +205,55 @@ export const editorialRoutes =
 
     // Reads, for "Mais lidos". The browser sends a beacon (navigator.sendBeacon), which may come
     // as text/plain or with no body at all: this route takes any body and ignores it.
+    app.post(
+      "/editorial/:slug/vote",
+      {
+        config: { rateLimit: { max: 30, timeWindow: "1 minute" } },
+        schema: {
+          tags: ["editorial"],
+          summary: "Vote a post up (1) or down (-1), or remove the vote (0). One vote per reader; voting again replaces it",
+          params: slugParams,
+          body: z.strictObject({ value: z.union([z.literal(1), z.literal(-1), z.literal(0)]) }),
+          response: {
+            200: z.object({ up: z.number(), down: z.number(), mine: z.union([z.literal(1), z.literal(-1), z.literal(0)]) }),
+            400: errorSchema,
+            404: errorSchema,
+            429: errorSchema,
+          },
+        },
+      },
+      async (request) => {
+        const { value } = request.body;
+        return db.transaction(async (tx) => {
+          // Locks the post, so votes on it count one at a time and the totals stay exact.
+          const [post] = await tx
+            .select({ id: editorialPosts.id })
+            .from(editorialPosts)
+            .where(and(eq(editorialPosts.slug, request.params.slug), eq(editorialPosts.status, "published")))
+            .for("update");
+          if (!post) throw notFound("Post");
+          const voter = postVoterKey(voteSecret, request.ip, post.id);
+          const mine = and(eq(editorialVotes.postId, post.id), eq(editorialVotes.voter, voter));
+          if (value === 0) await tx.delete(editorialVotes).where(mine);
+          else {
+            await tx
+              .insert(editorialVotes)
+              .values({ postId: post.id, voter, value })
+              .onConflictDoUpdate({ target: [editorialVotes.postId, editorialVotes.voter], set: { value, updatedAt: sql`now()` } });
+          }
+          const [counts] = await tx
+            .update(editorialPosts)
+            .set({
+              upvotes: sql`(select count(*)::int from editorial_votes v where v.post_id = ${post.id} and v.value = 1)`,
+              downvotes: sql`(select count(*)::int from editorial_votes v where v.post_id = ${post.id} and v.value = -1)`,
+            })
+            .where(eq(editorialPosts.id, post.id))
+            .returning({ up: editorialPosts.upvotes, down: editorialPosts.downvotes });
+          return { up: counts!.up, down: counts!.down, mine: value };
+        });
+      },
+    );
+
     const firstRead = createReadDedupe();
     await app.register(async (scope) => {
       const beacon = scope.withTypeProvider<ZodTypeProvider>();

@@ -1,10 +1,12 @@
-import { and, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
-import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
+import { and, desc, eq, inArray, isNull, notInArray, sql, type SQL } from "drizzle-orm";
+import type { FastifyPluginAsyncZod, ZodTypeProvider } from "fastify-type-provider-zod";
+import { lisbonDay } from "../../agenda/time.js";
 import { z } from "zod";
 import type { Db } from "../../db/client.js";
-import { articles, articleVotes, deputies, initiatives, parties } from "../../db/schema.js";
+import { articles, articleViews, articleVotes, deputies, initiatives, parties } from "../../db/schema.js";
 import { ApiError, notFound } from "../../errors.js";
 import { articleVoterKey } from "../../forums/identity.js";
+import { createReadDedupe, lisbonToday } from "../editorial/routes.js";
 import { articleParamsSchema, errorSchema } from "../shared.js";
 
 const cursorSchema = z.object({
@@ -25,8 +27,8 @@ const decodeCursor = (value: string): Cursor => {
 };
 
 const offsetSchema = z.object({ offset: z.number().int().min(0).max(100_000) });
-const encodeOffset = (offset: number) => Buffer.from(JSON.stringify({ offset })).toString("base64url");
-const decodeOffset = (value: string) => {
+export const encodeOffset = (offset: number) => Buffer.from(JSON.stringify({ offset })).toString("base64url");
+export const decodeOffset = (value: string) => {
   try {
     return offsetSchema.parse(JSON.parse(Buffer.from(value, "base64url").toString())).offset;
   } catch {
@@ -36,32 +38,37 @@ const decodeOffset = (value: string) => {
 
 /** Lowercase, without accents: "Habitação" → "habitacao". The SQL below folds the stored text the same way. */
 export const foldText = (text: string) => text.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
-const searchWords = (q: string) => [...new Set(foldText(q).split(/[^\p{L}\p{N}]+/u).filter(Boolean))].slice(0, 10);
-const escapeLike = (word: string) => word.replace(/[\\%_]/g, (c) => `\\${c}`);
+export const searchWords = (q: string) => [...new Set(foldText(q).split(/[^\p{L}\p{N}]+/u).filter(Boolean))].slice(0, 10);
+export const escapeLike = (word: string) => word.replace(/[\\%_]/g, (c) => `\\${c}`);
 // translate() instead of the unaccent extension: no extension to install, and it covers Portuguese.
-const FOLDED_TEXT = sql`translate(lower(articles.title || ' ' || articles.excerpt),
+export const FOLDED_TEXT = sql`translate(lower(articles.title || ' ' || articles.excerpt),
   'áàâãäåéèêëíìîïóòôõöúùûüçñý', 'aaaaaaeeeeiiiiooooouuuucny')`;
 
-const articlePartySchema = z.object({
+export const articlePartySchema = z.object({
   slug: z.string(),
   acronym: z.string(),
   name: z.string(),
 });
 
-const articleDeputySchema = z.object({
+export const articleDeputySchema = z.object({
   id: z.number(),
   name: z.string(),
   party: z.string().nullable().describe("Party slug"),
 });
 
-const articleInitiativeSchema = z.object({
+export const articleInitiativeSchema = z.object({
   id: z.number(),
   type: z.string(),
   number: z.string(),
   title: z.string(),
+  status: z.enum(["approved", "rejected", "in_progress", "withdrawn"]),
+  lastVote: z
+    .object({ date: z.string(), phase: z.string(), result: z.string(), unanimous: z.boolean() })
+    .nullable()
+    .describe('Its latest vote in parliament, if any: show "Ver como votou cada partido" only then'),
 });
 
-const articleGovernmentSchema = z.object({ id: z.string(), name: z.string() });
+export const articleGovernmentSchema = z.object({ id: z.string(), name: z.string() });
 
 export const articleSchema = z.object({
   id: z.number(),
@@ -71,9 +78,12 @@ export const articleSchema = z.object({
   source: z.string(),
   imageUrl: z.string().nullable(),
   publishedAt: z.string(),
+  storyId: z.number().nullable().describe("The story it belongs to, with the other outlets' versions (null for a few minutes after it's found)"),
   commentCount: z.number(),
   upvotes: z.number(),
   downvotes: z.number(),
+  views: z.number().describe("Reads of its page on our site since publication: one per reader per day"),
+  recentViews: z.number().optional().describe("Reads in the last `days` (sort=views only); the list is sorted by it"),
   parties: z.array(articlePartySchema),
   deputies: z.array(articleDeputySchema),
   government: z.array(articleGovernmentSchema).describe("Members of the Government named in it"),
@@ -126,7 +136,11 @@ const presidentSql = sql<{ id: string; name: string } | null>`(
 
 const initiativesSql = sql<z.infer<typeof articleInitiativeSchema>[]>`coalesce((
   select json_agg(
-    json_build_object('id', i.id, 'type', i.type, 'number', i.number, 'title', i.title)
+    json_build_object('id', i.id, 'type', i.type, 'number', i.number, 'title', i.title, 'status', i.status,
+      'lastVote', (
+        select json_build_object('date', v->>'date', 'phase', v->>'phase', 'result', v->>'result', 'unanimous', (v->>'unanimous')::boolean)
+        from jsonb_array_elements(i.votes) v order by v->>'date' desc limit 1
+      ))
     order by ai.score desc nulls first, i.id
   )
   from article_initiatives ai
@@ -142,9 +156,11 @@ export const articleColumns = {
   source: articles.source,
   imageUrl: articles.imageUrl,
   publishedAt: articles.publishedAt,
+  storyId: articles.storyId,
   commentCount: commentCountSql,
   upvotes: articles.upvotes,
   downvotes: articles.downvotes,
+  views: sql<number>`(select coalesce(sum(v.views), 0)::int from article_views v where v.article_id = articles.id)`,
   parties: partiesSql,
   deputies: deputiesSql,
   government: governmentSql,
@@ -156,8 +172,23 @@ export const articleColumns = {
 const controversySql = sql`power((articles.upvotes + articles.downvotes)::float8,
   least(articles.upvotes, articles.downvotes)::float8 / greatest(articles.upvotes, articles.downvotes))`;
 
+/** Reads in the last `days` Lisbon days, today included. */
+const recentViewsSql = (days: number) =>
+  sql<number>`(select coalesce(sum(v.views), 0)::int from article_views v
+    where v.article_id = articles.id and v.day > (now() at time zone 'Europe/Lisbon')::date - ${days}::int)`;
+
+/**
+ * "Em alta": activity over age, as Hacker News does. Points are upvotes − downvotes, 2 per
+ * visible comment and 1 per 10 reads in the last 2 days; the score is (points + 1) over
+ * (hours since publication + 2) ^ 1.5, so fresh activity wins and old news sinks.
+ */
+const trendingSql = sql`((articles.upvotes - articles.downvotes + 2 * ${commentCountSql} + ${recentViewsSql(2)} / 10.0 + 1)
+  / power(extract(epoch from (now() - articles.published_at)) / 3600 + 2, 1.5))`;
+/** Trending only looks at the last week's news. */
+const TRENDING_DAYS = 7;
+
 /** Midnight in Lisbon, `days` days before today, as a timestamp. */
-const lisbonMidnight = (days: number) =>
+export const lisbonMidnight = (days: number) =>
   sql`((date_trunc('day', now() at time zone 'Europe/Lisbon') - make_interval(days => ${days})) at time zone 'Europe/Lisbon')`;
 
 /** Published in the period, in Lisbon days: today since midnight, yesterday whole, week and month today included. */
@@ -168,8 +199,19 @@ const PERIODS = {
   month: () => sql`articles.published_at >= ${lisbonMidnight(29)}`,
 } as const;
 
+/** Articles readers can see: not hidden by a moderator. */
+export const visibleArticle = isNull(articles.hiddenAt);
+
+/** "1,2,3" → [1, 2, 3]: article ids, no repeats, at most `max`. */
+export const idList = (max: number) =>
+  z
+    .string()
+    .max(max * 11)
+    .transform((value) => [...new Set(value.split(",").map((v) => v.trim()).filter(Boolean))])
+    .pipe(z.array(z.string().regex(/^\d{1,10}$/).transform(Number).pipe(z.number().int().positive().max(2_147_483_647))).min(1).max(max));
+
 /** "a,b,c" → ["a", "b", "c"]: trimmed, no empties or repeats, at most `max` values. */
-const commaList = (max: number) =>
+export const commaList = (max: number) =>
   z
     .string()
     .max(2_000)
@@ -194,13 +236,22 @@ export const articleRoutes =
             source: commaList(30)
               .optional()
               .describe('Outlet as in article.source (see /articles/sources), or several separated by commas: articles from any of them'),
+            ids: idList(100).optional().describe("Only these articles (up to 100), e.g. the reader's saved ones"),
+            exclude: idList(500).optional().describe("Leave these articles out (up to 500), e.g. the ones the reader hid"),
+            excludeSource: commaList(30).optional().describe("Leave out articles from these outlets (\"show fewer like this\")"),
+            excludeParty: commaList(30)
+              .optional()
+              .describe("Leave out articles about any of these parties (\"show fewer like this\"). Unknown slugs are ignored"),
             sort: z
-              .enum(["newest", "comments", "top", "controversial"])
+              .enum(["newest", "comments", "top", "controversial", "views", "trending"])
               .default("newest")
               .describe(
                 "comments: most commented first, only articles with comments. top: upvotes − downvotes, highest first. " +
-                  "controversial: many votes on both sides first, only articles with at least one of each. Ties: newest first",
+                  "controversial: many votes on both sides first, only articles with at least one of each. " +
+                  "views: most read on our site in the last `days`, only articles read then. " +
+                  "trending: most activity for their age, from the last 7 days. Ties: newest first",
               ),
+            days: z.coerce.number().int().min(1).max(90).default(7).describe("For sort=views"),
             period: z
               .enum(["today", "yesterday", "week", "month"])
               .optional()
@@ -227,10 +278,11 @@ export const articleRoutes =
         },
       },
       async (request) => {
-        const { party, deputy, initiative, governmentMember, president, q, source, sort, period, since, cursor, limit } = request.query;
+        const { party, deputy, initiative, governmentMember, president, q, source, ids, exclude, excludeSource, excludeParty, sort, days, period, since, cursor, limit } =
+          request.query;
         // Only newest pages by (publishedAt, id); the others by position, since counts change.
         const byPosition = sort !== "newest";
-        const conditions: SQL[] = [];
+        const conditions: SQL[] = [visibleArticle];
 
         let offset = 0;
         let after: SQL | undefined;
@@ -245,10 +297,21 @@ export const articleRoutes =
           conditions.push(sql`${FOLDED_TEXT} like ${`%${escapeLike(word)}%`}`);
         }
         if (source !== undefined) conditions.push(inArray(articles.source, source));
+        if (ids !== undefined) conditions.push(inArray(articles.id, ids));
+        if (exclude !== undefined) conditions.push(notInArray(articles.id, exclude));
+        if (excludeSource !== undefined) conditions.push(notInArray(articles.source, excludeSource));
+        if (excludeParty !== undefined) {
+          conditions.push(sql`not exists (
+            select 1 from article_parties ap join parties p on p.id = ap.party_id
+            where ap.article_id = articles.id and p.slug in (${sql.join(excludeParty.map((slug) => sql`${slug}`), sql`, `)})
+          )`);
+        }
         if (since !== undefined) conditions.push(sql`articles.published_at >= now() - make_interval(hours => ${since})`);
         if (period !== undefined) conditions.push(PERIODS[period]());
         if (sort === "comments") conditions.push(sql`${commentCountSql} > 0`);
         if (sort === "controversial") conditions.push(sql`articles.upvotes > 0 and articles.downvotes > 0`);
+        if (sort === "views") conditions.push(sql`${recentViewsSql(days)} > 0`);
+        if (sort === "trending") conditions.push(sql`articles.published_at >= now() - make_interval(days => ${TRENDING_DAYS})`);
         if (party !== undefined) {
           const found = await db.select({ id: parties.id, slug: parties.slug }).from(parties).where(inArray(parties.slug, party));
           const unknown = party.filter((slug) => !found.some((p) => p.slug === slug));
@@ -290,11 +353,18 @@ export const articleRoutes =
           )`);
         }
 
-        const first = { newest: [], comments: [desc(commentCountSql)], top: [desc(sql`articles.upvotes - articles.downvotes`)], controversial: [desc(controversySql)] }[sort];
+        const first = {
+          newest: [],
+          comments: [desc(commentCountSql)],
+          top: [desc(sql`articles.upvotes - articles.downvotes`)],
+          controversial: [desc(controversySql)],
+          views: [desc(recentViewsSql(days))],
+          trending: [desc(trendingSql)],
+        }[sort];
         const order = [...first, desc(articles.publishedAt), desc(articles.id)];
         const [rows, [counted]] = await Promise.all([
           db
-            .select(articleColumns)
+            .select(sort === "views" ? { ...articleColumns, recentViews: recentViewsSql(days) } : articleColumns)
             .from(articles)
             .where(and(...conditions, after))
             .orderBy(...order)
@@ -318,6 +388,38 @@ export const articleRoutes =
       },
     );
 
+    const firstRead = createReadDedupe();
+    await app.register(async (scope) => {
+      // A beacon: anything sent is ignored, so navigator.sendBeacon works with any content type.
+      const beacon = scope.withTypeProvider<ZodTypeProvider>();
+      beacon.removeAllContentTypeParsers();
+      beacon.addContentTypeParser("*", { parseAs: "buffer", bodyLimit: 4096 }, (_request, _body, done) => done(null, null));
+      beacon.post(
+        "/articles/:id/view",
+        {
+          config: { rateLimit: { max: 60, timeWindow: "1 minute" } },
+          schema: {
+            tags: ["articles"],
+            summary: "Count a read of an article's page (once per reader per article per day; no reader data is kept)",
+            params: articleParamsSchema,
+            response: { 204: z.null(), 400: errorSchema, 404: errorSchema, 429: errorSchema },
+          },
+        },
+        async (request, reply) => {
+          const [article] = await db.select({ id: articles.id }).from(articles).where(and(eq(articles.id, request.params.id), visibleArticle));
+          if (!article) throw notFound("Article");
+          // Keyed apart from post reads, which share the de-duplication helper's shape.
+          if (firstRead(`article|${request.ip}`, article.id, lisbonDay(new Date()))) {
+            await db
+              .insert(articleViews)
+              .values({ articleId: article.id, day: sql`${lisbonToday}`, views: 1 })
+              .onConflictDoUpdate({ target: [articleViews.articleId, articleViews.day], set: { views: sql`${articleViews.views} + 1` } });
+          }
+          return reply.status(204).send(null);
+        },
+      );
+    });
+
     app.get(
       "/articles/sources",
       {
@@ -331,6 +433,7 @@ export const articleRoutes =
         const rows = await db
           .select({ name: articles.source, count: sql<number>`count(*)::int` })
           .from(articles)
+          .where(visibleArticle)
           .groupBy(articles.source)
           .orderBy(desc(sql`count(*)`), articles.source);
         return { items: rows };
@@ -350,7 +453,7 @@ export const articleRoutes =
         const [article] = await db
           .select(articleColumns)
           .from(articles)
-          .where(eq(articles.id, request.params.id));
+          .where(and(eq(articles.id, request.params.id), visibleArticle));
         if (!article) throw notFound("Article");
         return { ...article, publishedAt: article.publishedAt.toISOString() };
       },
@@ -378,7 +481,7 @@ export const articleRoutes =
         const voter = articleVoterKey(voteSecret, request.ip, articleId);
         return db.transaction(async (tx) => {
           // Locks the article, so votes on it count one at a time and the totals stay exact.
-          const [article] = await tx.select({ id: articles.id }).from(articles).where(eq(articles.id, articleId)).for("update");
+          const [article] = await tx.select({ id: articles.id }).from(articles).where(and(eq(articles.id, articleId), visibleArticle)).for("update");
           if (!article) throw notFound("Article");
           const mine = and(eq(articleVotes.articleId, articleId), eq(articleVotes.voter, voter));
           if (value === 0) await tx.delete(articleVotes).where(mine);

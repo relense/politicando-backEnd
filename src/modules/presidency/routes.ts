@@ -1,11 +1,11 @@
-import { asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
 import type { Db } from "../../db/client.js";
 import { articles, initiatives, presidents } from "../../db/schema.js";
 import { notFound } from "../../errors.js";
 import { biographyFacts, currentPresident, presidentOn } from "../../presidency/presidents.js";
-import { articleColumns, articleSchema } from "../articles/routes.js";
+import { articleColumns, articleSchema, visibleArticle } from "../articles/routes.js";
 import { initiativeColumns, initiativeSummarySchema, withPlain } from "../parliament/routes.js";
 import { errorSchema } from "../shared.js";
 
@@ -127,9 +127,9 @@ export const presidencyRoutes =
           .select(articleColumns)
           .from(articles)
           .where(
-            inArray(
-              articles.id,
-              sql`(select ap.article_id from article_presidents ap where ap.president_id = ${president.id})`,
+            and(
+              visibleArticle,
+              inArray(articles.id, sql`(select ap.article_id from article_presidents ap where ap.president_id = ${president.id})`),
             ),
           )
           .orderBy(desc(articles.publishedAt), desc(articles.id))

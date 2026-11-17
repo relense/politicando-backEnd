@@ -20,3 +20,13 @@ export const voterKey = (secret: string, ip: string, threadId: number) => mac(se
 /** Counts one vote per reader per news article without storing their IP. */
 export const articleVoterKey = (secret: string, ip: string, articleId: number) =>
   mac(secret, `${ip}|article-vote|${articleId}`).slice(0, 16);
+
+/** Counts one "Importa" per reader per story without storing their IP. */
+export const storyVoterKey = (secret: string, ip: string, storyId: number) => mac(secret, `${ip}|story-vote|${storyId}`).slice(0, 16);
+
+/** Counts one like per reader per comment without storing their IP. */
+export const commentLikerKey = (secret: string, ip: string, commentId: number) =>
+  mac(secret, `${ip}|comment-like|${commentId}`).slice(0, 16);
+
+/** Counts one vote per reader per editorial post without storing their IP. */
+export const postVoterKey = (secret: string, ip: string, postId: number) => mac(secret, `${ip}|post-vote|${postId}`).slice(0, 16);

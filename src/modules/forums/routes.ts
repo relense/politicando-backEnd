@@ -64,6 +64,8 @@ const postSchema = z.object({
 });
 
 export const REPORT_REASONS = ["spam", "insult", "hate", "personal_data", "illegal", "other"] as const;
+/** What can be wrong with a news article: our tagging or the item itself, not what the outlet wrote. */
+export const ARTICLE_REPORT_REASONS = ["wrong_tags", "broken_link", "duplicate", "not_politics", "other"] as const;
 
 export interface ForumRouteOptions {
   db: Db;
@@ -105,7 +107,7 @@ export const forumRoutes =
       t.score, t.status, t.answer, ${iso("t.answered_at")} as answered_at,
       a.id as article_id, a.title as article_title, i.id as initiative_id, i.title as initiative_title`;
     const threadFrom = sql`forum_threads t
-      left join articles a on a.id = t.article_id
+      left join articles a on a.id = t.article_id and a.hidden_at is null
       left join initiatives i on i.id = t.initiative_id`;
     const summary = (r: ThreadRow) => ({
       id: r.id, board: r.board, title: r.title, excerpt: r.body.length > 300 ? `${r.body.slice(0, 299)}…` : r.body,
@@ -263,7 +265,7 @@ export const forumRoutes =
         await checkHuman(request.body.recaptchaToken, request.ip, request.log);
         await assertBoard(board);
         if (articleId) {
-          const [found] = await db.select({ id: articles.id }).from(articles).where(eq(articles.id, articleId));
+          const [found] = await db.select({ id: articles.id }).from(articles).where(and(eq(articles.id, articleId), isNull(articles.hiddenAt)));
           if (!found) throw notFound("Article");
         }
         if (initiativeId) {
@@ -378,21 +380,29 @@ export const forumRoutes =
         config: { rateLimit: { max: 10, timeWindow: "1 minute" } },
         schema: {
           tags: ["forums"],
-          summary: "Report a thread, reply or comment to the moderators",
-          body: z.strictObject({
-            kind: z.enum(["thread", "post", "comment"]),
-            id: z.number().int().positive().max(MAX_INT),
-            reason: z.enum(REPORT_REASONS),
-            details: z.string().trim().max(500).nullish(),
-          }),
+          summary: "Report a thread, reply, comment or news article to the moderators",
+          body: z.discriminatedUnion("kind", [
+            z.strictObject({
+              kind: z.enum(["thread", "post", "comment"]),
+              id: z.number().int().positive().max(MAX_INT),
+              reason: z.enum(REPORT_REASONS),
+              details: z.string().trim().max(500).nullish(),
+            }),
+            z.strictObject({
+              kind: z.literal("article"),
+              id: z.number().int().positive().max(MAX_INT),
+              reason: z.enum(ARTICLE_REPORT_REASONS),
+              details: z.string().trim().max(500).nullish(),
+            }),
+          ]),
           response: { 202: z.null(), 400: errorSchema, 404: errorSchema, 429: errorSchema },
         },
       },
       async (request, reply) => {
         const { kind, id, reason, details } = request.body;
-        const table = kind === "thread" ? forumThreads : kind === "post" ? forumPosts : comments;
-        const [found] = await db.select({ id: table.id }).from(table).where(eq(table.id, id));
-        if (!found) throw notFound(kind === "thread" ? "Thread" : kind === "post" ? "Post" : "Comment");
+        const table = kind === "thread" ? forumThreads : kind === "post" ? forumPosts : kind === "article" ? articles : comments;
+        const [found] = await db.select({ id: table.id }).from(table).where(and(eq(table.id, id), isNull(table.hiddenAt)));
+        if (!found) throw notFound(kind === "thread" ? "Thread" : kind === "post" ? "Post" : kind === "article" ? "Article" : "Comment");
         await db
           .insert(reports)
           .values({ kind, targetId: id, reason, details: details || null, reporter: reporterKey(forumSecret, request.ip) })

@@ -202,12 +202,16 @@ export const adminRoutes =
       id: z.number(),
       articleId: z.number().nullable().describe("On a news article…"),
       articleTitle: z.string().nullable(),
+      storyId: z.number().nullable().describe("…on a story (its title is storyTitle)…"),
+      storyTitle: z.string().nullable(),
       postId: z.number().nullable().describe("…or on one of our editorial posts"),
       postSlug: z.string().nullable(),
       postTitle: z.string().nullable(),
       parentId: z.number().nullable(),
       username: z.string().nullable(),
       body: z.string(),
+      stance: z.enum(["agree", "disagree"]).nullable(),
+      likes: z.number(),
       createdAt: z.string(),
       hiddenAt: z.string().nullable(),
     });
@@ -222,6 +226,7 @@ export const adminRoutes =
             status: z.enum(["visible", "hidden", "all"]).default("visible"),
             articleId: z.coerce.number().int().positive().optional(),
             postId: z.coerce.number().int().positive().optional().describe("An editorial post's id"),
+            storyId: z.coerce.number().int().positive().optional().describe("Comments made on a story"),
             before: z.coerce.number().int().positive().optional().describe("Comments with a smaller id (the last id of the previous page)"),
             limit: z.coerce.number().int().min(1).max(100).default(50),
           }),
@@ -230,26 +235,29 @@ export const adminRoutes =
       },
       async (request) => {
         await requireAdmin(request, "moderator");
-        const { status, articleId, postId, before, limit } = request.query;
+        const { status, articleId, postId, storyId, before, limit } = request.query;
         const rows = await db.execute<{
           id: number; article_id: number | null; article_title: string | null; post_id: number | null; post_slug: string | null;
           post_title: string | null; parent_id: number | null; username: string | null; body: string; created_at: string; hidden_at: string | null;
+          story_id: number | null; story_title: string | null; stance: "agree" | "disagree" | null; likes: number;
         }>(sql`
           select c.id, c.article_id, a.title as article_title, c.editorial_post_id as post_id, e.slug as post_slug,
-            e.title as post_title, c.parent_id, c.username, c.body,
+            e.title as post_title, c.parent_id, c.username, c.body, c.story_id, c.stance, c.likes,
+            (select sa.title from articles sa where sa.story_id = c.story_id and sa.hidden_at is null order by sa.published_at limit 1) as story_title,
             to_char(c.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as created_at,
             to_char(c.hidden_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as hidden_at
           from comments c left join articles a on a.id = c.article_id left join editorial_posts e on e.id = c.editorial_post_id
           where ${status === "visible" ? sql`c.hidden_at is null` : status === "hidden" ? sql`c.hidden_at is not null` : sql`true`}
             and ${articleId ? sql`c.article_id = ${articleId}` : sql`true`}
             and ${postId ? sql`c.editorial_post_id = ${postId}` : sql`true`}
+            and ${storyId ? sql`c.story_id = ${storyId}` : sql`true`}
             and ${before ? sql`c.id < ${before}` : sql`true`}
           order by c.id desc limit ${limit}`);
         return {
           items: rows.rows.map((r) => ({
-            id: r.id, articleId: r.article_id, articleTitle: r.article_title, postId: r.post_id, postSlug: r.post_slug, postTitle: r.post_title,
-            parentId: r.parent_id, username: r.username,
-            body: r.body, createdAt: r.created_at, hiddenAt: r.hidden_at,
+            id: r.id, articleId: r.article_id, articleTitle: r.article_title, storyId: r.story_id, storyTitle: r.story_title,
+            postId: r.post_id, postSlug: r.post_slug, postTitle: r.post_title, parentId: r.parent_id, username: r.username,
+            body: r.body, stance: r.stance, likes: r.likes, createdAt: r.created_at, hiddenAt: r.hidden_at,
           })),
         };
       },

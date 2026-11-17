@@ -383,7 +383,7 @@ describe("news and initiatives", () => {
     const { body } = await get("/articles?initiative=377352");
     expect(body.items.map((i: { id: number }) => i.id)).toContain(a.id);
     expect(body.items[0].initiatives).toEqual([
-      { id: 377352, type: "Projeto de Lei", number: "352", title: "Orçamento do Estado para 2027" },
+      { id: 377352, type: "Projeto de Lei", number: "352", title: "Orçamento do Estado para 2027", status: "in_progress", lastVote: null },
     ]);
     expect((await get("/articles?initiative=999")).status).toBe(404);
   });

@@ -2,8 +2,14 @@
 
 Base path: `/api/v2`. Article items look the same everywhere (`id`, `title`, `excerpt`, `url`,
 `source`, `imageUrl`, `publishedAt`, `commentCount`, `upvotes`, `downvotes`, `parties`, `deputies`, `government`,
-`president`, `initiatives`). That includes the article lists in `/deputies/:id`, `/initiatives/:id`,
+`president`, `initiatives`, `storyId`). That includes the article lists in `/deputies/:id`, `/initiatives/:id`,
 `/government/...` and `/president`.
+
+- `storyId`: the story the article belongs to, with the other outlets' versions. **The feed
+  should use stories** (`docs/stories-api.md`); articles remain for search and for the news
+  on deputy, initiative, Government and President pages.
+- Each item in `initiatives` also has `status` and `lastVote` (`{ date, phase, result, unanimous }`
+  or `null`), for the "Ver como votou cada partido" chip.
 
 ## GET /articles
 
@@ -16,9 +22,14 @@ Returns `{ items, nextCursor, total }`. `total` is how many articles match the f
 | `source` | An outlet as in `article.source` (e.g. `observador.pt`), or several separated by commas (`publico.pt,expresso.pt`): articles from **any** of them. Take the values from `/articles/sources`. An outlet with no articles just matches nothing |
 | `party` | A party slug, or several separated by commas (`ps,psd,livre`): articles about **any** of them. 404 `not_found` if any slug is unknown, naming it (`"Party not found: xyz"`) |
 | `deputy`, `initiative`, `governmentMember`, `president` | One value each, as before |
-| `sort` | `newest` (default), `comments`, `top` or `controversial` (see [Votes](#votes)) |
+| `sort` | `newest` (default), `comments`, `top` or `controversial` (see [Votes](#votes)), `views` ("Mais lidas") or `trending` ("Em alta"), see [Reads and trending](#reads-and-trending) |
+| `days` | For `sort=views`: 1–90, default 7 |
 | `period` | `today`, `yesterday`, `week` or `month`: articles published then, in Lisbon days. `today` is since midnight, `yesterday` the whole previous day, `week` and `month` the last 7 and 30 days, today included. Works with every sort, and together with `since` |
 | `since` | Only articles published in the last N hours: `24h` (or `24`). 1 to 8760 |
+| `ids` | Only these articles, by id, separated by commas (up to 100). For the reader's **saved** list |
+| `exclude` | Leave these article ids out (up to 500). For the ones the reader **hid** |
+| `excludeSource` | Leave out these outlets (up to 30). For "Mostrar menos deste jornal" |
+| `excludeParty` | Leave out articles about any of these parties (up to 30). For "Mostrar menos sobre este partido". Unknown slugs are ignored, so stale saved preferences never break the feed |
 | `limit` | 1–50, default 10 |
 | `cursor` | The previous page's `nextCursor`. Keep the other parameters the same |
 
@@ -62,6 +73,45 @@ Readers vote news up or down, as on Reddit: anonymous, no captcha.
   `comments`, so positions can shift if people vote while you page.
 - Admin: there's nothing to moderate in votes beyond the rate limit. The counts are in
   `GET /articles/:id`.
+
+## Reads and trending
+
+- `POST /articles/:id/view` when a reader opens an article's page on our site: no body
+  (anything sent is ignored, so `navigator.sendBeacon` works), 204. One read per reader per
+  article per day; nothing about readers is kept. 60 a minute per IP, 404 for unknown or
+  hidden articles. Send it **from the browser**, so renders and crawlers don't count.
+- Every article has `views`: reads of its page on our site since publication. Clicks to the
+  outlet aren't counted.
+- `sort=views&days=7`: "Mais lidas", the most read in the last `days` Lisbon days, each with
+  `recentViews` (that count; only with this sort). Only articles read then, so the list can be
+  short. Keep the order, or sort by `recentViews`, not `views`.
+- `sort=trending`: "Em alta", the most activity for their age among the last 7 days' news.
+  Points are upvotes − downvotes, 2 per visible comment and 1 per 10 reads in the last 2 days.
+  The score is (points + 1) ÷ (hours since publication + 2)^1.5, as Hacker News does, so a
+  fresh story with some activity beats an older one with more. It changes by the minute;
+  cache it briefly at most.
+- Both page by position, like `comments`.
+
+## The article menu (no accounts)
+
+Readers have no accounts, so their choices live in **their browser** (localStorage), and the
+API filters by them:
+
+| Menu item | How |
+| --- | --- |
+| Guardar | Keep the ids in the browser. "Guardadas" page: `GET /articles?ids=…` |
+| Esconder | Keep the ids in the browser. Lists: `&exclude=…` |
+| Mostrar menos assim | Offer "deste jornal" (`article.source`) and "sobre este partido" (`article.parties`). Keep them in the browser. Lists: `&excludeSource=…&excludeParty=…` |
+| Porque vejo isto? | Nothing to call: the feed isn't personalised. Say it's newest first (or the chosen sort), and name what the article is tagged with (`parties`, `deputies`, `government`, `president`, `initiatives`) |
+| Denunciar | `POST /reports` with `"kind": "article"` (see `docs/forums-api.md`) |
+| Votar | `POST /articles/:id/vote` (see [Votes](#votes)) |
+
+Following an article and awards need accounts, so they aren't offered yet.
+
+Lists filtered by one reader's choices are personal: fetch them **from the browser** (or
+uncached), never through Next's shared fetch cache, or each reader's list would become its
+own cache entry. The unfiltered feed can stay cached, with the reader's filters applied as a
+second, browser-side request when they have any.
 
 ## GET /articles/sources
 

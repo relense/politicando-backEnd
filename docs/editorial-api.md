@@ -33,7 +33,9 @@ read with `sort=popular` (see [Most read](#most-read)).
       "readingMinutes": 4,
       "publishedAt": "2026-11-15T12:00:00.000Z",
       "commentCount": 3,
-      "views": 128
+      "views": 128,
+      "upvotes": 12,
+      "downvotes": 1
     }
   ],
   "total": 1
@@ -49,6 +51,7 @@ read with `sort=popular` (see [Most read](#most-read)).
   For podcasts and videos it reflects the text only; prefer the media's own length there.
 - `opinion`: label it clearly as opinion ("Opinião"), with the author.
 - `commentCount`: visible comments on the post.
+- `upvotes` and `downvotes`: readers' votes (see [Votes](#votes)).
 - `views`: reads since publication (one per reader per day, see [Most read](#most-read)),
   on every item and on the post. Show "N leituras" when it's above 0; 0 until the post is
   first read.
@@ -71,6 +74,14 @@ escapes raw HTML (e.g. markdown-it with `html: false`). Pages live at `/editoria
   that time are left out, so the list can be shorter than `limit`, or empty: hide the box
   then. `recentViews` only comes with `sort=popular`. The list is already in order: keep it,
   or sort by `recentViews`, **not** by `views`, which counts every read since publication.
+
+## Votes
+
+Like on news: `POST /editorial/:slug/vote` with `{ "value": 1 }` (up), `-1` (down) or `0`
+(remove). Answers `{ "up": 12, "down": 1, "mine": 1 }`. One vote per reader per post (a keyed
+hash of the IP; the IP is never stored); voting again replaces it. 30 a minute per IP, no
+captcha, 404 for unknown or unpublished posts. Remember the reader's vote in the browser. Send
+it from the browser.
 
 ## Comments
 

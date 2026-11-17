@@ -52,11 +52,13 @@ The very first admin is created on the server: `npm run admin:create -- <email> 
 
 ## Comment moderation (role moderator)
 
-- `GET /admin/comments?status=visible|hidden|all&articleId=&postId=&before=&limit=` (default
+- `GET /admin/comments?status=visible|hidden|all&articleId=&storyId=&postId=&before=&limit=` (default
   `visible`, 50, newest first) returns
-  `{ items: [{ id, articleId, articleTitle, postId, postSlug, postTitle, parentId, username, body, createdAt, hiddenAt }] }`.
-  A comment is on a news article (`articleId`, `articleTitle`) or on one of our editorial
-  posts (`postId`, `postSlug`, `postTitle`); the other side is null. For the next page, pass
+  `{ items: [{ id, articleId, articleTitle, storyId, storyTitle, postId, postSlug, postTitle, parentId, username, body, stance, likes, createdAt, hiddenAt }] }`.
+  A comment is on a news article (`articleId`, `articleTitle`), a story (`storyId`,
+  `storyTitle`; link to `/stories/:id`) or one of our editorial posts (`postId`, `postSlug`,
+  `postTitle`); the others are null. `stance` is the side the commenter picked, if any.
+  In the reports queue, a reported comment's `target` also has `storyId`. For the next page, pass
   `before=<last id>`.
 - `POST /admin/comments/:id/hide` with an optional `{ "reason": "Spam" }` returns 204. The
   comment disappears from the public comments (news or editorial). Its replies stay; show them as replies
@@ -66,7 +68,8 @@ The very first admin is created on the server: `npm run admin:create -- <email> 
 
 ## Reports queue (role moderator)
 
-Readers report threads, replies and comments (`POST /reports`, see `docs/forums-api.md`).
+Readers report threads, replies, comments and news articles (`POST /reports`, see
+`docs/forums-api.md`). `kind` is `thread`, `post`, `comment` or `article`.
 
 - `GET /admin/reports?status=open|resolved&limit=` returns one item per reported thing, most
   reported first:
@@ -83,6 +86,15 @@ Readers report threads, replies and comments (`POST /reports`, see `docs/forums-
   thread (`threadId`), news article (`articleId`) or editorial post (`postId`). It is null if the thing no longer exists.
 - `POST /admin/reports/resolve` with `{ "kind": "thread", "targetId": 7, "action": "hide" | "dismiss" }`
   returns `{ resolved: 2 }`, closing every open report on that item. `hide` also hides it.
+  For an article, `target.text` is its title, excerpt and link. Hiding is right for
+  `duplicate` and `not_politics`. For `wrong_tags`, dismiss the report and tell the team, since
+  tags are fixed in the matching code, not in the admin.
+
+## News articles (role moderator)
+
+`POST /admin/articles/:id/hide` and `/unhide` return 204 (404 if unknown). A hidden article
+disappears everywhere readers look: lists, its page, the news on deputies, initiatives,
+Government and President, and comments, votes and reports on it (404).
 
 ## Forum moderation (role moderator)
 
@@ -118,7 +130,7 @@ All return 204 (404 if unknown):
   `comment.unhide`, `case.create`, `case.update`, `case.publish`, `case.unpublish`,
   `interest.create`, `interest.update`, `interest.delete`, `report.hide`, `report.dismiss`,
   `thread.hide`, `thread.unhide`, `thread.lock`, `thread.unlock`, `thread.pin`, `thread.unpin`,
-  `post.hide`, `post.unhide`, `editorial.create`, `editorial.update`, `editorial.publish`,
+  `post.hide`, `post.unhide`, `article.hide`, `article.unhide`, `editorial.create`, `editorial.update`, `editorial.publish`,
   `editorial.unpublish`, `editorial.feature`, `editorial.unfeature`, `editorial.delete`.
 - `admin` is null if that admin was deleted.
 - Show it as a history panel next to any record (`?entity=comment&entityId=345`), and as a

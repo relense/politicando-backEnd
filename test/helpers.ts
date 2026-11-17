@@ -8,12 +8,12 @@ export const createTestDb = () => createDb(testDatabaseUrl());
 
 export const resetDb = async (db: Db) => {
   await db.execute(
-    sql`truncate article_votes, editorial_views, corrections, feedback_messages, forum_votes, agenda_events, past_initiatives, comments, article_parties, article_deputies, article_initiatives, articles, seen_source_uris,
+    sql`truncate article_views, editorial_votes, comment_likes, story_votes, article_votes, editorial_views, corrections, feedback_messages, forum_votes, agenda_events, past_initiatives, comments, article_parties, article_deputies, article_initiatives, articles, seen_source_uris,
       initiative_parties, initiative_deputies, initiatives, article_government_members, government_positions,
       government_members, governments, article_presidents, presidents, election_results, election_turnout,
       election_lists, elections, contract_parties, contracts, contract_imports, places, deputies, audit_log,
       admin_sessions, admins, case_people, case_events, case_sources, cases, interests, reports, forum_posts,
-      forum_threads, editorial_posts, newsletter_subscribers restart identity cascade`,
+      forum_threads, editorial_posts, newsletter_subscribers, stories restart identity cascade`,
   );
   await seedParties(db);
 };
