@@ -229,6 +229,9 @@ describe("story comments, likes and the debate", () => {
     await call("POST", `/comments/${against}/like`, { value: 1 });
     detail = (await call("GET", `/stories/${ventura}`)).body;
     expect(detail.debate.disagree).toMatchObject({ id: against, body: "Contra", likes: 1 });
+    const cards = (await call("GET", "/stories")).body.items as { id: number; debate: unknown }[];
+    expect(cards.find((c) => c.id === ventura)!.debate).toEqual(detail.debate);
+    expect(cards.filter((c) => c.id !== ventura).every((c) => JSON.stringify(c.debate) === '{"agree":null,"disagree":null}')).toBe(true);
 
     expect((await call("POST", `/comments/${against}/like`, { value: 0 })).body).toEqual({ likes: 0, mine: 0 });
     expect((await call("GET", `/stories/${ventura}`)).body.debate.disagree).toBeNull();

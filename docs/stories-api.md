@@ -59,6 +59,10 @@ The feed as stories. Returns `{ items, nextCursor, total }`, paged like `/articl
   versions, most often first. Use them for the context strip (below).
 - `importa` and `importance`: see [Importa](#importa).
 - `commentCount`: visible comments on the story, including older ones made on its articles.
+- `debate`: `{ agree, disagree }`, the most liked comment that agrees and the one that
+  disagrees ("A favor" / "Contra"), each `{ id, username, body, likes, createdAt }` or
+  `null`. Each needs at least one like. **Show the pair only when both exist**: one side
+  alone isn't a debate. It's on every card (`/stories`, `/today`) and on `GET /stories/:id`.
 
 | query | what |
 | --- | --- |
@@ -124,9 +128,7 @@ The card plus:
 
 - `articles`: every outlet's version, first published first, each a full article item (as
   on `/articles`). This is "how each one told it".
-- `debate`: `{ agree, disagree }`, the most liked comment that agrees and the one that
-  disagrees, each `{ id, username, body, likes, createdAt }` or `null`. Each needs at least
-  one like. **Show the pair only when both exist**: one side alone isn't a debate.
+- `debate`: as on the list cards (above).
 
 404 for unknown stories, or ones whose articles are all hidden.
 
