@@ -3,7 +3,7 @@ import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { adminGuard, audit } from "../../admin/sessions.js";
 import type { Db } from "../../db/client.js";
-import { comments, forumPosts, forumThreads, reports } from "../../db/schema.js";
+import { articles, comments, forumPosts, forumThreads, reports } from "../../db/schema.js";
 import { ApiError, notFound } from "../../errors.js";
 import { IDEA_STATUSES, IDEAS_BOARD } from "../forums/routes.js";
 import { errorSchema } from "../shared.js";
@@ -12,10 +12,11 @@ import { errorSchema } from "../shared.js";
 
 const idParams = z.object({ id: z.coerce.number().int().positive().max(2_147_483_647) });
 const errors = { 400: errorSchema, 401: errorSchema, 403: errorSchema, 404: errorSchema };
-const kindSchema = z.enum(["thread", "post", "comment"]);
+const kindSchema = z.enum(["thread", "post", "comment", "article"]);
 type Kind = z.infer<typeof kindSchema>;
 
-const tableOf = (kind: Kind) => (kind === "thread" ? forumThreads : kind === "post" ? forumPosts : comments);
+const tableOf = (kind: Kind) =>
+  kind === "thread" ? forumThreads : kind === "post" ? forumPosts : kind === "article" ? articles : comments;
 
 export const adminForumRoutes =
   (db: Db): FastifyPluginAsyncZod =>
@@ -38,6 +39,14 @@ export const adminForumRoutes =
           .from(forumPosts)
           .where(inArray(forumPosts.id, ids));
         for (const r of rows) map.set(r.id, { text: r.body, hidden: r.hiddenAt !== null, threadId: r.threadId, articleId: null, postId: null });
+      } else if (kind === "article") {
+        const rows = await db
+          .select({ id: articles.id, title: articles.title, excerpt: articles.excerpt, url: articles.url, hiddenAt: articles.hiddenAt })
+          .from(articles)
+          .where(inArray(articles.id, ids));
+        for (const r of rows) {
+          map.set(r.id, { text: `${r.title}\n\n${r.excerpt}\n\n${r.url}`, hidden: r.hiddenAt !== null, threadId: null, articleId: r.id, postId: null });
+        }
       } else {
         const rows = await db
           .select({ id: comments.id, body: comments.body, hiddenAt: comments.hiddenAt, articleId: comments.articleId, postId: comments.editorialPostId })
@@ -53,7 +62,7 @@ export const adminForumRoutes =
       {
         schema: {
           tags: ["admin"],
-          summary: "Reported content, one item per thread, post or comment, most reported first",
+          summary: "Reported content, one item per thread, post, comment or news article, most reported first",
           querystring: z.object({
             status: z.enum(["open", "resolved"]).default("open"),
             limit: z.coerce.number().int().min(1).max(100).default(50),
@@ -99,7 +108,7 @@ export const adminForumRoutes =
           from reports where ${status === "open" ? sql`resolved_at is null` : sql`resolved_at is not null`}
           group by kind, target_id order by n desc, first limit ${limit}`);
         const byKind = new Map<Kind, Awaited<ReturnType<typeof targets>>>();
-        for (const kind of ["thread", "post", "comment"] as const) {
+        for (const kind of kindSchema.options) {
           byKind.set(kind, await targets(kind, rows.rows.filter((r) => r.kind === kind).map((r) => r.target_id)));
         }
         return {
@@ -149,6 +158,34 @@ export const adminForumRoutes =
       { kind: "post", name: "hide", set: () => ({ hiddenAt: new Date() }) },
       { kind: "post", name: "unhide", set: () => ({ hiddenAt: null }) },
     ] as const;
+
+    for (const name of ["hide", "unhide"] as const) {
+      app.post(
+        `/admin/articles/:id/${name}`,
+        {
+          schema: {
+            tags: ["admin"],
+            summary:
+              name === "hide"
+                ? "Hide a news article everywhere readers look (duplicate, not about politics…)"
+                : "Show a hidden news article again",
+            params: idParams,
+            response: { 204: z.null(), ...errors },
+          },
+        },
+        async (request, reply) => {
+          const me = await requireAdmin(request, "moderator");
+          const updated = await db
+            .update(articles)
+            .set({ hiddenAt: name === "hide" ? new Date() : null })
+            .where(eq(articles.id, request.params.id))
+            .returning({ id: articles.id });
+          if (updated.length === 0) throw notFound("Article");
+          await audit(db, me.id, `article.${name}`, "article", request.params.id);
+          return reply.status(204).send(null);
+        },
+      );
+    }
 
     app.put(
       "/admin/forum/threads/:id/status",

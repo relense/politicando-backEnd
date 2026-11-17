@@ -459,6 +459,8 @@ describe("platform", () => {
       "/api/v2/admin/agenda/{id}/hide",
       "/api/v2/admin/agenda/{id}/unfeature",
       "/api/v2/admin/agenda/{id}/unhide",
+      "/api/v2/admin/articles/{id}/hide",
+      "/api/v2/admin/articles/{id}/unhide",
       "/api/v2/admin/audit",
       "/api/v2/admin/cases",
       "/api/v2/admin/cases/{id}",

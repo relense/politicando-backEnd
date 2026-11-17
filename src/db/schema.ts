@@ -45,6 +45,8 @@ export const articles = pgTable(
     /** Readers' votes, kept in step with article_votes so lists can sort by them cheaply. */
     upvotes: integer().notNull().default(0),
     downvotes: integer().notNull().default(0),
+    /** Hidden by a moderator (duplicate, not about politics…): left out everywhere readers look. */
+    hiddenAt: timestamp("hidden_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
@@ -904,7 +906,7 @@ export const reports = pgTable(
   "reports",
   {
     id: integer().primaryKey().generatedAlwaysAsIdentity(),
-    kind: text().$type<"thread" | "post" | "comment">().notNull(),
+    kind: text().$type<"thread" | "post" | "comment" | "article">().notNull(),
     targetId: integer("target_id").notNull(),
     reason: text().notNull(),
     details: text(),

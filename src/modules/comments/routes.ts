@@ -52,7 +52,7 @@ export const commentRoutes =
   ({ db, verifyRecaptcha, createLimitPerMinute }: CommentRouteOptions): FastifyPluginAsyncZod =>
   async (app) => {
     const articleTarget = async (id: number): Promise<Target> => {
-      const [article] = await db.select({ id: articles.id }).from(articles).where(eq(articles.id, id));
+      const [article] = await db.select({ id: articles.id }).from(articles).where(and(eq(articles.id, id), isNull(articles.hiddenAt)));
       if (!article) throw notFound("Article");
       return { column: comments.articleId, id };
     };

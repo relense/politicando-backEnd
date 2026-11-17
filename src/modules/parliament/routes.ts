@@ -222,7 +222,7 @@ const coverageSql = sql<z.infer<typeof initiativeSummarySchema>["coverage"]>`(
     'lastAt', to_char(max(a.published_at) at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
   )
   from article_initiatives ai join articles a on a.id = ai.article_id
-  where ai.initiative_id = initiatives.id
+  where ai.initiative_id = initiatives.id and a.hidden_at is null
 )`;
 
 export const initiativeColumns = {
@@ -428,7 +428,7 @@ export const parliamentRoutes =
         const news = await db
           .select(articleColumns)
           .from(articles)
-          .where(sql`exists (
+          .where(sql`articles.hidden_at is null and exists (
             select 1 from article_deputies ad where ad.article_id = articles.id and ad.deputy_id = ${id}
           )`)
           .orderBy(desc(articles.publishedAt), desc(articles.id))
@@ -598,7 +598,10 @@ export const parliamentRoutes =
         const conditions: SQL[] = [];
         if (topic) conditions.push(sql`${initiatives.topics} @> array[${topic}]::text[]`);
         if (coverage) {
-          const covered = sql`exists (select 1 from article_initiatives ai where ai.initiative_id = initiatives.id)`;
+          const covered = sql`exists (
+            select 1 from article_initiatives ai join articles a on a.id = ai.article_id
+            where ai.initiative_id = initiatives.id and a.hidden_at is null
+          )`;
           conditions.push(coverage === "some" ? covered : sql`not ${covered}`);
         }
         if (status) conditions.push(eq(initiatives.status, status));
@@ -714,7 +717,7 @@ export const parliamentRoutes =
         const news = await db
           .select(articleColumns)
           .from(articles)
-          .where(sql`exists (
+          .where(sql`articles.hidden_at is null and exists (
             select 1 from article_initiatives ai where ai.article_id = articles.id and ai.initiative_id = ${row.id}
           )`)
           .orderBy(desc(articles.publishedAt), desc(articles.id))

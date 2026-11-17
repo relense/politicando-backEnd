@@ -183,6 +183,13 @@
       "when": 1794910151434,
       "tag": "0025_article_votes",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1794911271373,
+      "tag": "0026_article_hidden",
+      "breakpoints": true
     }
   ]
 }

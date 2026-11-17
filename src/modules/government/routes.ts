@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { Db } from "../../db/client.js";
 import { articles, deputies, governmentMembers, governmentPositions, governments, parties } from "../../db/schema.js";
 import { notFound } from "../../errors.js";
-import { articleColumns, articleSchema } from "../articles/routes.js";
+import { articleColumns, articleSchema, visibleArticle } from "../articles/routes.js";
 import { errorSchema } from "../shared.js";
 import { memberParty } from "../../government/parties.js";
 
@@ -208,9 +208,9 @@ export const governmentRoutes =
           .select(articleColumns)
           .from(articles)
           .where(
-            inArray(
-              articles.id,
-              sql`(select agm.article_id from article_government_members agm where agm.member_id = ${id})`,
+            and(
+              visibleArticle,
+              inArray(articles.id, sql`(select agm.article_id from article_government_members agm where agm.member_id = ${id})`),
             ),
           )
           .orderBy(desc(articles.publishedAt), desc(articles.id))

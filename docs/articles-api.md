@@ -19,6 +19,10 @@ Returns `{ items, nextCursor, total }`. `total` is how many articles match the f
 | `sort` | `newest` (default), `comments`, `top` or `controversial` (see [Votes](#votes)) |
 | `period` | `today`, `yesterday`, `week` or `month`: articles published then, in Lisbon days. `today` is since midnight, `yesterday` the whole previous day, `week` and `month` the last 7 and 30 days, today included. Works with every sort, and together with `since` |
 | `since` | Only articles published in the last N hours: `24h` (or `24`). 1 to 8760 |
+| `ids` | Only these articles, by id, separated by commas (up to 100). For the reader's **saved** list |
+| `exclude` | Leave these article ids out (up to 500). For the ones the reader **hid** |
+| `excludeSource` | Leave out these outlets (up to 30). For "Mostrar menos deste jornal" |
+| `excludeParty` | Leave out articles about any of these parties (up to 30). For "Mostrar menos sobre este partido". Unknown slugs are ignored, so stale saved preferences never break the feed |
 | `limit` | 1–50, default 10 |
 | `cursor` | The previous page's `nextCursor`. Keep the other parameters the same |
 
@@ -62,6 +66,27 @@ Readers vote news up or down, as on Reddit: anonymous, no captcha.
   `comments`, so positions can shift if people vote while you page.
 - Admin: there's nothing to moderate in votes beyond the rate limit. The counts are in
   `GET /articles/:id`.
+
+## The article menu (no accounts)
+
+Readers have no accounts, so their choices live in **their browser** (localStorage), and the
+API filters by them:
+
+| Menu item | How |
+| --- | --- |
+| Guardar | Keep the ids in the browser. "Guardadas" page: `GET /articles?ids=…` |
+| Esconder | Keep the ids in the browser. Lists: `&exclude=…` |
+| Mostrar menos assim | Offer "deste jornal" (`article.source`) and "sobre este partido" (`article.parties`). Keep them in the browser. Lists: `&excludeSource=…&excludeParty=…` |
+| Porque vejo isto? | Nothing to call: the feed isn't personalised. Say it's newest first (or the chosen sort), and name what the article is tagged with (`parties`, `deputies`, `government`, `president`, `initiatives`) |
+| Denunciar | `POST /reports` with `"kind": "article"` (see `docs/forums-api.md`) |
+| Votar | `POST /articles/:id/vote` (see [Votes](#votes)) |
+
+Following an article and awards need accounts, so they aren't offered yet.
+
+Lists filtered by one reader's choices are personal: fetch them **from the browser** (or
+uncached), never through Next's shared fetch cache, or each reader's list would become its
+own cache entry. The unfiltered feed can stay cached, with the reader's filters applied as a
+second, browser-side request when they have any.
 
 ## GET /articles/sources
 

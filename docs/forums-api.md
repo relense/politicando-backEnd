@@ -151,7 +151,7 @@ For the feedback page's "most voted ideas" box, use
 
 ## POST /reports
 
-Lets readers report threads, replies and article comments:
+Lets readers report threads, replies, comments and news articles:
 
 ```json
 { "kind": "thread", "id": 7, "reason": "insult", "details": "optional, up to 500 characters" }
@@ -160,7 +160,12 @@ Lets readers report threads, replies and article comments:
 `reason`: `spam`, `insult`, `hate`, `personal_data`, `illegal`, `other`. Returns 202, also
 when the same person reports twice (counted once). There is no captcha; it's limited to 10 a
 minute per IP. Show a "Denunciar" link on every post and comment, with these reasons as
-options.
+options. 404 for unknown or already hidden items.
+
+News articles (`"kind": "article"`) take their own reasons, about our tagging or the item
+rather than what the outlet wrote: `wrong_tags` ("Partido ou pessoa errados"),
+`broken_link` ("Link não funciona"), `duplicate` ("Notícia repetida"), `not_politics`
+("Não é sobre política"), `other`. Mixing the two lists is 400.
 
 ## Moderation
 
