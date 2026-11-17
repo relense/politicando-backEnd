@@ -2,8 +2,9 @@ import { and, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
 import type { Db } from "../../db/client.js";
-import { articles, deputies, initiatives, parties } from "../../db/schema.js";
+import { articles, articleVotes, deputies, initiatives, parties } from "../../db/schema.js";
 import { ApiError, notFound } from "../../errors.js";
+import { articleVoterKey } from "../../forums/identity.js";
 import { articleParamsSchema, errorSchema } from "../shared.js";
 
 const cursorSchema = z.object({
@@ -71,6 +72,8 @@ export const articleSchema = z.object({
   imageUrl: z.string().nullable(),
   publishedAt: z.string(),
   commentCount: z.number(),
+  upvotes: z.number(),
+  downvotes: z.number(),
   parties: z.array(articlePartySchema),
   deputies: z.array(articleDeputySchema),
   government: z.array(articleGovernmentSchema).describe("Members of the Government named in it"),
@@ -140,12 +143,30 @@ export const articleColumns = {
   imageUrl: articles.imageUrl,
   publishedAt: articles.publishedAt,
   commentCount: commentCountSql,
+  upvotes: articles.upvotes,
+  downvotes: articles.downvotes,
   parties: partiesSql,
   deputies: deputiesSql,
   government: governmentSql,
   president: presidentSql,
   initiatives: initiativesSql,
 };
+
+/** Reddit's: many votes on both sides first. Only used where both counts are above 0. */
+const controversySql = sql`power((articles.upvotes + articles.downvotes)::float8,
+  least(articles.upvotes, articles.downvotes)::float8 / greatest(articles.upvotes, articles.downvotes))`;
+
+/** Midnight in Lisbon, `days` days before today, as a timestamp. */
+const lisbonMidnight = (days: number) =>
+  sql`((date_trunc('day', now() at time zone 'Europe/Lisbon') - make_interval(days => ${days})) at time zone 'Europe/Lisbon')`;
+
+/** Published in the period, in Lisbon days: today since midnight, yesterday whole, week and month today included. */
+const PERIODS = {
+  today: () => sql`articles.published_at >= ${lisbonMidnight(0)}`,
+  yesterday: () => sql`articles.published_at >= ${lisbonMidnight(1)} and articles.published_at < ${lisbonMidnight(0)}`,
+  week: () => sql`articles.published_at >= ${lisbonMidnight(6)}`,
+  month: () => sql`articles.published_at >= ${lisbonMidnight(29)}`,
+} as const;
 
 /** "a,b,c" → ["a", "b", "c"]: trimmed, no empties or repeats, at most `max` values. */
 const commaList = (max: number) =>
@@ -156,7 +177,7 @@ const commaList = (max: number) =>
     .pipe(z.array(z.string().max(100)).min(1).max(max));
 
 export const articleRoutes =
-  (db: Db): FastifyPluginAsyncZod =>
+  (db: Db, { voteSecret }: { voteSecret: string }): FastifyPluginAsyncZod =>
   async (app) => {
     app.get(
       "/articles",
@@ -173,7 +194,17 @@ export const articleRoutes =
             source: commaList(30)
               .optional()
               .describe('Outlet as in article.source (see /articles/sources), or several separated by commas: articles from any of them'),
-            sort: z.enum(["newest", "comments"]).default("newest").describe("comments: most commented first, only articles with comments"),
+            sort: z
+              .enum(["newest", "comments", "top", "controversial"])
+              .default("newest")
+              .describe(
+                "comments: most commented first, only articles with comments. top: upvotes − downvotes, highest first. " +
+                  "controversial: many votes on both sides first, only articles with at least one of each. Ties: newest first",
+              ),
+            period: z
+              .enum(["today", "yesterday", "week", "month"])
+              .optional()
+              .describe("Only articles published then, in Lisbon days: week and month are the last 7 and 30 days, today included"),
             since: z
               .string()
               .regex(/^\d{1,4}h?$/)
@@ -196,14 +227,15 @@ export const articleRoutes =
         },
       },
       async (request) => {
-        const { party, deputy, initiative, governmentMember, president, q, source, sort, since, cursor, limit } = request.query;
+        const { party, deputy, initiative, governmentMember, president, q, source, sort, period, since, cursor, limit } = request.query;
+        // Only newest pages by (publishedAt, id); the others by position, since counts change.
+        const byPosition = sort !== "newest";
         const conditions: SQL[] = [];
 
-        // Newest first pages by (publishedAt, id); most commented by position, since counts change.
         let offset = 0;
         let after: SQL | undefined;
         if (cursor !== undefined) {
-          if (sort === "comments") offset = decodeOffset(cursor);
+          if (byPosition) offset = decodeOffset(cursor);
           else {
             const { publishedAt, id } = decodeCursor(cursor);
             after = sql`(articles.published_at, articles.id) < (${publishedAt}::timestamptz, ${id}::int)`;
@@ -214,7 +246,9 @@ export const articleRoutes =
         }
         if (source !== undefined) conditions.push(inArray(articles.source, source));
         if (since !== undefined) conditions.push(sql`articles.published_at >= now() - make_interval(hours => ${since})`);
+        if (period !== undefined) conditions.push(PERIODS[period]());
         if (sort === "comments") conditions.push(sql`${commentCountSql} > 0`);
+        if (sort === "controversial") conditions.push(sql`articles.upvotes > 0 and articles.downvotes > 0`);
         if (party !== undefined) {
           const found = await db.select({ id: parties.id, slug: parties.slug }).from(parties).where(inArray(parties.slug, party));
           const unknown = party.filter((slug) => !found.some((p) => p.slug === slug));
@@ -256,7 +290,8 @@ export const articleRoutes =
           )`);
         }
 
-        const order = sort === "comments" ? [desc(commentCountSql), desc(articles.publishedAt), desc(articles.id)] : [desc(articles.publishedAt), desc(articles.id)];
+        const first = { newest: [], comments: [desc(commentCountSql)], top: [desc(sql`articles.upvotes - articles.downvotes`)], controversial: [desc(controversySql)] }[sort];
+        const order = [...first, desc(articles.publishedAt), desc(articles.id)];
         const [rows, [counted]] = await Promise.all([
           db
             .select(articleColumns)
@@ -275,7 +310,7 @@ export const articleRoutes =
           items: page.map((row) => ({ ...row, publishedAt: row.publishedAt.toISOString() })),
           nextCursor: !more
             ? null
-            : sort === "comments"
+            : byPosition
               ? encodeOffset(offset + limit)
               : encodeCursor({ publishedAt: last.publishedAt.toISOString(), id: last.id }),
           total: counted?.total ?? 0,
@@ -318,6 +353,51 @@ export const articleRoutes =
           .where(eq(articles.id, request.params.id));
         if (!article) throw notFound("Article");
         return { ...article, publishedAt: article.publishedAt.toISOString() };
+      },
+    );
+    app.post(
+      "/articles/:id/vote",
+      {
+        config: { rateLimit: { max: 30, timeWindow: "1 minute" } },
+        schema: {
+          tags: ["articles"],
+          summary: "Vote a news article up (1) or down (-1), or remove the vote (0). One vote per reader; voting again replaces it",
+          params: articleParamsSchema,
+          body: z.strictObject({ value: z.union([z.literal(1), z.literal(-1), z.literal(0)]) }),
+          response: {
+            200: z.object({ up: z.number(), down: z.number(), mine: z.union([z.literal(1), z.literal(-1), z.literal(0)]) }),
+            400: errorSchema,
+            404: errorSchema,
+            429: errorSchema,
+          },
+        },
+      },
+      async (request) => {
+        const articleId = request.params.id;
+        const { value } = request.body;
+        const voter = articleVoterKey(voteSecret, request.ip, articleId);
+        return db.transaction(async (tx) => {
+          // Locks the article, so votes on it count one at a time and the totals stay exact.
+          const [article] = await tx.select({ id: articles.id }).from(articles).where(eq(articles.id, articleId)).for("update");
+          if (!article) throw notFound("Article");
+          const mine = and(eq(articleVotes.articleId, articleId), eq(articleVotes.voter, voter));
+          if (value === 0) await tx.delete(articleVotes).where(mine);
+          else {
+            await tx
+              .insert(articleVotes)
+              .values({ articleId, voter, value })
+              .onConflictDoUpdate({ target: [articleVotes.articleId, articleVotes.voter], set: { value, updatedAt: sql`now()` } });
+          }
+          const [counts] = await tx
+            .update(articles)
+            .set({
+              upvotes: sql`(select count(*)::int from article_votes v where v.article_id = ${articleId} and v.value = 1)`,
+              downvotes: sql`(select count(*)::int from article_votes v where v.article_id = ${articleId} and v.value = -1)`,
+            })
+            .where(eq(articles.id, articleId))
+            .returning({ up: articles.upvotes, down: articles.downvotes });
+          return { up: counts!.up, down: counts!.down, mine: value };
+        });
       },
     );
   };

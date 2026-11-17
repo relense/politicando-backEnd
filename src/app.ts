@@ -179,7 +179,7 @@ export const buildApp = async ({
   await typed.register(
     async (api) => {
       await api.register(partyRoutes(db));
-      await api.register(articleRoutes(db));
+      await api.register(articleRoutes(db, { voteSecret: forumSecret }));
       await api.register(parliamentRoutes(db));
       await api.register(governmentRoutes(db));
       await api.register(presidencyRoutes(db));

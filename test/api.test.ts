@@ -504,6 +504,7 @@ describe("platform", () => {
       "/api/v2/articles/sources",
       "/api/v2/articles/{id}",
       "/api/v2/articles/{id}/comments",
+      "/api/v2/articles/{id}/vote",
       "/api/v2/cases",
       "/api/v2/cases/glossary",
       "/api/v2/cases/{id}",

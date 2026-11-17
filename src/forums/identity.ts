@@ -16,3 +16,7 @@ export const reporterKey = (secret: string, ip: string) => mac(secret, `${ip}|re
 
 /** Counts one upvote per reader per thread without storing their IP. */
 export const voterKey = (secret: string, ip: string, threadId: number) => mac(secret, `${ip}|vote|${threadId}`).slice(0, 16);
+
+/** Counts one vote per reader per news article without storing their IP. */
+export const articleVoterKey = (secret: string, ip: string, articleId: number) =>
+  mac(secret, `${ip}|article-vote|${articleId}`).slice(0, 16);
