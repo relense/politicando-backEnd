@@ -24,26 +24,26 @@ export const adminForumRoutes =
 
     /** What a report points at, for the moderator to judge without leaving the queue. */
     const targets = async (kind: Kind, ids: number[]) => {
-      const map = new Map<number, { text: string; hidden: boolean; threadId: number | null; articleId: number | null }>();
+      const map = new Map<number, { text: string; hidden: boolean; threadId: number | null; articleId: number | null; postId: number | null }>();
       if (ids.length === 0) return map;
       if (kind === "thread") {
         const rows = await db
           .select({ id: forumThreads.id, title: forumThreads.title, body: forumThreads.body, hiddenAt: forumThreads.hiddenAt })
           .from(forumThreads)
           .where(inArray(forumThreads.id, ids));
-        for (const r of rows) map.set(r.id, { text: `${r.title}\n\n${r.body}`, hidden: r.hiddenAt !== null, threadId: r.id, articleId: null });
+        for (const r of rows) map.set(r.id, { text: `${r.title}\n\n${r.body}`, hidden: r.hiddenAt !== null, threadId: r.id, articleId: null, postId: null });
       } else if (kind === "post") {
         const rows = await db
           .select({ id: forumPosts.id, body: forumPosts.body, hiddenAt: forumPosts.hiddenAt, threadId: forumPosts.threadId })
           .from(forumPosts)
           .where(inArray(forumPosts.id, ids));
-        for (const r of rows) map.set(r.id, { text: r.body, hidden: r.hiddenAt !== null, threadId: r.threadId, articleId: null });
+        for (const r of rows) map.set(r.id, { text: r.body, hidden: r.hiddenAt !== null, threadId: r.threadId, articleId: null, postId: null });
       } else {
         const rows = await db
-          .select({ id: comments.id, body: comments.body, hiddenAt: comments.hiddenAt, articleId: comments.articleId })
+          .select({ id: comments.id, body: comments.body, hiddenAt: comments.hiddenAt, articleId: comments.articleId, postId: comments.editorialPostId })
           .from(comments)
           .where(inArray(comments.id, ids));
-        for (const r of rows) map.set(r.id, { text: r.body, hidden: r.hiddenAt !== null, threadId: null, articleId: r.articleId });
+        for (const r of rows) map.set(r.id, { text: r.body, hidden: r.hiddenAt !== null, threadId: null, articleId: r.articleId, postId: r.postId });
       }
       return map;
     };
@@ -70,7 +70,13 @@ export const adminForumRoutes =
                   firstReportedAt: z.string(),
                   resolution: z.enum(["hidden", "dismissed"]).nullable(),
                   target: z
-                    .object({ text: z.string(), hidden: z.boolean(), threadId: z.number().nullable(), articleId: z.number().nullable() })
+                    .object({
+                      text: z.string(),
+                      hidden: z.boolean(),
+                      threadId: z.number().nullable(),
+                      articleId: z.number().nullable(),
+                      postId: z.number().nullable().describe("An editorial post's id, for comments on our posts"),
+                    })
                     .nullable()
                     .describe("null if it no longer exists"),
                 }),

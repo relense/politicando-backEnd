@@ -1,10 +1,11 @@
+import { sql } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { hashPassword } from "../src/admin/password.js";
 import { buildApp } from "../src/app.js";
-import { admins, editorialPosts } from "../src/db/schema.js";
+import { admins, comments, editorialPosts, editorialViews } from "../src/db/schema.js";
 import { parseMedia, slugify } from "../src/editorial/media.js";
 import { cleanBody, parseFrontMatter, parseMarkdownPost, saveMarkdownPosts } from "../src/editorial/markdownFiles.js";
-import { createTestDb, resetDb } from "./helpers.js";
+import { createTestDb, insertArticle, resetDb } from "./helpers.js";
 
 describe("media and slugs", () => {
   it("turns provider links into their embed URLs", () => {
@@ -207,5 +208,95 @@ describe("posts from Markdown files", () => {
     const response = await app.inject({ method: "GET", url: "/api/v2/editorial/oe-explicado" });
     expect(response.json()).toMatchObject({ authorName: "Redação Politicando", featured: true, publishedAt: first.toISOString() });
     expect(response.json().body).toMatch(/^Nova intro\./);
+  });
+});
+
+describe("most read", () => {
+  const publish = async (slug: string, status: "published" | "draft" = "published") => {
+    const [row] = await db
+      .insert(editorialPosts)
+      .values({ slug, title: slug, kind: "article", body: "texto", authorName: "Ana", tags: [], status, publishedAt: status === "published" ? new Date() : null })
+      .returning();
+    return row!;
+  };
+  const read = (slug: string, ip = "10.0.0.1", headers: Record<string, string> = {}, payload?: string) =>
+    app.inject({ method: "POST", url: `/api/v2/editorial/${slug}/view`, remoteAddress: ip, headers, ...(payload !== undefined && { payload }) });
+
+  it("counts beacons once per reader per post per day, whatever they send", async () => {
+    const post = await publish("orcamento");
+    await publish("rascunho", "draft");
+    expect((await read("orcamento", "1.1.1.1", { "content-type": "text/plain;charset=UTF-8" }, "")).statusCode).toBe(204);
+    expect((await read("orcamento", "1.1.1.1")).statusCode).toBe(204);
+    expect((await read("orcamento", "2.2.2.2", { "content-type": "application/json" }, "{}")).statusCode).toBe(204);
+    expect((await read("orcamento", "3.3.3.3", { "content-type": "application/json" }, "")).statusCode).toBe(204);
+    expect((await read("rascunho")).statusCode).toBe(404);
+    expect((await read("nao-existe")).statusCode).toBe(404);
+    const rows = await db.select().from(editorialViews);
+    expect(rows).toEqual([{ postId: post.id, day: expect.any(String), views: 3 }]);
+  });
+
+  it("lists the most read in the last days, with their reads", async () => {
+    const a = await publish("a");
+    const b = await publish("b");
+    await publish("never-read");
+    await db.insert(editorialViews).values([
+      { postId: a.id, day: sql`(now() at time zone 'Europe/Lisbon')::date`, views: 2 },
+      { postId: b.id, day: sql`(now() at time zone 'Europe/Lisbon')::date - 1`, views: 5 },
+      { postId: a.id, day: sql`(now() at time zone 'Europe/Lisbon')::date - 30`, views: 100 },
+    ]);
+    const popular = (await app.inject({ method: "GET", url: "/api/v2/editorial?sort=popular&days=7" })).json();
+    expect(popular).toMatchObject({ total: 2, items: [{ slug: "b", views: 5 }, { slug: "a", views: 2 }] });
+    const month = (await app.inject({ method: "GET", url: "/api/v2/editorial?sort=popular&days=90&limit=1" })).json();
+    expect(month).toMatchObject({ total: 2, items: [{ slug: "a", views: 102 }] });
+    const newest = (await app.inject({ method: "GET", url: "/api/v2/editorial" })).json();
+    expect(newest.total).toBe(3);
+    expect(newest.items[0].views).toBeUndefined();
+  });
+});
+
+describe("comments on editorial posts", () => {
+  const publish = async (slug: string, status: "published" | "draft" = "published") => {
+    const [row] = await db
+      .insert(editorialPosts)
+      .values({ slug, title: slug, kind: "opinion", body: "texto", authorName: "Ana", tags: [], status, publishedAt: status === "published" ? new Date() : null })
+      .returning();
+    return row!;
+  };
+  const comment = (slug: string, payload: object) =>
+    app.inject({ method: "POST", url: `/api/v2/editorial/${slug}/comments`, payload: { recaptchaToken: "t", ...payload } });
+
+  it("takes comments and replies like news, counts them, and lets moderators hide them", async () => {
+    const post = await publish("opiniao");
+    await publish("rascunho", "draft");
+    const first = await comment("opiniao", { username: "Zé", body: "Concordo" });
+    expect(first.statusCode).toBe(201);
+    expect(first.json()).toMatchObject({ postId: post.id, username: "Zé", body: "Concordo", parentId: null });
+    const reply = await comment("opiniao", { body: "Eu não", parentId: first.json().id });
+    expect(reply.json()).toMatchObject({ parentId: first.json().id, parentUsername: "Zé", username: null });
+    expect((await comment("rascunho", { body: "x" })).statusCode).toBe(404);
+
+    const article = await insertArticle(db);
+    const [onNews] = await db.insert(comments).values({ articleId: article.id, body: "noutra notícia" }).returning();
+    expect((await comment("opiniao", { body: "x", parentId: onNews!.id })).json().error.code).toBe("invalid_parent");
+
+    const listed = (await app.inject({ method: "GET", url: "/api/v2/editorial/opiniao/comments" })).json();
+    expect(listed.map((c: { body: string }) => c.body)).toEqual(["Concordo", "Eu não"]);
+    expect((await app.inject({ method: "GET", url: "/api/v2/editorial/opiniao" })).json().commentCount).toBe(2);
+    expect((await app.inject({ method: "GET", url: "/api/v2/editorial" })).json().items[0].commentCount).toBe(2);
+
+    const cookie = await login("mod@example.pt");
+    const queue = await call("GET", "/admin/comments", cookie);
+    expect(queue.body.items).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: first.json().id, postId: post.id, postSlug: "opiniao", articleId: null, articleTitle: null })]),
+    );
+    expect((await call("POST", `/admin/comments/${first.json().id}/hide`, cookie)).status).toBe(204);
+    expect((await app.inject({ method: "GET", url: "/api/v2/editorial/opiniao" })).json().commentCount).toBe(1);
+  });
+
+  it("allows a comment on exactly one thing", async () => {
+    const post = await publish("um-so");
+    const article = await insertArticle(db);
+    await expect(db.insert(comments).values({ articleId: article.id, editorialPostId: post.id, body: "x" })).rejects.toThrow();
+    await expect(db.insert(comments).values({ body: "x" })).rejects.toThrow();
   });
 });

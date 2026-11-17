@@ -52,12 +52,14 @@ The very first admin is created on the server: `npm run admin:create -- <email> 
 
 ## Comment moderation (role moderator)
 
-- `GET /admin/comments?status=visible|hidden|all&articleId=&before=&limit=` (default
+- `GET /admin/comments?status=visible|hidden|all&articleId=&postId=&before=&limit=` (default
   `visible`, 50, newest first) returns
-  `{ items: [{ id, articleId, articleTitle, parentId, username, body, createdAt, hiddenAt }] }`.
-  For the next page, pass `before=<last id>`.
+  `{ items: [{ id, articleId, articleTitle, postId, postSlug, postTitle, parentId, username, body, createdAt, hiddenAt }] }`.
+  A comment is on a news article (`articleId`, `articleTitle`) or on one of our editorial
+  posts (`postId`, `postSlug`, `postTitle`); the other side is null. For the next page, pass
+  `before=<last id>`.
 - `POST /admin/comments/:id/hide` with an optional `{ "reason": "Spam" }` returns 204. The
-  comment disappears from `GET /articles/:id/comments`. Its replies stay; show them as replies
+  comment disappears from the public comments (news or editorial). Its replies stay; show them as replies
   to a removed comment.
 - `POST /admin/comments/:id/unhide` returns 204.
 - Hiding something already hidden is a no-op 204. An unknown id is a 404.
@@ -73,12 +75,12 @@ Readers report threads, replies and comments (`POST /reports`, see `docs/forums-
   { "items": [{
     "kind": "thread", "targetId": 7, "reports": 2, "reasons": ["hate", "insult"], "details": ["Ataque a um grupo"],
     "firstReportedAt": "…", "resolution": null,
-    "target": { "text": "Título\n\nTexto…", "hidden": false, "threadId": 7, "articleId": null }
+    "target": { "text": "Título\n\nTexto…", "hidden": false, "threadId": 7, "articleId": null, "postId": null }
   }] }
   ```
 
   `target` is what was reported, so you can judge without leaving the queue. Link to the
-  thread (`threadId`) or article (`articleId`). It is null if the thing no longer exists.
+  thread (`threadId`), news article (`articleId`) or editorial post (`postId`). It is null if the thing no longer exists.
 - `POST /admin/reports/resolve` with `{ "kind": "thread", "targetId": 7, "action": "hide" | "dismiss" }`
   returns `{ resolved: 2 }`, closing every open report on that item. `hide` also hides it.
 

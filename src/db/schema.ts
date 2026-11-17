@@ -5,6 +5,7 @@ import {
   date,
   index,
   boolean,
+  check,
   doublePrecision,
   integer,
   real,
@@ -69,9 +70,9 @@ export const comments = pgTable(
   "comments",
   {
     id: integer().primaryKey().generatedAlwaysAsIdentity(),
-    articleId: integer("article_id")
-      .notNull()
-      .references(() => articles.id, { onDelete: "cascade" }),
+    /** What it's on: a news article or one of our editorial posts (exactly one of the two). */
+    articleId: integer("article_id").references(() => articles.id, { onDelete: "cascade" }),
+    editorialPostId: integer("editorial_post_id").references((): AnyPgColumn => editorialPosts.id, { onDelete: "cascade" }),
     parentId: integer("parent_id").references((): AnyPgColumn => comments.id, {
       onDelete: "cascade",
     }),
@@ -85,7 +86,9 @@ export const comments = pgTable(
   },
   (table) => [
     index("comments_article_idx").on(table.articleId, table.createdAt),
+    index("comments_editorial_idx").on(table.editorialPostId, table.createdAt),
     index("comments_parent_idx").on(table.parentId),
+    check("comments_one_target", sql`num_nonnulls(${table.articleId}, ${table.editorialPostId}) = 1`),
   ],
 );
 
@@ -922,6 +925,19 @@ export const editorialPosts = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [index("editorial_published_idx").on(table.status, table.publishedAt.desc())],
+);
+
+/** Reads of editorial posts, counted per day (Lisbon) and nothing else: no reader data is kept. */
+export const editorialViews = pgTable(
+  "editorial_views",
+  {
+    postId: integer("post_id")
+      .notNull()
+      .references(() => editorialPosts.id, { onDelete: "cascade" }),
+    day: date().notNull(),
+    views: integer().notNull().default(0),
+  },
+  (table) => [primaryKey({ columns: [table.postId, table.day] }), index("editorial_views_day_idx").on(table.day)],
 );
 
 /**

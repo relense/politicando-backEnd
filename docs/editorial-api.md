@@ -8,7 +8,9 @@ Base path: `/api/v2`.
 ## GET /editorial
 
 Query: `featured=true|false`, `kind` (`article`, `opinion`, `podcast`, `interview`,
-`video`), `tag`, `page`, `limit` (1-50, default 10). Published posts only, newest first.
+`video`), `tag`, `sort=new|popular` (default `new`), `days` (1-90, default 7, for
+`popular`), `page`, `limit` (1-50, default 10). Published posts only, newest first, or most
+read with `sort=popular` (see [Most read](#most-read)).
 
 ```json
 {
@@ -29,7 +31,8 @@ Query: `featured=true|false`, `kind` (`article`, `opinion`, `podcast`, `intervie
       "tags": ["orçamento"],
       "featured": true,
       "readingMinutes": 4,
-      "publishedAt": "2026-11-15T12:00:00.000Z"
+      "publishedAt": "2026-11-15T12:00:00.000Z",
+      "commentCount": 3
     }
   ],
   "total": 1
@@ -44,12 +47,40 @@ Query: `featured=true|false`, `kind` (`article`, `opinion`, `podcast`, `intervie
 - `readingMinutes`: words in the body ÷ 200, rounded up, at least 1. Show "N min de leitura".
   For podcasts and videos it reflects the text only; prefer the media's own length there.
 - `opinion`: label it clearly as opinion ("Opinião"), with the author.
+- `commentCount`: visible comments on the post.
 
 ## GET /editorial/:slug
 
 The same fields plus `body`, in **Markdown**. Render it with a Markdown renderer that
 escapes raw HTML (e.g. markdown-it with `html: false`). Pages live at `/editorial/:slug`.
 404 for unknown or unpublished slugs.
+
+## Most read
+
+- `POST /editorial/:slug/view`: no body (anything sent is ignored, so `navigator.sendBeacon`
+  with `text/plain` works). Answers 204. Send it once per post per visit. The API counts one
+  read per reader per post per day anyway, and keeps nothing about readers but a daily count
+  per post (repeats are recognised in memory and forgotten at midnight). 404 for unknown or
+  unpublished slugs (ignore it). 60 a minute per IP.
+- `GET /editorial?sort=popular&days=7&limit=5`: posts ordered by reads in the last `days`
+  (Lisbon days, today included), each with `views`, that count. Posts with no reads in that
+  time are left out, so the list can be shorter than `limit`, or empty: hide the box then.
+  `views` only comes with `sort=popular`.
+
+## Comments
+
+Readers comment on our posts exactly as on news: anonymous, reCAPTCHA, 5 a minute per IP,
+one level of replies, and the same report button and moderation.
+
+- `GET /editorial/:slug/comments`: visible comments, oldest first:
+  `[{ id, postId, parentId, username, parentUsername, body, createdAt }]`.
+- `POST /editorial/:slug/comments` with `{ "username": "Zé" or null, "body": "…", "parentId": null, "recaptchaToken": "…" }`
+  returns 201 with the comment. The errors are the same as on news (`recaptcha_failed`,
+  `invalid_parent`, `rate_limited`, `recaptcha_unavailable`); 404 for unknown or unpublished
+  slugs.
+- The only difference from news comments is `postId` (the post's id) instead of `articleId`.
+  Reuse the news comment component.
+- Reports use `POST /reports` with `kind: "comment"`, as for news.
 
 ## Writing (admin)
 

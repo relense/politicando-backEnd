@@ -1,9 +1,11 @@
-import { and, arrayContains, count, desc, eq, like, or } from "drizzle-orm";
-import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
+import { createHash } from "node:crypto";
+import { and, arrayContains, count, countDistinct, desc, eq, like, or, sql } from "drizzle-orm";
+import type { FastifyPluginAsyncZod, ZodTypeProvider } from "fastify-type-provider-zod";
+import { lisbonDay } from "../../agenda/time.js";
 import { z } from "zod";
 import { type Admin, adminGuard, audit, hasRole } from "../../admin/sessions.js";
 import type { Db } from "../../db/client.js";
-import { editorialPosts } from "../../db/schema.js";
+import { editorialPosts, editorialViews } from "../../db/schema.js";
 import { parseMedia, slugify } from "../../editorial/media.js";
 import { ApiError, notFound } from "../../errors.js";
 import { errorSchema } from "../shared.js";
@@ -30,9 +32,13 @@ const summarySchema = z.object({
   featured: z.boolean(),
   readingMinutes: z.number().describe("Words ÷ 200, rounded up; at least 1"),
   publishedAt: z.string().nullable(),
+  views: z.number().optional().describe("Reads in the last `days` (sort=popular only)"),
 });
-const postSchema = summarySchema.extend({ body: z.string().describe("Markdown. Render it without raw HTML") });
-const adminPostSchema = postSchema.extend({
+const bodySchema = z.string().describe("Markdown. Render it without raw HTML");
+/** What readers get: the post plus how many visible comments it has. */
+const publicSummarySchema = summarySchema.extend({ commentCount: z.number() });
+const postSchema = publicSummarySchema.extend({ body: bodySchema });
+const adminPostSchema = summarySchema.extend({ body: bodySchema,
   status: z.enum(["draft", "published"]),
   authorId: z.number().nullable(),
   mediaUrl: z.string().nullable(),
@@ -74,6 +80,32 @@ const presentAdmin = (r: Row) => ({
 });
 
 const idParams = z.object({ id: z.coerce.number().int().positive().max(2_147_483_647) });
+const slugParams = z.object({ slug: z.string().regex(/^[a-z0-9-]{1,80}$/) });
+
+// The table named in full: inside the subquery, a bare "id" would be the comment's.
+const commentCount = sql<number>`(select count(*)::int from comments c where c.editorial_post_id = "editorial_posts"."id" and c.hidden_at is null)`;
+
+/** Today in Lisbon, in SQL, so reads are counted by the same day everywhere. */
+const lisbonToday = sql`(now() at time zone 'Europe/Lisbon')::date`;
+
+/**
+ * Who already counted as a read of a post today, so reloads and repeated beacons count once.
+ * Kept in memory only, as hashes, and forgotten at the end of the day (or past its size).
+ */
+const createReadDedupe = (max = 200_000) => {
+  let day = "";
+  let seen = new Set<string>();
+  return (ip: string, postId: number, today: string) => {
+    if (today !== day || seen.size >= max) {
+      day = today;
+      seen = new Set();
+    }
+    const key = createHash("sha256").update(`${ip}|${postId}|${today}`).digest("base64url").slice(0, 16);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  };
+};
 const errors = { 400: errorSchema, 401: errorSchema, 403: errorSchema, 404: errorSchema };
 
 export const editorialRoutes =
@@ -88,30 +120,55 @@ export const editorialRoutes =
       {
         schema: {
           tags: ["editorial"],
-          summary: "Our published articles, opinion, podcasts and interviews, newest first",
+          summary: "Our published articles, opinion, podcasts and interviews: newest first, or most read",
           querystring: z.object({
+            sort: z.enum(["new", "popular"]).default("new").describe("popular: most read in the last `days`; posts with no reads are left out"),
+            days: z.coerce.number().int().min(1).max(90).default(7).describe("For sort=popular"),
             featured: z.enum(["true", "false"]).optional().describe("true: the front-page picks"),
             kind: kindSchema.optional(),
             tag: z.string().max(40).optional(),
             page: z.coerce.number().int().min(1).max(1000).default(1),
             limit: z.coerce.number().int().min(1).max(50).default(10),
           }),
-          response: { 200: z.object({ items: z.array(summarySchema), total: z.number() }), 400: errorSchema },
+          response: { 200: z.object({ items: z.array(publicSummarySchema), total: z.number() }), 400: errorSchema },
         },
       },
       async (request) => {
-        const { featured, kind, tag, page, limit } = request.query;
+        const { sort, days, featured, kind, tag, page, limit } = request.query;
         const where = and(
           eq(editorialPosts.status, "published"),
           featured ? eq(editorialPosts.featured, featured === "true") : undefined,
           kind ? eq(editorialPosts.kind, kind) : undefined,
           tag ? arrayContains(editorialPosts.tags, [tag.toLowerCase()]) : undefined,
         );
+        if (sort === "popular") {
+          const recent = and(eq(editorialViews.postId, editorialPosts.id), sql`${editorialViews.day} > ${lisbonToday} - ${days}::int`);
+          const views = sql<number>`sum(${editorialViews.views})::int`;
+          const [rows, [total]] = await Promise.all([
+            db
+              .select({ post: editorialPosts, views, commentCount })
+              .from(editorialPosts)
+              .innerJoin(editorialViews, recent)
+              .where(where)
+              .groupBy(editorialPosts.id)
+              .orderBy(desc(views), desc(editorialPosts.publishedAt), desc(editorialPosts.id))
+              .limit(limit)
+              .offset((page - 1) * limit),
+            db.select({ n: countDistinct(editorialPosts.id) }).from(editorialPosts).innerJoin(editorialViews, recent).where(where),
+          ]);
+          return { items: rows.map((r) => ({ ...present(r.post), views: r.views, commentCount: r.commentCount })), total: total?.n ?? 0 };
+        }
         const [rows, [total]] = await Promise.all([
-          db.select().from(editorialPosts).where(where).orderBy(desc(editorialPosts.publishedAt), desc(editorialPosts.id)).limit(limit).offset((page - 1) * limit),
+          db
+            .select({ post: editorialPosts, commentCount })
+            .from(editorialPosts)
+            .where(where)
+            .orderBy(desc(editorialPosts.publishedAt), desc(editorialPosts.id))
+            .limit(limit)
+            .offset((page - 1) * limit),
           db.select({ n: count() }).from(editorialPosts).where(where),
         ]);
-        return { items: rows.map(present), total: total?.n ?? 0 };
+        return { items: rows.map((r) => ({ ...present(r.post), commentCount: r.commentCount })), total: total?.n ?? 0 };
       },
     );
 
@@ -127,13 +184,48 @@ export const editorialRoutes =
       },
       async (request) => {
         const [row] = await db
-          .select()
+          .select({ post: editorialPosts, commentCount })
           .from(editorialPosts)
           .where(and(eq(editorialPosts.slug, request.params.slug), eq(editorialPosts.status, "published")));
         if (!row) throw notFound("Post");
-        return { ...present(row), body: row.body };
+        return { ...present(row.post), commentCount: row.commentCount, body: row.post.body };
       },
     );
+
+    // Reads, for "Mais lidos". The browser sends a beacon (navigator.sendBeacon), which may come
+    // as text/plain or with no body at all: this route takes any body and ignores it.
+    const firstRead = createReadDedupe();
+    await app.register(async (scope) => {
+      const beacon = scope.withTypeProvider<ZodTypeProvider>();
+      beacon.removeAllContentTypeParsers();
+      beacon.addContentTypeParser("*", { parseAs: "buffer", bodyLimit: 4096 }, (_request, _body, done) => done(null, null));
+      beacon.post(
+        "/editorial/:slug/view",
+        {
+          config: { rateLimit: { max: 60, timeWindow: "1 minute" } },
+          schema: {
+            tags: ["editorial"],
+            summary: "Count a read of a post (once per reader per post per day; no reader data is kept)",
+            params: slugParams,
+            response: { 204: z.null(), 400: errorSchema, 404: errorSchema, 429: errorSchema },
+          },
+        },
+        async (request, reply) => {
+          const [post] = await db
+            .select({ id: editorialPosts.id })
+            .from(editorialPosts)
+            .where(and(eq(editorialPosts.slug, request.params.slug), eq(editorialPosts.status, "published")));
+          if (!post) throw notFound("Post");
+          if (firstRead(request.ip, post.id, lisbonDay(new Date()))) {
+            await db
+              .insert(editorialViews)
+              .values({ postId: post.id, day: sql`${lisbonToday}`, views: 1 })
+              .onConflictDoUpdate({ target: [editorialViews.postId, editorialViews.day], set: { views: sql`${editorialViews.views} + 1` } });
+          }
+          return reply.status(204).send(null);
+        },
+      );
+    });
 
     // Admin: authors write and publish their own posts; moderators and admins can edit any and choose the featured ones.
 
