@@ -6,6 +6,7 @@ import type { Db } from "../../db/client.js";
 import { articles, commentLikes, comments, editorialPosts } from "../../db/schema.js";
 import { ApiError, notFound } from "../../errors.js";
 import { commentLikerKey } from "../../forums/identity.js";
+import { assertPublishable } from "../../moderation/screen.js";
 import { articleParamsSchema, errorSchema } from "../shared.js";
 import type { RecaptchaVerifier } from "./recaptcha.js";
 
@@ -126,6 +127,7 @@ export const commentRoutes =
       findTarget: () => Promise<Target>,
     ) => {
       const { username, body, parentId, stance, recaptchaToken } = input;
+      assertPublishable(body, username);
       let human: boolean;
       try {
         human = await verifyRecaptcha(recaptchaToken, ip);
