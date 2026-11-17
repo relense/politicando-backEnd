@@ -42,10 +42,31 @@ export const articles = pgTable(
     source: text().notNull(),
     imageUrl: text("image_url"),
     publishedAt: timestamp("published_at", { withTimezone: true, precision: 3 }).notNull(),
+    /** Readers' votes, kept in step with article_votes so lists can sort by them cheaply. */
+    upvotes: integer().notNull().default(0),
+    downvotes: integer().notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
     index("articles_feed_idx").on(table.publishedAt.desc(), table.id.desc()),
+  ],
+);
+
+/** One vote (+1 or -1) per reader per article; `voter` is a keyed hash of the IP, never the IP. */
+export const articleVotes = pgTable(
+  "article_votes",
+  {
+    articleId: integer("article_id")
+      .notNull()
+      .references(() => articles.id, { onDelete: "cascade" }),
+    voter: text().notNull(),
+    value: smallint().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.articleId, table.voter] }),
+    check("article_votes_value_check", sql`${table.value} in (-1, 1)`),
   ],
 );
 

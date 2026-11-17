@@ -32,7 +32,8 @@ read with `sort=popular` (see [Most read](#most-read)).
       "featured": true,
       "readingMinutes": 4,
       "publishedAt": "2026-11-15T12:00:00.000Z",
-      "commentCount": 3
+      "commentCount": 3,
+      "views": 128
     }
   ],
   "total": 1
@@ -48,6 +49,9 @@ read with `sort=popular` (see [Most read](#most-read)).
   For podcasts and videos it reflects the text only; prefer the media's own length there.
 - `opinion`: label it clearly as opinion ("Opinião"), with the author.
 - `commentCount`: visible comments on the post.
+- `views`: reads since publication (one per reader per day, see [Most read](#most-read)),
+  on every item and on the post. Show "N leituras" when it's above 0; 0 until the post is
+  first read.
 
 ## GET /editorial/:slug
 
@@ -63,9 +67,10 @@ escapes raw HTML (e.g. markdown-it with `html: false`). Pages live at `/editoria
   per post (repeats are recognised in memory and forgotten at midnight). 404 for unknown or
   unpublished slugs (ignore it). 60 a minute per IP.
 - `GET /editorial?sort=popular&days=7&limit=5`: posts ordered by reads in the last `days`
-  (Lisbon days, today included), each with `views`, that count. Posts with no reads in that
-  time are left out, so the list can be shorter than `limit`, or empty: hide the box then.
-  `views` only comes with `sort=popular`.
+  (Lisbon days, today included), each with `recentViews`, that count. Posts with no reads in
+  that time are left out, so the list can be shorter than `limit`, or empty: hide the box
+  then. `recentViews` only comes with `sort=popular`. The list is already in order: keep it,
+  or sort by `recentViews`, **not** by `views`, which counts every read since publication.
 
 ## Comments
 

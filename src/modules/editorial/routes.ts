@@ -32,11 +32,14 @@ const summarySchema = z.object({
   featured: z.boolean(),
   readingMinutes: z.number().describe("Words ÷ 200, rounded up; at least 1"),
   publishedAt: z.string().nullable(),
-  views: z.number().optional().describe("Reads in the last `days` (sort=popular only)"),
 });
 const bodySchema = z.string().describe("Markdown. Render it without raw HTML");
-/** What readers get: the post plus how many visible comments it has. */
-const publicSummarySchema = summarySchema.extend({ commentCount: z.number() });
+/** What readers get: the post plus how many visible comments and reads it has. */
+const publicSummarySchema = summarySchema.extend({
+  commentCount: z.number(),
+  views: z.number().describe("Reads since publication: one per reader per day"),
+  recentViews: z.number().optional().describe("Reads in the last `days` (sort=popular only); the list is sorted by it"),
+});
 const postSchema = publicSummarySchema.extend({ body: bodySchema });
 const adminPostSchema = summarySchema.extend({ body: bodySchema,
   status: z.enum(["draft", "published"]),
@@ -84,6 +87,8 @@ const slugParams = z.object({ slug: z.string().regex(/^[a-z0-9-]{1,80}$/) });
 
 // The table named in full: inside the subquery, a bare "id" would be the comment's.
 const commentCount = sql<number>`(select count(*)::int from comments c where c.editorial_post_id = "editorial_posts"."id" and c.hidden_at is null)`;
+
+const totalViews = sql<number>`(select coalesce(sum(v.views), 0)::int from editorial_views v where v.post_id = "editorial_posts"."id")`;
 
 /** Today in Lisbon, in SQL, so reads are counted by the same day everywhere. */
 const lisbonToday = sql`(now() at time zone 'Europe/Lisbon')::date`;
@@ -143,24 +148,27 @@ export const editorialRoutes =
         );
         if (sort === "popular") {
           const recent = and(eq(editorialViews.postId, editorialPosts.id), sql`${editorialViews.day} > ${lisbonToday} - ${days}::int`);
-          const views = sql<number>`sum(${editorialViews.views})::int`;
+          const recentViews = sql<number>`sum(${editorialViews.views})::int`;
           const [rows, [total]] = await Promise.all([
             db
-              .select({ post: editorialPosts, views, commentCount })
+              .select({ post: editorialPosts, recentViews, views: totalViews, commentCount })
               .from(editorialPosts)
               .innerJoin(editorialViews, recent)
               .where(where)
               .groupBy(editorialPosts.id)
-              .orderBy(desc(views), desc(editorialPosts.publishedAt), desc(editorialPosts.id))
+              .orderBy(desc(recentViews), desc(editorialPosts.publishedAt), desc(editorialPosts.id))
               .limit(limit)
               .offset((page - 1) * limit),
             db.select({ n: countDistinct(editorialPosts.id) }).from(editorialPosts).innerJoin(editorialViews, recent).where(where),
           ]);
-          return { items: rows.map((r) => ({ ...present(r.post), views: r.views, commentCount: r.commentCount })), total: total?.n ?? 0 };
+          return {
+            items: rows.map((r) => ({ ...present(r.post), views: r.views, recentViews: r.recentViews, commentCount: r.commentCount })),
+            total: total?.n ?? 0,
+          };
         }
         const [rows, [total]] = await Promise.all([
           db
-            .select({ post: editorialPosts, commentCount })
+            .select({ post: editorialPosts, views: totalViews, commentCount })
             .from(editorialPosts)
             .where(where)
             .orderBy(desc(editorialPosts.publishedAt), desc(editorialPosts.id))
@@ -168,7 +176,7 @@ export const editorialRoutes =
             .offset((page - 1) * limit),
           db.select({ n: count() }).from(editorialPosts).where(where),
         ]);
-        return { items: rows.map((r) => ({ ...present(r.post), commentCount: r.commentCount })), total: total?.n ?? 0 };
+        return { items: rows.map((r) => ({ ...present(r.post), views: r.views, commentCount: r.commentCount })), total: total?.n ?? 0 };
       },
     );
 
@@ -184,11 +192,11 @@ export const editorialRoutes =
       },
       async (request) => {
         const [row] = await db
-          .select({ post: editorialPosts, commentCount })
+          .select({ post: editorialPosts, views: totalViews, commentCount })
           .from(editorialPosts)
           .where(and(eq(editorialPosts.slug, request.params.slug), eq(editorialPosts.status, "published")));
         if (!row) throw notFound("Post");
-        return { ...present(row.post), commentCount: row.commentCount, body: row.post.body };
+        return { ...present(row.post), views: row.views, commentCount: row.commentCount, body: row.post.body };
       },
     );
 

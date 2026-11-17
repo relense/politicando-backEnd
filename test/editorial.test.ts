@@ -245,12 +245,23 @@ describe("most read", () => {
       { postId: a.id, day: sql`(now() at time zone 'Europe/Lisbon')::date - 30`, views: 100 },
     ]);
     const popular = (await app.inject({ method: "GET", url: "/api/v2/editorial?sort=popular&days=7" })).json();
-    expect(popular).toMatchObject({ total: 2, items: [{ slug: "b", views: 5 }, { slug: "a", views: 2 }] });
+    // Sorted by reads in the window; views is still every read since publication.
+    expect(popular).toMatchObject({
+      total: 2,
+      items: [
+        { slug: "b", recentViews: 5, views: 5 },
+        { slug: "a", recentViews: 2, views: 102 },
+      ],
+    });
     const month = (await app.inject({ method: "GET", url: "/api/v2/editorial?sort=popular&days=90&limit=1" })).json();
-    expect(month).toMatchObject({ total: 2, items: [{ slug: "a", views: 102 }] });
+    expect(month).toMatchObject({ total: 2, items: [{ slug: "a", recentViews: 102, views: 102 }] });
     const newest = (await app.inject({ method: "GET", url: "/api/v2/editorial" })).json();
     expect(newest.total).toBe(3);
-    expect(newest.items[0].views).toBeUndefined();
+    expect(Object.fromEntries(newest.items.map((p: { slug: string; views: number }) => [p.slug, p.views]))).toEqual({ a: 102, b: 5, "never-read": 0 });
+    expect(newest.items[0].recentViews).toBeUndefined();
+    const post = (await app.inject({ method: "GET", url: "/api/v2/editorial/a" })).json();
+    expect(post.views).toBe(102);
+    expect((await app.inject({ method: "GET", url: "/api/v2/editorial/never-read" })).json().views).toBe(0);
   });
 });
 
