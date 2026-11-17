@@ -990,11 +990,45 @@ export const editorialPosts = pgTable(
     tags: text().array().notNull().default(sql`'{}'::text[]`),
     status: text().$type<"draft" | "published">().notNull().default("draft"),
     featured: boolean().notNull().default(false),
+    /** Readers' votes, kept in step with editorial_votes. */
+    upvotes: integer().notNull().default(0),
+    downvotes: integer().notNull().default(0),
     publishedAt: timestamp("published_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [index("editorial_published_idx").on(table.status, table.publishedAt.desc())],
+);
+
+/** One vote (+1 or -1) per reader per editorial post; `voter` is a keyed hash of the IP. */
+export const editorialVotes = pgTable(
+  "editorial_votes",
+  {
+    postId: integer("post_id")
+      .notNull()
+      .references(() => editorialPosts.id, { onDelete: "cascade" }),
+    voter: text().notNull(),
+    value: smallint().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.postId, table.voter] }),
+    check("editorial_votes_value_check", sql`${table.value} in (-1, 1)`),
+  ],
+);
+
+/** Reads of a news article on our site, per Lisbon day (one per reader per day; nothing about readers kept). */
+export const articleViews = pgTable(
+  "article_views",
+  {
+    articleId: integer("article_id")
+      .notNull()
+      .references(() => articles.id, { onDelete: "cascade" }),
+    day: date().notNull(),
+    views: integer().notNull().default(0),
+  },
+  (table) => [primaryKey({ columns: [table.articleId, table.day] }), index("article_views_day_idx").on(table.day)],
 );
 
 /** Reads of editorial posts, counted per day (Lisbon) and nothing else: no reader data is kept. */

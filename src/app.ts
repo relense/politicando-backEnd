@@ -194,7 +194,7 @@ export const buildApp = async ({
       await api.register(adminRoutes({ db, secureCookies, loginLimitPerMinute }));
       await api.register(adminRecordRoutes(db));
       await api.register(adminForumRoutes(db));
-      await api.register(editorialRoutes(db));
+      await api.register(editorialRoutes(db, { voteSecret: forumSecret }));
       await api.register(agendaRoutes(db));
       await api.register(feedbackRoutes({ db, verifyRecaptcha, mailer, limitPerHour: feedbackLimitPerHour }));
       await api.register(seoRoutes(db));

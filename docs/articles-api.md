@@ -22,7 +22,8 @@ Returns `{ items, nextCursor, total }`. `total` is how many articles match the f
 | `source` | An outlet as in `article.source` (e.g. `observador.pt`), or several separated by commas (`publico.pt,expresso.pt`): articles from **any** of them. Take the values from `/articles/sources`. An outlet with no articles just matches nothing |
 | `party` | A party slug, or several separated by commas (`ps,psd,livre`): articles about **any** of them. 404 `not_found` if any slug is unknown, naming it (`"Party not found: xyz"`) |
 | `deputy`, `initiative`, `governmentMember`, `president` | One value each, as before |
-| `sort` | `newest` (default), `comments`, `top` or `controversial` (see [Votes](#votes)) |
+| `sort` | `newest` (default), `comments`, `top` or `controversial` (see [Votes](#votes)), `views` ("Mais lidas") or `trending` ("Em alta"), see [Reads and trending](#reads-and-trending) |
+| `days` | For `sort=views`: 1–90, default 7 |
 | `period` | `today`, `yesterday`, `week` or `month`: articles published then, in Lisbon days. `today` is since midnight, `yesterday` the whole previous day, `week` and `month` the last 7 and 30 days, today included. Works with every sort, and together with `since` |
 | `since` | Only articles published in the last N hours: `24h` (or `24`). 1 to 8760 |
 | `ids` | Only these articles, by id, separated by commas (up to 100). For the reader's **saved** list |
@@ -72,6 +73,24 @@ Readers vote news up or down, as on Reddit: anonymous, no captcha.
   `comments`, so positions can shift if people vote while you page.
 - Admin: there's nothing to moderate in votes beyond the rate limit. The counts are in
   `GET /articles/:id`.
+
+## Reads and trending
+
+- `POST /articles/:id/view` when a reader opens an article's page on our site: no body
+  (anything sent is ignored, so `navigator.sendBeacon` works), 204. One read per reader per
+  article per day; nothing about readers is kept. 60 a minute per IP, 404 for unknown or
+  hidden articles. Send it **from the browser**, so renders and crawlers don't count.
+- Every article has `views`: reads of its page on our site since publication. Clicks to the
+  outlet aren't counted.
+- `sort=views&days=7`: "Mais lidas", the most read in the last `days` Lisbon days, each with
+  `recentViews` (that count; only with this sort). Only articles read then, so the list can be
+  short. Keep the order, or sort by `recentViews`, not `views`.
+- `sort=trending`: "Em alta", the most activity for their age among the last 7 days' news.
+  Points are upvotes − downvotes, 2 per visible comment and 1 per 10 reads in the last 2 days.
+  The score is (points + 1) ÷ (hours since publication + 2)^1.5, as Hacker News does, so a
+  fresh story with some activity beats an older one with more. It changes by the minute;
+  cache it briefly at most.
+- Both page by position, like `comments`.
 
 ## The article menu (no accounts)
 

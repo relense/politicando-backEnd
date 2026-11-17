@@ -27,3 +27,6 @@ export const storyVoterKey = (secret: string, ip: string, storyId: number) => ma
 /** Counts one like per reader per comment without storing their IP. */
 export const commentLikerKey = (secret: string, ip: string, commentId: number) =>
   mac(secret, `${ip}|comment-like|${commentId}`).slice(0, 16);
+
+/** Counts one vote per reader per editorial post without storing their IP. */
+export const postVoterKey = (secret: string, ip: string, postId: number) => mac(secret, `${ip}|post-vote|${postId}`).slice(0, 16);

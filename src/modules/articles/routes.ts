@@ -1,10 +1,12 @@
 import { and, desc, eq, inArray, isNull, notInArray, sql, type SQL } from "drizzle-orm";
-import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
+import type { FastifyPluginAsyncZod, ZodTypeProvider } from "fastify-type-provider-zod";
+import { lisbonDay } from "../../agenda/time.js";
 import { z } from "zod";
 import type { Db } from "../../db/client.js";
-import { articles, articleVotes, deputies, initiatives, parties } from "../../db/schema.js";
+import { articles, articleViews, articleVotes, deputies, initiatives, parties } from "../../db/schema.js";
 import { ApiError, notFound } from "../../errors.js";
 import { articleVoterKey } from "../../forums/identity.js";
+import { createReadDedupe, lisbonToday } from "../editorial/routes.js";
 import { articleParamsSchema, errorSchema } from "../shared.js";
 
 const cursorSchema = z.object({
@@ -80,6 +82,8 @@ export const articleSchema = z.object({
   commentCount: z.number(),
   upvotes: z.number(),
   downvotes: z.number(),
+  views: z.number().describe("Reads of its page on our site since publication: one per reader per day"),
+  recentViews: z.number().optional().describe("Reads in the last `days` (sort=views only); the list is sorted by it"),
   parties: z.array(articlePartySchema),
   deputies: z.array(articleDeputySchema),
   government: z.array(articleGovernmentSchema).describe("Members of the Government named in it"),
@@ -156,6 +160,7 @@ export const articleColumns = {
   commentCount: commentCountSql,
   upvotes: articles.upvotes,
   downvotes: articles.downvotes,
+  views: sql<number>`(select coalesce(sum(v.views), 0)::int from article_views v where v.article_id = articles.id)`,
   parties: partiesSql,
   deputies: deputiesSql,
   government: governmentSql,
@@ -166,6 +171,21 @@ export const articleColumns = {
 /** Reddit's: many votes on both sides first. Only used where both counts are above 0. */
 const controversySql = sql`power((articles.upvotes + articles.downvotes)::float8,
   least(articles.upvotes, articles.downvotes)::float8 / greatest(articles.upvotes, articles.downvotes))`;
+
+/** Reads in the last `days` Lisbon days, today included. */
+const recentViewsSql = (days: number) =>
+  sql<number>`(select coalesce(sum(v.views), 0)::int from article_views v
+    where v.article_id = articles.id and v.day > (now() at time zone 'Europe/Lisbon')::date - ${days}::int)`;
+
+/**
+ * "Em alta": activity over age, as Hacker News does. Points are upvotes − downvotes, 2 per
+ * visible comment and 1 per 10 reads in the last 2 days; the score is (points + 1) over
+ * (hours since publication + 2) ^ 1.5, so fresh activity wins and old news sinks.
+ */
+const trendingSql = sql`((articles.upvotes - articles.downvotes + 2 * ${commentCountSql} + ${recentViewsSql(2)} / 10.0 + 1)
+  / power(extract(epoch from (now() - articles.published_at)) / 3600 + 2, 1.5))`;
+/** Trending only looks at the last week's news. */
+const TRENDING_DAYS = 7;
 
 /** Midnight in Lisbon, `days` days before today, as a timestamp. */
 export const lisbonMidnight = (days: number) =>
@@ -223,12 +243,15 @@ export const articleRoutes =
               .optional()
               .describe("Leave out articles about any of these parties (\"show fewer like this\"). Unknown slugs are ignored"),
             sort: z
-              .enum(["newest", "comments", "top", "controversial"])
+              .enum(["newest", "comments", "top", "controversial", "views", "trending"])
               .default("newest")
               .describe(
                 "comments: most commented first, only articles with comments. top: upvotes − downvotes, highest first. " +
-                  "controversial: many votes on both sides first, only articles with at least one of each. Ties: newest first",
+                  "controversial: many votes on both sides first, only articles with at least one of each. " +
+                  "views: most read on our site in the last `days`, only articles read then. " +
+                  "trending: most activity for their age, from the last 7 days. Ties: newest first",
               ),
+            days: z.coerce.number().int().min(1).max(90).default(7).describe("For sort=views"),
             period: z
               .enum(["today", "yesterday", "week", "month"])
               .optional()
@@ -255,7 +278,7 @@ export const articleRoutes =
         },
       },
       async (request) => {
-        const { party, deputy, initiative, governmentMember, president, q, source, ids, exclude, excludeSource, excludeParty, sort, period, since, cursor, limit } =
+        const { party, deputy, initiative, governmentMember, president, q, source, ids, exclude, excludeSource, excludeParty, sort, days, period, since, cursor, limit } =
           request.query;
         // Only newest pages by (publishedAt, id); the others by position, since counts change.
         const byPosition = sort !== "newest";
@@ -287,6 +310,8 @@ export const articleRoutes =
         if (period !== undefined) conditions.push(PERIODS[period]());
         if (sort === "comments") conditions.push(sql`${commentCountSql} > 0`);
         if (sort === "controversial") conditions.push(sql`articles.upvotes > 0 and articles.downvotes > 0`);
+        if (sort === "views") conditions.push(sql`${recentViewsSql(days)} > 0`);
+        if (sort === "trending") conditions.push(sql`articles.published_at >= now() - make_interval(days => ${TRENDING_DAYS})`);
         if (party !== undefined) {
           const found = await db.select({ id: parties.id, slug: parties.slug }).from(parties).where(inArray(parties.slug, party));
           const unknown = party.filter((slug) => !found.some((p) => p.slug === slug));
@@ -328,11 +353,18 @@ export const articleRoutes =
           )`);
         }
 
-        const first = { newest: [], comments: [desc(commentCountSql)], top: [desc(sql`articles.upvotes - articles.downvotes`)], controversial: [desc(controversySql)] }[sort];
+        const first = {
+          newest: [],
+          comments: [desc(commentCountSql)],
+          top: [desc(sql`articles.upvotes - articles.downvotes`)],
+          controversial: [desc(controversySql)],
+          views: [desc(recentViewsSql(days))],
+          trending: [desc(trendingSql)],
+        }[sort];
         const order = [...first, desc(articles.publishedAt), desc(articles.id)];
         const [rows, [counted]] = await Promise.all([
           db
-            .select(articleColumns)
+            .select(sort === "views" ? { ...articleColumns, recentViews: recentViewsSql(days) } : articleColumns)
             .from(articles)
             .where(and(...conditions, after))
             .orderBy(...order)
@@ -355,6 +387,38 @@ export const articleRoutes =
         };
       },
     );
+
+    const firstRead = createReadDedupe();
+    await app.register(async (scope) => {
+      // A beacon: anything sent is ignored, so navigator.sendBeacon works with any content type.
+      const beacon = scope.withTypeProvider<ZodTypeProvider>();
+      beacon.removeAllContentTypeParsers();
+      beacon.addContentTypeParser("*", { parseAs: "buffer", bodyLimit: 4096 }, (_request, _body, done) => done(null, null));
+      beacon.post(
+        "/articles/:id/view",
+        {
+          config: { rateLimit: { max: 60, timeWindow: "1 minute" } },
+          schema: {
+            tags: ["articles"],
+            summary: "Count a read of an article's page (once per reader per article per day; no reader data is kept)",
+            params: articleParamsSchema,
+            response: { 204: z.null(), 400: errorSchema, 404: errorSchema, 429: errorSchema },
+          },
+        },
+        async (request, reply) => {
+          const [article] = await db.select({ id: articles.id }).from(articles).where(and(eq(articles.id, request.params.id), visibleArticle));
+          if (!article) throw notFound("Article");
+          // Keyed apart from post reads, which share the de-duplication helper's shape.
+          if (firstRead(`article|${request.ip}`, article.id, lisbonDay(new Date()))) {
+            await db
+              .insert(articleViews)
+              .values({ articleId: article.id, day: sql`${lisbonToday}`, views: 1 })
+              .onConflictDoUpdate({ target: [articleViews.articleId, articleViews.day], set: { views: sql`${articleViews.views} + 1` } });
+          }
+          return reply.status(204).send(null);
+        },
+      );
+    });
 
     app.get(
       "/articles/sources",
