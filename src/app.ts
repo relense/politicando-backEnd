@@ -28,6 +28,7 @@ import { caseRoutes } from "./modules/cases/routes.js";
 import { forumRoutes } from "./modules/forums/routes.js";
 import { agendaRoutes } from "./modules/agenda/routes.js";
 import { editorialRoutes } from "./modules/editorial/routes.js";
+import { publishRoutes } from "./modules/editorial/publishApi.js";
 import { feedbackRoutes } from "./modules/feedback/routes.js";
 import { seoRoutes } from "./modules/seo/routes.js";
 import { placeRoutes } from "./modules/places/routes.js";
@@ -84,6 +85,8 @@ export interface AppOptions {
   /** What needs a reader account (LOGIN_REQUIRED). Default none: anonymous, keyed by IP. */
   loginRequired?: readonly Participation[];
   registerLimitPerHour?: number;
+  /** Keys that may publish blog posts through POST /publish. None: the route doesn't exist. */
+  publishKeys?: readonly string[];
 }
 
 const errorBody = (code: string, message: string) => ({ error: { code, message } });
@@ -106,6 +109,7 @@ export const buildApp = async ({
   feedbackLimitPerHour = 10,
   loginRequired = [],
   registerLimitPerHour = 3,
+  publishKeys = [],
 }: AppOptions) => {
   const proxied = trustProxy || clientIpHeader !== undefined;
   const app = Fastify({ logger, trustProxy: proxied || frontendKey !== undefined, bodyLimit: 64 * 1024 });
@@ -223,6 +227,7 @@ export const buildApp = async ({
       await api.register(adminForumRoutes(db));
       await api.register(adminUserRoutes(db));
       await api.register(editorialRoutes(db, { voteSecret: forumSecret }));
+      await api.register(publishRoutes(db, publishKeys));
       await api.register(agendaRoutes(db));
       await api.register(feedbackRoutes({ db, verifyRecaptcha, mailer, limitPerHour: feedbackLimitPerHour }));
       await api.register(seoRoutes(db));

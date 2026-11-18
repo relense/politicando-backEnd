@@ -37,6 +37,9 @@ services:
         sync: false
       - key: RECAPTCHA_SECRET
         sync: false
+      # Keys for POST /api/v2/publish (blog posts by API, docs/publish-api.md), comma-separated. Empty: off.
+      - key: PUBLISH_API_KEYS
+        sync: false
       # e.g. politicando.pt,www.politicando.pt
       - key: RECAPTCHA_HOSTNAMES
         sync: false
