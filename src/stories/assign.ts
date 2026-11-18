@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import type { Db } from "../db/client.js";
+import { followers, notify } from "../notifications/index.js";
 import {
   pickStory,
   rarity,
@@ -28,15 +29,31 @@ interface Row extends Record<string, unknown> {
  * skipped (if one is shown again, the next run groups it). Runs after each ingest; safe to run
  * twice at once (the second waits).
  */
-export const assignStories = async (db: Db) =>
-  db.transaction(async (tx) => {
+export const assignStories = async (db: Db) => {
+  const created = new Set<number>();
+  const result = await db.transaction(async (tx) => {
     await tx.execute(
       sql`select pg_advisory_xact_lock(hashtext('assign_stories'))`,
     );
     const touched = new Set<number>();
-    const counts = await group(tx, touched);
-    return { ...counts, tagged: await refreshTags(tx, touched) };
+    const counts = await group(tx, touched, created);
+    return { ...counts, tagged: await refreshTags(tx, touched), touched };
   });
+  // Stories that already existed and got new coverage: tell whoever follows them.
+  let notified = 0;
+  for (const storyId of result.touched) {
+    if (created.has(storyId)) continue;
+    try {
+      const userIds = await followers(db, "story", storyId);
+      await notify(db, { userIds, kind: "story_update", targetId: storyId });
+      notified += userIds.length;
+    } catch (error) {
+      console.error("Story notification failed:", error);
+    }
+  }
+  const { touched: _touched, ...counts } = result;
+  return { ...counts, notified };
+};
 
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 
@@ -69,7 +86,7 @@ const refreshTags = async (tx: Tx, touched: Set<number>) => {
   return ids.length;
 };
 
-const group = async (tx: Tx, touched: Set<number>) => {
+const group = async (tx: Tx, touched: Set<number>, createdIds: Set<number>) => {
   const [first] = (
     await tx.execute<{ at: Date | null }>(
       sql`select min(published_at) as at from articles where story_id is null and hidden_at is null`,
@@ -129,6 +146,7 @@ const group = async (tx: Tx, touched: Set<number>) => {
       ).rows;
       story = { id: row!.id, articles: [] };
       stories.set(story.id, story);
+      createdIds.add(story.id);
       created++;
     }
     await tx.execute(

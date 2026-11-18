@@ -232,6 +232,27 @@
       "when": 1795025273312,
       "tag": "0032_reader_accounts",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1795034189931,
+      "tag": "0033_blog_importa",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1795034198128,
+      "tag": "0034_blog_drop_votes",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1795035332459,
+      "tag": "0035_engagement",
+      "breakpoints": true
     }
   ]
 }

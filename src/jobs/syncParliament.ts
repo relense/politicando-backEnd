@@ -3,6 +3,7 @@ import { createDb } from "../db/client.js";
 import { linkStoredArticles } from "../parliament/linkNews.js";
 import { createOpenDataClient } from "../parliament/openData.js";
 import { syncParliament } from "../parliament/sync.js";
+import { resolvePredictions } from "../predictions/index.js";
 
 /** How far back to look for news that new initiatives or deputies now match. */
 const RELINK_DAYS = 30;
@@ -17,6 +18,8 @@ try {
   // New initiatives and deputies can match news the scanner already stored.
   const since = new Date(Date.now() - RELINK_DAYS * 24 * 60 * 60 * 1000);
   console.log(JSON.stringify({ relinked: await linkStoredArticles(db, { since }) }));
+  // "Passa ou chumba?": settle what the new votes decided, and tell the readers.
+  console.log(JSON.stringify({ predictions: await resolvePredictions(db) }));
 } catch (error) {
   console.error("Parliament sync failed:", error);
   process.exitCode = 1;

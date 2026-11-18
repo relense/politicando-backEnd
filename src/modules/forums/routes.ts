@@ -9,6 +9,7 @@ import { posterId, reporterKey, voterKey } from "../../forums/identity.js";
 import type { RecaptchaVerifier } from "../comments/recaptcha.js";
 import { autoModerate } from "../../moderation/reports.js";
 import { assertPublishable } from "../../moderation/screen.js";
+import { follow, followers, notify } from "../../notifications/index.js";
 import { errorSchema } from "../shared.js";
 import type { Participant } from "../../accounts/participant.js";
 
@@ -291,6 +292,13 @@ export const forumRoutes =
           await tx.update(forumThreads).set({ posterId: posterId(forumSecret, who.key, created!.id) }).where(eq(forumThreads.id, created!.id));
           return created!.id;
         });
+        if (who.userId !== null) {
+          try {
+            await follow(db, who.userId, "thread", id);
+          } catch (error) {
+            request.log.error(error, "follow failed");
+          }
+        }
         return reply.status(201).send({ id, posterId: posterId(forumSecret, who.key, id) });
       },
     );
@@ -333,12 +341,14 @@ export const forumRoutes =
           .where(and(eq(forumThreads.id, threadId), isNull(forumThreads.hiddenAt)));
         if (!thread) throw notFound("Thread");
         if (thread.lockedAt) throw new ApiError(409, "thread_locked", "This thread is closed to replies");
+        let quotedUserId: number | null = null;
         if (replyTo) {
           const [quoted] = await db
-            .select({ id: forumPosts.id })
+            .select({ id: forumPosts.id, userId: forumPosts.userId })
             .from(forumPosts)
             .where(and(eq(forumPosts.id, replyTo), eq(forumPosts.threadId, threadId)));
           if (!quoted) throw new ApiError(400, "invalid_reply", "That post is not in this thread");
+          quotedUserId = quoted.userId;
         }
         const poster = posterId(forumSecret, who.key, threadId);
         const id = await db.transaction(async (tx) => {
@@ -352,6 +362,16 @@ export const forumRoutes =
             .where(eq(forumThreads.id, threadId));
           return created!.id;
         });
+        // Best effort: the one answered hears it as a reply, the thread's followers as news.
+        try {
+          const answered = quotedUserId !== null && quotedUserId !== who.userId ? quotedUserId : null;
+          if (answered !== null) await notify(db, { userIds: [answered], kind: "forum_reply", targetId: id, actorName: name });
+          const others = (await followers(db, "thread", threadId)).filter((userId) => userId !== who.userId && userId !== answered);
+          await notify(db, { userIds: others, kind: "thread_update", targetId: threadId, actorName: name });
+          if (who.userId !== null) await follow(db, who.userId, "thread", threadId);
+        } catch (error) {
+          request.log.error(error, "forum notification failed");
+        }
         return reply.status(201).send({ id, posterId: poster });
       },
     );

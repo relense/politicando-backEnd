@@ -1,7 +1,7 @@
 import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { buildApp } from "../src/app.js";
-import { agendaEvents, articleInitiatives, articles, comments, editorialPosts, initiatives, stories } from "../src/db/schema.js";
+import { agendaEvents, articleInitiatives, articles, comments, editorialPosts, initiatives, notifications, stories, userFollows, users } from "../src/db/schema.js";
 import { assignStories } from "../src/stories/assign.js";
 import { rarity, sameStory, termsOf, titlePartiesOf } from "../src/stories/similarity.js";
 import { storyTagsOf } from "../src/stories/tags.js";
@@ -79,11 +79,14 @@ describe("assignStories", () => {
     expect(await storyOf(c.id)).toBe(story);
     expect(await storyOf(other.id)).not.toBe(story);
 
-    // A later version joins the story; running again with nothing new does nothing.
+    // A later version joins the story and tells its followers; running again with nothing new does nothing.
+    const [reader] = await db.insert(users).values({ username: "seguidor", passwordHash: "x" }).returning();
+    await db.insert(userFollows).values({ userId: reader!.id, kind: "story", targetId: story! });
     const d = await article("André Ventura reeleito presidente do Chega", "A convenção de Viseu deu 98% dos votos a Ventura.", "jn.pt", 1);
-    expect(await assignStories(db)).toMatchObject({ assigned: 1, created: 0, tagged: 1 });
+    expect(await assignStories(db)).toMatchObject({ assigned: 1, created: 0, tagged: 1, notified: 1 });
     expect(await storyOf(d.id)).toBe(story);
-    expect(await assignStories(db)).toEqual({ assigned: 0, created: 0, tagged: 0 });
+    expect(await db.select().from(notifications)).toMatchObject([{ userId: reader!.id, kind: "story_update", targetId: story, count: 1 }]);
+    expect(await assignStories(db)).toEqual({ assigned: 0, created: 0, tagged: 0, notified: 0 });
   });
 
   it("doesn't join news days apart", async () => {

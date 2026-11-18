@@ -1,6 +1,7 @@
 import { loadIngestConfig } from "../config.js";
 import { createDb } from "../db/client.js";
 import { purgeFeedback } from "../feedback/purge.js";
+import { pruneNotifications } from "../notifications/index.js";
 import { ingest, refreshGenericHeadlines } from "../ingestion/ingest.js";
 import { createPoliteClient } from "../ingestion/politeClient.js";
 import { NEWS_SOURCES } from "../ingestion/sources.js";
@@ -28,6 +29,7 @@ try {
   console.log(JSON.stringify({ stories: await assignStories(db) }));
   // Not news, but this job runs every hour: old feedback screenshots go here too.
   await purgeFeedback(db);
+  console.log(JSON.stringify({ prunedNotifications: await pruneNotifications(db) }));
   // And the podcast's newest episode, for the home page. Spotify being down only means it shows a bit later.
   try {
     console.log(JSON.stringify({ podcast: await syncPodcast(db) }));

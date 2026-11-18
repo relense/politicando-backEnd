@@ -84,10 +84,14 @@ account and their comments carry their username.
 
 ```json
 {
-  "saved": { "articles": [812, 790], "stories": [41] },
+  "saved": {
+    "articles": [812, 790], "stories": [41], "editorial": [3],
+    "comments": [1203], "threads": [17], "replies": [4410]
+  },
   "hidden": [777],
   "muted": { "sources": ["publico.pt"], "parties": ["chega"] },
   "read": [41, 39],
+  "follows": { "stories": [41], "threads": [17] },
   "votes": {
     "articles": { "812": 1, "640": -1 },
     "editorial": { "metodo-de-hondt-explicado": 1 },
@@ -99,13 +103,14 @@ account and their comments carry their username.
 ```
 
 Lists are newest first. It replaces `reader-prefs`, `article-votes`, `story-importa`,
-`comment-likes`, `ideas-voted` and `stories-read` for a logged-in reader.
+`comment-likes`, `ideas-voted` and `stories-read` for a logged-in reader. `votes.editorial` lists
+the blog posts the reader marked "Importa" (always `1`; blog posts no longer have downvotes).
 
 ### Changes: one call per change, all return 204, all idempotent
 
 | Call | What |
 |---|---|
-| `PUT` / `DELETE /me/saved/{article\|story}/:id` | Save or unsave |
+| `PUT` / `DELETE /me/saved/:kind/:id` | Save or unsave. `kind`: `article` (news), `story`, `editorial` (a blog post, by its `id`), `comment`, `thread` (forum) or `reply` (a post in a forum thread). 404 for something that doesn't exist or was hidden |
 | `PUT` / `DELETE /me/hidden/:articleId` | Hide a news article from the feed, or show it again |
 | `PUT` / `DELETE /me/muted/{source\|party}/:value` | Mute an outlet (its domain, e.g. `publico.pt`) or a party (its slug) |
 | `PUT /me/read/:storyId` | Mark a story read |
@@ -116,6 +121,23 @@ With a session they count once per account, whatever the device or IP.
 
 The same caps as the browser apply: the newest 500 saved of each kind and 500 hidden, 50 muted
 of each kind, 200 read. Past a cap, the oldest go.
+
+### `GET /me/saved`: the saved page
+
+Saved blog posts, comments, forum threads and replies, with what's needed to show them and link
+to them, newest saved first. Things hidden or deleted since are left out. News and stories
+aren't here: they're ids in `/me/state`, which the site already knows how to load.
+
+```json
+{
+  "editorial": [{ "savedAt": "…", "id": 3, "slug": "partidos-nas-noticias", "kind": "article", "title": "…", "subtitle": "…", "coverImageUrl": null, "publishedAt": "…" }],
+  "comments": [{ "savedAt": "…", "id": 1203, "body": "…", "username": "ana", "likes": 4, "createdAt": "…", "articleId": 812, "storyId": null, "postSlug": null }],
+  "threads": [{ "savedAt": "…", "id": 17, "board": "geral", "title": "…", "nickname": "…", "score": 9, "replyCount": 12, "createdAt": "…" }],
+  "replies": [{ "savedAt": "…", "id": 4410, "threadId": 17, "threadTitle": "…", "board": "geral", "body": "…", "nickname": null, "createdAt": "…" }]
+}
+```
+
+A comment is on exactly one of `articleId`, `storyId` or `postSlug` (a blog post): link there.
 
 ### `POST /me/merge`: on first login
 
@@ -131,7 +153,8 @@ the merged state comes back (the same shape as `GET /me/state`):
 }
 ```
 
-Every field is optional; lists are newest first. **Votes aren't merged**: an anonymous vote has
+Every field is optional (`saved` also takes `editorial`, `comments`, `threads` and `replies`);
+lists are newest first. **Votes aren't merged**: an anonymous vote has
 already been counted, so adding it to the account would count it twice. After merging, use the
 account's `votes` and clear the browser's own copies.
 
@@ -158,3 +181,8 @@ Pages that promise "sem conta" need new wording once login is on: /guardadas, /s
 /privacidade, /termos, the forum and comment forms. The privacy page should also list the new
 cookie (`politicando_session`) and what an account stores: the username, a password hash,
 the lists above, and the reader's comments, posts and votes.
+
+## Inbox, "Seguir" and predictions
+
+See [engagement-api.md](engagement-api.md): `/me/notifications`, `/me/follows`, `/predictions` and
+`/me/predictions`.

@@ -8,6 +8,7 @@ import { articles, commentLikes, comments, editorialPosts } from "../../db/schem
 import { ApiError, notFound } from "../../errors.js";
 import { commentLikerKey } from "../../forums/identity.js";
 import { assertPublishable } from "../../moderation/screen.js";
+import { follow, notify } from "../../notifications/index.js";
 import { articleParamsSchema, errorSchema } from "../shared.js";
 import type { RecaptchaVerifier } from "./recaptcha.js";
 
@@ -143,13 +144,15 @@ export const commentRoutes =
 
       const target = await findTarget();
       let parentUsername: string | null = null;
+      let parentUserId: number | null = null;
       if (parentId != null) {
         const [parent] = await db
-          .select({ username: comments.username })
+          .select({ username: comments.username, userId: comments.userId })
           .from(comments)
           .where(and(eq(comments.id, parentId), target.scope, isNull(comments.hiddenAt)));
         if (!parent) throw new ApiError(400, "invalid_parent", "The parent comment is not on this page");
         parentUsername = parent.username;
+        parentUserId = parent.userId;
       }
 
       const [created] = await db
@@ -157,6 +160,15 @@ export const commentRoutes =
         .values({ ...target.insert, parentId: parentId ?? null, username, userId: who.userId, body, stance: stance ?? null })
         .returning();
       if (!created) throw new Error("Insert returned no row");
+      // Best effort: a reply is never lost because its notification failed.
+      try {
+        if (parentUserId !== null && parentUserId !== who.userId) {
+          await notify(db, { userIds: [parentUserId], kind: "comment_reply", targetId: created.id, actorName: username });
+        }
+        if (who.userId !== null && target.insert.storyId) await follow(db, who.userId, "story", target.insert.storyId);
+      } catch (error) {
+        request.log.error(error, "comment notification failed");
+      }
       return {
         targetId: target.id,
         comment: {

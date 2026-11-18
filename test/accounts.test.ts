@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { hashPassword } from "../src/admin/password.js";
 import { buildApp } from "../src/app.js";
-import { admins, articleVotes, articles, comments, stories, users } from "../src/db/schema.js";
+import { admins, articleVotes, articles, comments, editorialPosts, forumPosts, forumThreads, stories, users } from "../src/db/schema.js";
 import { createTestDb, insertArticle, resetDb } from "./helpers.js";
 
 const { db, pool } = createTestDb();
@@ -33,6 +33,34 @@ const register = async (username = "leitor_1", password = "palavra-passe") => {
 };
 
 describe("accounts", () => {
+  it("saves blog posts, comments, forum threads and replies, and lists them with their details", async () => {
+    const { cookie } = await register();
+    const [post] = await db
+      .insert(editorialPosts)
+      .values({ slug: "guardado", title: "Um post", kind: "article", body: "texto", authorName: "Ana", status: "published", publishedAt: new Date() })
+      .returning();
+    const [comment] = await db.insert(comments).values({ editorialPostId: post!.id, username: "ana", body: "Bom texto" }).returning();
+    const [thread] = await db.insert(forumThreads).values({ board: "geral", title: "Um fio", body: "Abertura", posterId: "p1" }).returning();
+    const [reply] = await db.insert(forumPosts).values({ threadId: thread!.id, body: "Uma resposta", posterId: "p2" }).returning();
+    for (const [kind, id] of [["editorial", post!.id], ["comment", comment!.id], ["thread", thread!.id], ["reply", reply!.id]] as const) {
+      expect((await call("PUT", `/me/saved/${kind}/${id}`, { cookie })).statusCode).toBe(204);
+    }
+    expect((await call("PUT", "/me/saved/forum/1", { cookie })).statusCode).toBe(400);
+    expect((await call("GET", "/me/state", { cookie })).json().saved).toMatchObject({ editorial: [post!.id], comments: [comment!.id], threads: [thread!.id], replies: [reply!.id] });
+
+    const saved = (await call("GET", "/me/saved", { cookie })).json();
+    expect(saved.editorial).toEqual([expect.objectContaining({ id: post!.id, slug: "guardado", title: "Um post" })]);
+    expect(saved.comments).toEqual([expect.objectContaining({ id: comment!.id, body: "Bom texto", postSlug: "guardado", articleId: null })]);
+    expect(saved.threads).toEqual([expect.objectContaining({ id: thread!.id, title: "Um fio", board: "geral" })]);
+    expect(saved.replies).toEqual([expect.objectContaining({ id: reply!.id, threadId: thread!.id, threadTitle: "Um fio", body: "Uma resposta" })]);
+
+    // Hidden by a moderator: no longer listed, and can't be saved again.
+    await db.update(comments).set({ hiddenAt: new Date() }).where(eq(comments.id, comment!.id));
+    expect((await call("GET", "/me/saved", { cookie })).json().comments).toEqual([]);
+    expect((await call("PUT", `/me/saved/comment/${comment!.id}`, { cookie })).statusCode).toBe(404);
+    expect((await call("GET", "/me/saved")).statusCode).toBe(401);
+  });
+
   it("registers and logs in with a username and password, by an httpOnly cookie on /api/v2", async () => {
     const { response, cookie, session } = await register("Ana_Silva");
     expect(response.statusCode).toBe(201);
@@ -87,30 +115,33 @@ describe("accounts", () => {
 
   it("syncs saved, hidden, muted and read, and merges what the browser had", async () => {
     const { cookie } = await register();
-    expect((await call("PUT", "/me/saved/article/7", { cookie })).statusCode).toBe(204);
-    await call("PUT", "/me/saved/article/7", { cookie });
-    await call("PUT", "/me/saved/story/3", { cookie });
+    const a = (await insertArticle(db, { sourceUri: "guardar" }, [])).id;
+    const [story] = await db.insert(stories).values({} as typeof stories.$inferInsert).returning();
+    expect((await call("PUT", `/me/saved/article/${a}`, { cookie })).statusCode).toBe(204);
+    await call("PUT", `/me/saved/article/${a}`, { cookie });
+    await call("PUT", `/me/saved/story/${story!.id}`, { cookie });
+    expect((await call("PUT", "/me/saved/article/999999", { cookie })).statusCode).toBe(404);
     await call("PUT", "/me/hidden/9", { cookie });
     await call("PUT", "/me/muted/source/publico.pt", { cookie });
     await call("PUT", "/me/muted/party/chega", { cookie });
     await call("PUT", "/me/read/3", { cookie });
     expect((await call("PUT", "/me/muted/party/Not A Slug", { cookie })).statusCode).toBe(400);
-    expect((await call("PUT", "/me/saved/article/7")).statusCode).toBe(401);
+    expect((await call("PUT", `/me/saved/article/${a}`)).statusCode).toBe(401);
 
     const merged = await call("POST", "/me/merge", {
       cookie,
-      payload: { saved: { articles: [8, 7] }, hidden: [9, 10], muted: { sources: ["expresso.pt"] }, read: [4] },
+      payload: { saved: { articles: [8, a] }, hidden: [9, 10], muted: { sources: ["expresso.pt"] }, read: [4] },
     });
     expect(merged.statusCode).toBe(200);
     expect(merged.json()).toMatchObject({
-      saved: { articles: expect.arrayContaining([7, 8]), stories: [3] },
+      saved: { articles: expect.arrayContaining([a, 8]), stories: [story!.id], editorial: [], comments: [], threads: [], replies: [] },
       hidden: expect.arrayContaining([9, 10]),
       muted: { sources: expect.arrayContaining(["publico.pt", "expresso.pt"]), parties: ["chega"] },
       read: expect.arrayContaining([3, 4]),
     });
     expect(merged.json().saved.articles).toHaveLength(2);
 
-    await call("DELETE", "/me/saved/article/7", { cookie });
+    await call("DELETE", `/me/saved/article/${a}`, { cookie });
     await call("DELETE", "/me/muted/party/chega", { cookie });
     const state = (await call("GET", "/me/state", { cookie })).json();
     expect(state.saved.articles).toEqual([8]);
