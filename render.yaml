@@ -20,7 +20,8 @@ services:
     region: frankfurt
     plan: starter
     healthCheckPath: /health
-    preDeployCommand: node dist/db/migrate.js && node dist/db/seed.js
+    # Migrates, then seeds (parties, local officials): one script, so a hand-edited command still seeds.
+    preDeployCommand: node dist/db/migrate.js
     envVars:
       - key: DATABASE_URL
         fromDatabase: { name: politicando-db, property: connectionString }

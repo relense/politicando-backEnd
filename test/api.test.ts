@@ -412,6 +412,27 @@ describe("platform", () => {
     await behind.close();
   });
 
+  it("serves the frontend over Render's private network: internal Host, no Cloudflare header", async () => {
+    const seen = vi.fn<RecaptchaVerifier>(async () => true);
+    const key = "k".repeat(40);
+    const internal = await buildApp({
+      db, corsOrigins: [], verifyRecaptcha: seen, clientIpHeader: "True-Client-IP", commentLimitPerMinute: 1, frontendKey: key,
+    });
+    const article = await insertArticle(db);
+    const host = { host: "politicando-api:10000" };
+    expect((await internal.inject({ method: "GET", url: "/api/v2/parties", headers: { ...host, "x-frontend-key": key } })).statusCode).toBe(200);
+    const comment = (ip: string) =>
+      internal.inject({
+        method: "POST", url: `/api/v2/articles/${article.id}/comments`, payload: { body: "x", recaptchaToken: "t" },
+        headers: { ...host, "x-frontend-key": key, "x-reader-ip": ip },
+      });
+    expect((await comment("1.1.1.1")).statusCode).toBe(201);
+    expect(seen).toHaveBeenLastCalledWith("t", "1.1.1.1");
+    expect((await comment("2.2.2.2")).statusCode).toBe(201);
+    expect((await comment("1.1.1.1")).statusCode).toBe(429);
+    await internal.close();
+  });
+
   it("reports health", async () => {
     const response = await app.inject({ method: "GET", url: "/health" });
     expect(response.statusCode).toBe(200);

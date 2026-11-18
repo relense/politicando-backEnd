@@ -12,8 +12,7 @@ Live at https://www.politicando.pt (API: https://api.politicando.pt). Contact: i
 cp .env.example .env
 docker compose up -d --wait   # Postgres on port 5433
 npm install
-npm run db:migrate
-npm run db:seed
+npm run db:migrate           # also seeds parties and local officials
 npm run dev                   # http://localhost:4000
 ```
 
@@ -36,7 +35,7 @@ The API docs are at `/docs` and the OpenAPI spec is at `/docs/json`.
 | `npm run parliament:link-news` | Link stored articles to deputies and initiatives. Add `-- --replace` after changing matching rules |
 | `npm run places:shapes -- <folder>` | Rebuild `data/municipalities.json` (for `/places/locate`) from the CAOP GeoPackages, only when CAOP changes |
 | `npm run db:generate` | Create a migration after changing `src/db/schema.ts` |
-| `npm run db:seed` | Create or update parties. Safe to re-run |
+| `npm run db:seed` | Create or update parties and local officials (mayors). Safe to re-run; `db:migrate` runs it too |
 
 ## API
 
@@ -286,11 +285,11 @@ Production checklist:
 - `CORS_ORIGINS` lists only our frontends: the API allows credentials for them, for the admin.
 - Database roles: run `deploy/db-roles.sql` once. Migrations run as `politicando_owner`; the API and jobs connect as `politicando_app`, which can't change the schema or rewrite the audit log.
 - Newsletter: `SMTP_URL=smtps://user:password@host:465` from a mail provider, `MAIL_FROM` (default `Politicando <info@politicando.pt>`) on a domain whose SPF/DKIM that provider covers, `NEWSLETTER_SECRET` (`openssl rand -hex 32`, set once: changing it breaks every link already sent), `SITE_URL` (the website) and `PUBLIC_API_URL` (this API's public address). Without `SMTP_URL` and `NEWSLETTER_SECRET`, sign-ups answer 503.
+- Blog posts can live in `content/editorial/*.md` (front matter as in `src/editorial/markdownFiles.ts`): every deploy publishes new or edited ones and leaves the rest untouched.
 - Create the first admin with `node dist/jobs/createAdmin.js <email> "<name>" admin`, then invite the rest from the admin (`docs/admin-api.md`).
 - Schedule the jobs from the host's cron, with the same image: `node dist/jobs/ingest.js` hourly, `syncParliament.js` and `syncGovernment.js` daily, `importContracts.js` weekly.
 
 ```sh
-node dist/db/migrate.js   # on each release
-node dist/db/seed.js      # on each release
+node dist/db/migrate.js   # on each release: migrates, then seeds
 node dist/server.js       # the default command
 ```
