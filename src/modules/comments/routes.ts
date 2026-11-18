@@ -1,5 +1,6 @@
 import { and, asc, eq, isNull, or, sql, type SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
+import type { FastifyRequest } from "fastify";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
 import type { Db } from "../../db/client.js";
@@ -22,7 +23,8 @@ const stanceSchema = z.enum(["agree", "disagree"]);
 const baseCommentSchema = z.object({
   id: z.number(),
   parentId: z.number().nullable(),
-  username: z.string().nullable(),
+  username: z.string().nullable().describe("The account's username when `account` is true; otherwise a free-text name from before accounts"),
+  account: z.boolean().describe("Written by a logged-in reader"),
   parentUsername: z.string().nullable(),
   body: z.string().describe("Plain text. Clients must escape it when rendering."),
   stance: stanceSchema.nullable().describe('The commenter\'s side, if they picked one: "Concordo" (agree) or "Discordo" (disagree)'),
@@ -44,7 +46,7 @@ const createCommentSchema = z.strictObject({
   body: z.string().trim().min(1).max(500),
   parentId: z.number().int().positive().max(2_147_483_647).nullish(),
   stance: stanceSchema.nullish().describe("Optional: the commenter's side"),
-  recaptchaToken: z.string().min(1).max(4_096),
+  recaptchaToken: z.string().min(1).max(4_096).optional().describe("Anonymous comments only (when login isn't required)"),
 });
 
 const slugParams = z.object({ slug: z.string().regex(/^[a-z0-9-]{1,80}$/) });
@@ -76,6 +78,7 @@ export const publicCommentColumns = {
   id: comments.id,
   parentId: comments.parentId,
   username: comments.username,
+  account: sql<boolean>`${comments.userId} is not null`,
   body: comments.body,
   stance: comments.stance,
   likes: comments.likes,
@@ -120,22 +123,23 @@ export const commentRoutes =
       return rows.map((row) => ({ ...row, createdAt: row.createdAt.toISOString() }));
     };
 
-    const create = async (
-      input: z.infer<typeof createCommentSchema>,
-      ip: string,
-      log: { error: (error: unknown, message: string) => void },
-      findTarget: () => Promise<Target>,
-    ) => {
-      const { username, body, parentId, stance, recaptchaToken } = input;
+    const create = async (input: z.infer<typeof createCommentSchema>, request: FastifyRequest, findTarget: () => Promise<Target>) => {
+      const who = app.participant(request, "comments");
+      const { body, parentId, stance, recaptchaToken } = input;
+      // A logged-in reader always writes under their username; the account replaces reCAPTCHA.
+      const username = who.username ?? input.username;
       assertPublishable(body, username);
-      let human: boolean;
-      try {
-        human = await verifyRecaptcha(recaptchaToken, ip);
-      } catch (error) {
-        log.error(error, "reCAPTCHA verification unavailable");
-        throw new ApiError(503, "recaptcha_unavailable", "Comments are temporarily unavailable");
+      if (who.userId === null) {
+        if (!recaptchaToken) throw new ApiError(400, "recaptcha_required", "reCAPTCHA token missing");
+        let human: boolean;
+        try {
+          human = await verifyRecaptcha(recaptchaToken, request.ip);
+        } catch (error) {
+          request.log.error(error, "reCAPTCHA verification unavailable");
+          throw new ApiError(503, "recaptcha_unavailable", "Comments are temporarily unavailable");
+        }
+        if (!human) throw new ApiError(403, "recaptcha_failed", "reCAPTCHA verification failed");
       }
-      if (!human) throw new ApiError(403, "recaptcha_failed", "reCAPTCHA verification failed");
 
       const target = await findTarget();
       let parentUsername: string | null = null;
@@ -150,7 +154,7 @@ export const commentRoutes =
 
       const [created] = await db
         .insert(comments)
-        .values({ ...target.insert, parentId: parentId ?? null, username, body, stance: stance ?? null })
+        .values({ ...target.insert, parentId: parentId ?? null, username, userId: who.userId, body, stance: stance ?? null })
         .returning();
       if (!created) throw new Error("Insert returned no row");
       return {
@@ -159,6 +163,7 @@ export const commentRoutes =
           id: created.id,
           parentId: created.parentId,
           username: created.username,
+          account: created.userId !== null,
           parentUsername,
           body: created.body,
           stance: created.stance,
@@ -201,7 +206,7 @@ export const commentRoutes =
         },
       },
       async (request, reply) => {
-        const { targetId, comment } = await create(request.body, request.ip, request.log, () => storyTarget(request.params.id));
+        const { targetId, comment } = await create(request.body, request, () => storyTarget(request.params.id));
         return reply.status(201).send({ ...comment, storyId: targetId });
       },
     );
@@ -226,7 +231,8 @@ export const commentRoutes =
       async (request) => {
         const commentId = request.params.id;
         const { value } = request.body;
-        const voter = commentLikerKey(voteSecret, request.ip, commentId);
+        const who = app.participant(request, "votes");
+        const voter = commentLikerKey(voteSecret, who.key, commentId);
         return db.transaction(async (tx) => {
           // Locks the comment, so likes on it count one at a time and the total stays exact.
           const [comment] = await tx
@@ -238,7 +244,7 @@ export const commentRoutes =
           if (value === 0) {
             await tx.delete(commentLikes).where(and(eq(commentLikes.commentId, commentId), eq(commentLikes.voter, voter)));
           } else {
-            await tx.insert(commentLikes).values({ commentId, voter }).onConflictDoNothing();
+            await tx.insert(commentLikes).values({ commentId, voter, userId: who.userId }).onConflictDoNothing();
           }
           const [row] = await tx
             .update(comments)
@@ -272,7 +278,7 @@ export const commentRoutes =
         schema: { tags: ["comments"], params: articleParamsSchema, body: createCommentSchema, response: { 201: articleCommentSchema, ...postErrors } },
       },
       async (request, reply) => {
-        const { targetId, comment } = await create(request.body, request.ip, request.log, () => articleTarget(request.params.id));
+        const { targetId, comment } = await create(request.body, request, () => articleTarget(request.params.id));
         return reply.status(201).send({ ...comment, articleId: targetId });
       },
     );
@@ -306,7 +312,7 @@ export const commentRoutes =
         },
       },
       async (request, reply) => {
-        const { targetId, comment } = await create(request.body, request.ip, request.log, () => postTarget(request.params.slug));
+        const { targetId, comment } = await create(request.body, request, () => postTarget(request.params.slug));
         return reply.status(201).send({ ...comment, postId: targetId });
       },
     );

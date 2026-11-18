@@ -508,7 +508,8 @@ export const articleRoutes =
       async (request) => {
         const articleId = request.params.id;
         const { value } = request.body;
-        const voter = articleVoterKey(voteSecret, request.ip, articleId);
+        const who = app.participant(request, "votes");
+        const voter = articleVoterKey(voteSecret, who.key, articleId);
         return db.transaction(async (tx) => {
           // Locks the article, so votes on it count one at a time and the totals stay exact.
           const [article] = await tx.select({ id: articles.id }).from(articles).where(and(eq(articles.id, articleId), visibleArticle)).for("update");
@@ -518,8 +519,8 @@ export const articleRoutes =
           else {
             await tx
               .insert(articleVotes)
-              .values({ articleId, voter, value })
-              .onConflictDoUpdate({ target: [articleVotes.articleId, articleVotes.voter], set: { value, updatedAt: sql`now()` } });
+              .values({ articleId, voter, value, userId: who.userId })
+              .onConflictDoUpdate({ target: [articleVotes.articleId, articleVotes.voter], set: { value, userId: who.userId, updatedAt: sql`now()` } });
           }
           const [counts] = await tx
             .update(articles)

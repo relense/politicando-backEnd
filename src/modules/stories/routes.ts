@@ -523,7 +523,8 @@ export const storyRoutes =
       async (request) => {
         const storyId = request.params.id;
         const { value } = request.body;
-        const voter = storyVoterKey(voteSecret, request.ip, storyId);
+        const who = app.participant(request, "votes");
+        const voter = storyVoterKey(voteSecret, who.key, storyId);
         const importa = await db.transaction(async (tx) => {
           // Locks the story, so marks on it count one at a time and the total stays exact.
           const [story] = await tx
@@ -533,7 +534,7 @@ export const storyRoutes =
             .for("update");
           if (!story) throw notFound("Story");
           if (value === 0) await tx.delete(storyVotes).where(and(eq(storyVotes.storyId, storyId), eq(storyVotes.voter, voter)));
-          else await tx.insert(storyVotes).values({ storyId, voter }).onConflictDoNothing();
+          else await tx.insert(storyVotes).values({ storyId, voter, userId: who.userId }).onConflictDoNothing();
           const [row] = await tx
             .update(stories)
             .set({ importa: sql`(select count(*)::int from story_votes v where v.story_id = ${storyId})` })

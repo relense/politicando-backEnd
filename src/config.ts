@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { PARTICIPATION } from "./accounts/participant.js";
 
 const envBoolean = z
   .enum(["true", "false"])
@@ -33,6 +34,16 @@ const apiSchema = baseSchema.extend({
     .transform((value) => value.split(",").map((h) => h.trim().toLowerCase()).filter(Boolean)),
   /** Keys anonymous forum poster IDs and reporter hashes. Long and random; never change it in production. */
   FORUM_SECRET: z.string().min(32),
+  /**
+   * What needs a reader account, comma-separated: comments, forum, votes, reports. Empty by
+   * default (anonymous, keyed by IP), so a deploy never locks readers out before the website has
+   * its login screens; set "comments,forum,votes,reports" once it does.
+   */
+  LOGIN_REQUIRED: z
+    .string()
+    .default("")
+    .transform((value) => value.split(",").map((v) => v.trim()).filter(Boolean))
+    .pipe(z.array(z.enum(PARTICIPATION))),
   /** Send the admin session cookie over HTTPS only. Set to false for local HTTP. */
   COOKIE_SECURE: z.enum(["true", "false"]).default("true").transform((value) => value === "true"),
   /** "" turns the newsletter off, "log" prints emails to the console (local only), or an smtp(s):// URL. */

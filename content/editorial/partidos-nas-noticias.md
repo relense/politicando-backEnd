@@ -5,6 +5,7 @@ title: "Que partidos aparecem mais nas notícias? Os dados de novembro de 2026"
 subtitle: "Contámos 628 notícias de política de 19 órgãos de comunicação social. O PS aparece em duas de cada três. O que os números dizem, e o que não dizem."
 tags: [partidos, notícias, comunicação social, PS, Chega, PSD, OE2027, dados]
 cover: https://images.unsplash.com/photo-1495020689067-958852a7765e?w=1600&q=80&auto=format
+featured: true
 ---
 
 Todos os dias, o Politicando lê as notícias de política de 19 órgãos de comunicação social portugueses e regista que partidos, deputados e membros do Governo são referidos em cada uma. Juntámos tudo o que recolhemos entre **29 de outubro e 18 de novembro de 2026**: **628 notícias**.

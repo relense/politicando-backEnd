@@ -280,7 +280,8 @@ Production checklist:
 
 - `RECAPTCHA_HOSTNAMES=politicando.pt,www.politicando.pt` (our real hostnames), so tokens solved on other sites are rejected.
 - `FORUM_SECRET`: `openssl rand -hex 32`, set once. Changing it changes every poster ID.
-- `COOKIE_SECURE=true` (the default): the admin session cookie only travels over HTTPS.
+- `COOKIE_SECURE=true` (the default): the admin and reader session cookies only travel over HTTPS.
+- `LOGIN_REQUIRED`: what needs a reader account (`comments,forum,votes,reports`). Empty by default, so taking part stays anonymous; set it once the website has its login screens (`docs/accounts-api.md`).
 - `CORS_ORIGINS` lists only our frontends: the API allows credentials for them, for the admin.
 - Database roles: run `deploy/db-roles.sql` once. Migrations run as `politicando_owner`; the API and jobs connect as `politicando_app`, which can't change the schema or rewrite the audit log.
 - Newsletter: `SMTP_URL=smtps://user:password@host:465` from a mail provider, `MAIL_FROM` (default `Politicando <info@politicando.pt>`) on a domain whose SPF/DKIM that provider covers, `NEWSLETTER_SECRET` (`openssl rand -hex 32`, set once: changing it breaks every link already sent), `SITE_URL` (the website) and `PUBLIC_API_URL` (this API's public address). Without `SMTP_URL` and `NEWSLETTER_SECRET`, sign-ups answer 503.

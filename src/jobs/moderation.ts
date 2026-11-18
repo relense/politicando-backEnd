@@ -7,6 +7,8 @@ import { restore, type ReportKind } from "../moderation/reports.js";
  * Moderation from the terminal, until there's an admin screen:
  *   npm run moderation                      what was hidden automatically and what's reported (last 14 days)
  *   npm run moderation -- restore comment 42   show it again (its reports are dismissed)
+ *   npm run moderation -- ban joao_silva       log a reader account out and stop it taking part
+ *   npm run moderation -- unban joao_silva     lift the ban
  */
 
 const KINDS = ["thread", "post", "comment", "article"] as const;
@@ -28,6 +30,17 @@ try {
       throw new Error(`Usage: npm run moderation -- restore <${KINDS.join("|")}> <id>`);
     }
     console.log((await restore(db, kind as ReportKind, targetId)) ? `Restored ${kind} ${targetId}` : `No ${kind} ${targetId}`);
+  } else if (command === "ban" || command === "unban") {
+    if (!kind) throw new Error(`Usage: npm run moderation -- ${command} <username>`);
+    const found = await db.execute<{ id: number }>(sql`
+      update users set disabled_at = ${command === "ban" ? sql`now()` : sql`null`} where lower(username) = ${kind.toLowerCase()} returning id`);
+    const user = found.rows[0];
+    if (!user) console.log(`No account "${kind}"`);
+    else {
+      if (command === "ban") await db.execute(sql`delete from user_sessions where user_id = ${user.id}`);
+      await db.execute(sql`insert into audit_log (admin_id, action, entity, entity_id) values (null, ${`user.${command === "ban" ? "disable" : "enable"}`}, 'user', ${String(user.id)})`);
+      console.log(`${command === "ban" ? "Banned" : "Unbanned"} ${kind}`);
+    }
   } else {
     const rows = await db.execute<{ kind: string; target_id: number; state: string; reports: number; reasons: string[]; last: string; text: string | null }>(sql`
       select r.kind, r.target_id,

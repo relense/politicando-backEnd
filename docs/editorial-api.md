@@ -90,6 +90,7 @@ one level of replies, and the same report button and moderation.
 
 - `GET /editorial/:slug/comments`: visible comments, oldest first:
   `[{ id, postId, parentId, username, parentUsername, body, createdAt }]`.
+- Logged-in readers: no `recaptchaToken`, and the comment carries their username with `account: true` (`docs/accounts-api.md`).
 - `POST /editorial/:slug/comments` with `{ "username": "Zé" or null, "body": "…", "parentId": null, "recaptchaToken": "…" }`
   returns 201 with the comment. The errors are the same as on news (`recaptcha_failed`,
   `invalid_parent`, `rate_limited`, `recaptcha_unavailable`, and the refused-text codes in
