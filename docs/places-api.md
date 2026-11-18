@@ -23,6 +23,7 @@ place key). For the map:
       "parentKey": "LOCAL-060000",
       "dicofre": "0603",
       "mayor": {
+        "id": "ana-aragao-coimbra",                 // their page: GET /local-officials/:id
         "name": "Ana Maria Pereira Abrunhosa Trigueiros de Aragão",
         "list": "PS.L.PAN",
         "label": "AVANÇAR COIMBRA",
@@ -75,15 +76,48 @@ The place page. The first fields are the same as before (`key`, `name`, `level`,
 Non-local places (`GLOBAL-…`, `FOREIGN-…`) still answer, with the place-specific sections
 empty.
 
+## GET /local-officials/:id
+
+A mayor's own page (presidente da câmara), from `mayor.id`. Ids are readable and stable:
+first and last name plus the municipality (`carlos-moedas-lisboa`).
+
+```jsonc
+{
+  "id": "carlos-moedas-lisboa",
+  "name": "Carlos Manuel Félix Moedas",          // in full, as on the ballot
+  "shortName": "Carlos Moedas",                  // as the news writes it: use it in the title
+  "role": "mayor",
+  "title": "Presidente da Câmara Municipal de Lisboa",
+  "place": { "key": "LOCAL-110600", "name": "Lisboa", "level": "municipality" },
+  "district": { "key": "LOCAL-110000", "name": "Lisboa", "level": "district" },
+  "list": "PPD/PSD.CDS-PP", "label": "Por ti, Lisboa", "parties": ["psd", "cds-pp"],
+  "election": "autarquicas-2025",                // results: /elections/:id/places/:key
+  "term": { "start": "2025-10-12", "end": "2029-10-12" },  // end: when the next autárquicas are due
+  "current": true,
+  "otherRoles": [                                // other public roles, from our records, by full name
+    { "kind": "candidate", "title": "Candidatura às Legislativas 2024", "detail": "Nº 7 da lista PPD/PSD.CDS-PP, Lisboa",
+      "date": "2024-03-10", "current": false, "elected": true, "link": "/elections/legislativas-2024/candidates" }
+  ],                                             // a seat in parliament shows as kind "deputy", link "/deputies/:id"
+  "articles": [/* the 10 latest news naming them, as on /articles */],
+  "updatedAt": "2026-11-17T20:42:04Z"
+}
+```
+
+404 for unknown ids. **Page title:** "{shortName}, presidente da Câmara Municipal de {place}"
+ranks for both their name and "presidente da câmara de X". In the sitemap they're kind
+`local-official`. For IndexNow (`docs/seo.md`) the backend announces them as
+`/autarcas/:id`; tell us if the route is different.
+
 ## What isn't there (yet)
 
 - **Parishes restored in 2025:** about 300 parishes were split back out in 2025. They have
   results and pages, but `dicofre` is null (no code in our older data), so they can't be
   joined to boundary files by code yet.
 
-- **Junta presidents (parishes):** the results site publishes candidates only for the câmaras,
-  so we know which list won each junta (`elections`, organ `AF`) but not who leads it.
-- **Councillors' names:** the same; we have each list's seats, not the people.
+- **Junta presidents (parishes) and vereadores:** the results site publishes only the head of
+  each câmara list, so only mayors have ids and pages. We know which list won each junta
+  (`elections`, organ `AF`) and each list's seats, but not the people. No other open source
+  lists them; Diário da República notices are per municipality and not structured.
 - Mayors before 2025.
 - **Mayors' photos:** no official source publishes them in one place, so `mayor` has no
   `photoUrl`. Keep showing initials.

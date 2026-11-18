@@ -27,6 +27,7 @@ import { editorialRoutes } from "./modules/editorial/routes.js";
 import { feedbackRoutes } from "./modules/feedback/routes.js";
 import { seoRoutes } from "./modules/seo/routes.js";
 import { placeRoutes } from "./modules/places/routes.js";
+import { localOfficialRoutes } from "./modules/localOfficials/routes.js";
 import { articleRoutes } from "./modules/articles/routes.js";
 import { storyRoutes } from "./modules/stories/routes.js";
 import type { RecaptchaVerifier } from "./modules/comments/recaptcha.js";
@@ -199,6 +200,7 @@ export const buildApp = async ({
       await api.register(feedbackRoutes({ db, verifyRecaptcha, mailer, limitPerHour: feedbackLimitPerHour }));
       await api.register(seoRoutes(db));
       await api.register(placeRoutes(db));
+      await api.register(localOfficialRoutes(db));
       await api.register(forumRoutes({ db, verifyRecaptcha, forumSecret, createLimitPerMinute: commentLimitPerMinute }));
       await api.register(caseRoutes(db));
       await api.register(

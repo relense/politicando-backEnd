@@ -1,6 +1,7 @@
 import { and, eq, like } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import { electionCandidates, places } from "../db/schema.js";
+import { syncLocalOfficials } from "../places/localOfficials.js";
 import type { ElectionDef } from "./catalog.js";
 import type { ElectionSource } from "./import.js";
 import { type MayoralList, parseV3Children, parseV3Election, parseV3Mayors, parseV3Settings, placeNameKey, v3Urls } from "./maiV3.js";
@@ -76,6 +77,7 @@ export const importMayors = async (db: Db, source: ElectionSource, election: Ele
     .select({ placeKey: electionCandidates.placeKey })
     .from(electionCandidates)
     .where(and(eq(electionCandidates.electionId, election.id), eq(electionCandidates.elected, true)));
+  await syncLocalOfficials(db);
   return {
     municipalities: new Set(rows.map((r) => r.placeKey)).size,
     candidates: rows.length,

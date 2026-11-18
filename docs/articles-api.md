@@ -2,12 +2,21 @@
 
 Base path: `/api/v2`. Article items look the same everywhere (`id`, `title`, `excerpt`, `url`,
 `source`, `imageUrl`, `publishedAt`, `commentCount`, `upvotes`, `downvotes`, `parties`, `deputies`, `government`,
-`president`, `initiatives`, `storyId`). That includes the article lists in `/deputies/:id`, `/initiatives/:id`,
+`president`, `people`, `initiatives`, `storyId`). That includes the article lists in `/deputies/:id`, `/initiatives/:id`,
 `/government/...` and `/president`.
 
 - `storyId`: the story the article belongs to, with the other outlets' versions. **The feed
   should use stories** (`docs/stories-api.md`); articles remain for search and for the news
   on deputy, initiative, Government and President pages.
+- `people`: **everyone named in it who has a page**, most mentioned first, for linking names
+  to people pages (internal links matter for search):
+  `[{ "kind": "deputy" | "government" | "president" | "local", "id": "1047", "name": "Nuno Melo" }]`.
+  `id` is what that person's endpoint takes: `/deputies/:id`, `/government/members/:id`,
+  `/president`, `/local-officials/:id`. A deputy who is also in the Government appears once,
+  as a deputy. Matching uses full names (plus a few curated short names, as before). Mayors are
+  matched by their full name, or by first and last name ("Carlos Moedas") only when the text
+  also names their municipality next to a local-government word ("câmara", "autarca"…), so a
+  namesake isn't linked. `name` for mayors is the full name from the ballot.
 - Each item in `initiatives` also has `status` and `lastVote` (`{ date, phase, result, unanimous }`
   or `null`), for the "Ver como votou cada partido" chip.
 

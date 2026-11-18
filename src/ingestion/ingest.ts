@@ -4,6 +4,7 @@ import {
   articleDeputies,
   articleGovernmentMembers,
   articleInitiatives,
+  articleLocalOfficials,
   articlePresidents,
   articleParties,
   articles,
@@ -32,6 +33,7 @@ import {
   type InitiativeMatch,
 } from "../matching/matchInitiatives.js";
 import { PARTY_DEFINITIONS } from "../matching/parties.js";
+import { loadMatchableLocalOfficials } from "../places/localOfficials.js";
 import { GOVERNMENT_ALIASES } from "../government/aliases.js";
 import { PRESIDENT_ALIASES, currentPresident } from "../presidency/presidents.js";
 import { DEPUTY_ALIASES } from "../parliament/aliases.js";
@@ -79,6 +81,8 @@ export interface Matchable {
   initiatives: InitiativeIndex;
   government: MatchablePerson<string>[];
   president: MatchablePerson<string>[];
+  /** Mayors (src/places/localOfficials.ts). */
+  local?: MatchablePerson<string>[];
 }
 
 /**
@@ -210,6 +214,7 @@ const saveArticle = (
     initiatives: InitiativeMatch[];
     government: { id: string; mentions: number }[];
     president: { id: string; mentions: number }[];
+    local?: { id: string; mentions: number }[];
   },
 ) =>
   db.transaction(async (tx) => {
@@ -251,6 +256,11 @@ const saveArticle = (
           presidentId: match.id,
           mentionCount: match.mentions,
         })),
+      );
+    }
+    if (matches.local?.length) {
+      await tx.insert(articleLocalOfficials).values(
+        matches.local.map((match) => ({ articleId: inserted.id, officialId: match.id, mentionCount: match.mentions })),
       );
     }
     if (matches.initiatives.length > 0) {
@@ -366,6 +376,7 @@ const scanSource = async (
           },
           { ...matches, initiatives: initiativeMatches, government: matchNames(text, matchable.government),
             president: matchNames(text, matchable.president),
+            local: matchNames(text, matchable.local ?? []),
           },
         );
         stats.matched++;
@@ -391,6 +402,7 @@ export const ingest = async (options: IngestOptions): Promise<SourceStats[]> => 
     initiatives: await loadInitiativeIndex(options.db, options.now),
     government: await loadMatchableGovernment(options.db),
     president: await loadMatchablePresident(options.db),
+    local: await loadMatchableLocalOfficials(options.db),
   };
   if (matchable.parties.length === 0) throw new Error("No parties found: run the seed first");
   return Promise.all(options.sources.map((source) => scanSource(source, matchable, options)));

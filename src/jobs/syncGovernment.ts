@@ -3,6 +3,7 @@ import { createDb } from "../db/client.js";
 import { syncGovernment } from "../government/sync.js";
 import { createPoliteClient } from "../ingestion/politeClient.js";
 import { linkStoredArticles } from "../parliament/linkNews.js";
+import { syncWikidataLinks } from "../people/wikidata.js";
 import { syncPresidency } from "../presidency/sync.js";
 
 /** How far back to look for news that new members of the Government now match. */
@@ -12,10 +13,12 @@ const config = loadDatabaseConfig();
 const { db, pool } = createDb(config.DATABASE_URL);
 const client = createPoliteClient();
 
-// The Government and the President come from different sites: one failing doesn't stop the other.
+// Each step uses a different site: one failing doesn't stop the others.
 const steps: [string, () => Promise<{ warnings: string[] }>][] = [
   ["Government", () => syncGovernment(db, client)],
   ["President", () => syncPresidency(db, client)],
+  // Official sites and social accounts of deputies and the Government (after the Government, whose members it links).
+  ["Wikidata", async () => ({ ...(await syncWikidataLinks(db)), warnings: [] })],
 ];
 try {
   for (const [name, run] of steps) {

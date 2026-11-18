@@ -47,6 +47,10 @@ const apiSchema = baseSchema.extend({
 
 const ingestSchema = baseSchema.extend({
   INGEST_MAX_PAGES_PER_SOURCE: z.coerce.number().int().positive().default(40),
+  /** IndexNow key (8-128 letters, digits or dashes), also served by the frontend at /<key>.txt. Unset: no pings. */
+  INDEXNOW_KEY: z.string().regex(/^[A-Za-z0-9-]{8,128}$/).optional(),
+  /** The website whose pages are announced to IndexNow. */
+  SITE_URL: z.url().default("https://www.politicando.pt"),
 });
 
 const parliamentSchema = baseSchema.extend({

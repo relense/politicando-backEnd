@@ -56,7 +56,8 @@ The feed as stories. Returns `{ items, nextCursor, total }`, paged like `/articl
   first, each with **its own headline**. Use them for the stack of logos, and for "how each
   one headlined it" when opened.
 - `parties`, `deputies`, `government`, `president`, `initiatives`: named across the
-  versions, most often first. Use them for the context strip (below).
+  versions, most often first. `people`: everyone with a page named across the versions, most
+  often first, same shape as on articles (`{ kind, id, name }`); link the names. Use them for the context strip (below).
 - `importa` and `importance`: see [Importa](#importa).
 - `commentCount`: visible comments on the story, including older ones made on its articles.
 - `debate`: `{ agree, disagree }`, the most liked comment that agrees and the one that

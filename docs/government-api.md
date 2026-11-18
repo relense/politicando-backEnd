@@ -81,7 +81,9 @@ one's status is confirmed from a source.
   "gender": "M",
   "photoUrl": "https://…",
   "bio": ["Luis Montenegro nasceu no Porto…", "Licenciado em direito…"],  // official, plain-text paragraphs
-  "links": [{ "network": "X", "url": "https://x.com/LMontenegro_PT" }],  // often empty except the PM
+  "links": [{ "network": "X", "url": "https://x.com/LMontenegro_PT" }],  // the portal's own first, then Website, Wikipedia,
+                                                  // X, Instagram, Facebook, Wikidata from Wikidata (by a unique exact name,
+                                                  // or their deputy record). For the JSON-LD Person's sameAs
   "inOffice": true,
   "deputy": null,                                   // { id, name, party } when linked
   "positions": [                                    // every post held, latest first

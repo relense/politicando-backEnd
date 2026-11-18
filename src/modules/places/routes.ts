@@ -23,6 +23,7 @@ const placeRef = ref.extend({ dicofre: z.string().nullable() });
 
 const mayorSchema = z
   .object({
+    id: z.string().nullable().describe("Their page: /local-officials/:id"),
     name: z.string().describe("As published, usually in full"),
     list: z.string().describe('The ballot acronym, e.g. "PPD/PSD.CDS-PP"'),
     label: z.string().describe("The list's name in this municipality (local coalitions and citizens' groups)"),
@@ -48,22 +49,23 @@ export const placeRoutes =
   async (app) => {
     /** Mayors from the latest autárquicas with candidates, keyed by municipality. */
     const mayors = async (keys: string[] | null) => {
-      const rows = await db.execute<{ place_key: string; name: string; list: string; label: string | null; election_id: string }>(sql`
+      const rows = await db.execute<{ id: string | null; place_key: string; name: string; list: string; label: string | null; election_id: string }>(sql`
         with latest as (
           select e.id from elections e where e.type = 'autarquicas'
             and exists (select 1 from election_candidates c where c.election_id = e.id)
           order by e.date desc limit 1
         )
-        select c.place_key, c.name, c.list, coalesce(r.label, l.name) as label, c.election_id
+        select o.id, c.place_key, c.name, c.list, coalesce(r.label, l.name) as label, c.election_id
         from election_candidates c
         join latest on latest.id = c.election_id
+        left join local_officials o on o.place_key = c.place_key and o.election_id = c.election_id
         left join election_results r on r.election_id = c.election_id and r.organ = 'CM' and r.place_key = c.place_key and r.list = c.list
         left join election_lists l on l.election_id = c.election_id and l.list = c.list
         where c.elected ${keys ? sql`and c.place_key in (${sql.join(keys.map((k) => sql`${k}`), sql`, `)})` : sql``}`);
       return new Map(
         rows.rows.map((r) => [
           r.place_key,
-          { name: r.name, list: r.list, label: r.label ?? r.list, parties: partiesOf(r.list), election: r.election_id },
+          { id: r.id, name: r.name, list: r.list, label: r.label ?? r.list, parties: partiesOf(r.list), election: r.election_id },
         ]),
       );
     };

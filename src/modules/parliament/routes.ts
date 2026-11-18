@@ -33,6 +33,7 @@ const deputySummarySchema = z.object({
   seatEstimated: z.boolean().describe("True when the seat is estimated by importance within the party, not known"),
   positions: z.array(z.string()).describe('Official positions, most important first, e.g. "Líder do grupo parlamentar"'),
   parliamentRole: z.string().nullable(),
+  gender: z.enum(["M", "F"]).nullable().describe('From the parliament\'s records: "Deputada" / "eleita" for F'),
   photoUrl: z.string(),
 });
 
@@ -253,6 +254,7 @@ const deputyColumns = {
   seatEstimated: deputies.seatEstimated,
   positions: deputies.positions,
   parliamentRole: deputies.parliamentRole,
+  gender: sql<"M" | "F" | null>`${deputies.gender}`,
 };
 
 /** Groups ordered left to right by where their seats are on the official map. */
@@ -363,7 +365,6 @@ export const parliamentRoutes =
               partyInfo: partySchema.nullable(),
               situation: z.string(),
               active: z.boolean(),
-              gender: z.string().nullable(),
               birthDate: z.string().nullable(),
               profession: z.string().nullable(),
               education: z.array(z.object({ course: z.string(), completed: z.boolean() })),
@@ -372,6 +373,9 @@ export const parliamentRoutes =
                 z.object({ name: z.string(), acronym: z.string(), membership: z.string(), role: z.string().nullable() }),
               ),
               pastLegislatures: z.array(z.string()),
+              links: z
+                .array(z.object({ network: z.string(), url: z.string() }))
+                .describe('Official site, Wikipedia, X, Instagram, Facebook and Wikidata (network: "Website", "Wikipedia", "X"…), from Wikidata. For schema.org sameAs'),
               initiatives: z.object({
                 total: z.number(),
                 approved: z.number(),
@@ -394,13 +398,13 @@ export const parliamentRoutes =
             partyName: parties.name,
             situation: deputies.situation,
             active: deputies.active,
-            gender: deputies.gender,
             birthDate: deputies.birthDate,
             profession: deputies.profession,
             education: deputies.education,
             roles: deputies.roles,
             committees: deputies.committees,
             pastLegislatures: deputies.pastLegislatures,
+            links: deputies.wikidataLinks,
           })
           .from(deputies)
           .leftJoin(parties, eq(parties.id, deputies.partyId))

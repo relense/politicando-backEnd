@@ -14,7 +14,7 @@ import { errorSchema } from "../shared.js";
 
 export const SITEMAP_PAGE_SIZE = 10_000;
 
-const kinds = ["party", "deputy", "government-member", "president", "election", "place", "initiative", "editorial", "case"] as const;
+const kinds = ["party", "deputy", "government-member", "president", "election", "place", "local-official", "initiative", "editorial", "case"] as const;
 type Kind = (typeof kinds)[number];
 
 type Entry = { id: string; lastmod: string | null; level?: string };
@@ -29,6 +29,7 @@ const queries: Record<Exclude<Kind, "president">, ReturnType<typeof sql>> = {
   election: sql`select id, ${ts("imported_at")} as lastmod from elections where imported_at is not null order by date desc`,
   place: sql`select key as id, null as lastmod, level from places
     where key like 'LOCAL-%' and level in ('district', 'municipality', 'parish') order by key`,
+  "local-official": sql`select id, ${ts("updated_at")} as lastmod from local_officials where current order by id`,
   initiative: sql`select id::text as id, ${ts("updated_at")} as lastmod from initiatives order by id`,
   editorial: sql`select slug as id, ${ts("updated_at")} as lastmod from editorial_posts where status = 'published' order by published_at desc`,
   case: sql`select id::text as id, ${ts("updated_at")} as lastmod from cases where published order by id`,

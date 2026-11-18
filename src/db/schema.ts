@@ -211,6 +211,8 @@ export const deputies = pgTable(
       .default([]),
     /** Earlier legislatures they sat in, such as ["XV", "XVI"]. */
     pastLegislatures: text("past_legislatures").array().notNull().default([]),
+    /** Official site, Wikipedia, Wikidata and social accounts, from Wikidata (src/people/wikidata.ts). */
+    wikidataLinks: jsonb("wikidata_links").$type<{ network: string; url: string }[]>().notNull().default([]),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [index("deputies_party_idx").on(table.partyId)],
@@ -409,6 +411,8 @@ export const governmentMembers = pgTable(
     links: jsonb().$type<{ network: string; url: string }[]>().notNull().default([]),
     /** Their record as a deputy, matched by name, when they sat in this legislature. */
     deputyId: integer("deputy_id").references(() => deputies.id, { onDelete: "set null" }),
+    /** As on deputies: from Wikidata, shown after the portal's own `links`. */
+    wikidataLinks: jsonb("wikidata_links").$type<{ network: string; url: string }[]>().notNull().default([]),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [index("government_members_deputy_idx").on(table.deputyId)],
@@ -504,6 +508,53 @@ export const articlePresidents = pgTable(
   (table) => [
     primaryKey({ columns: [table.articleId, table.presidentId] }),
     index("article_presidents_president_idx").on(table.presidentId),
+  ],
+);
+
+/**
+ * Elected local officials with a page of their own. Today only mayors (presidentes de
+ * câmara): the results site publishes no other names for autárquicas. Rebuilt from
+ * election_candidates by src/places/localOfficials.ts.
+ */
+export const localOfficials = pgTable(
+  "local_officials",
+  {
+    /** Readable and stable across re-imports: "carlos-moedas-lisboa" (first and last name, municipality). */
+    id: text().primaryKey(),
+    name: text().notNull(),
+    role: text().$type<"mayor">().notNull(),
+    placeKey: text("place_key")
+      .notNull()
+      .references((): AnyPgColumn => places.key),
+    electionId: text("election_id")
+      .notNull()
+      .references((): AnyPgColumn => elections.id, { onDelete: "cascade" }),
+    /** The ballot acronym of their list: "PPD/PSD.CDS-PP". */
+    list: text().notNull(),
+    termStart: date("term_start").notNull(),
+    /** When the next autárquicas are due; null once they're replaced. */
+    termEnd: date("term_end"),
+    current: boolean().notNull().default(true),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("local_officials_place_idx").on(table.placeKey)],
+);
+
+export const articleLocalOfficials = pgTable(
+  "article_local_officials",
+  {
+    articleId: integer("article_id")
+      .notNull()
+      .references(() => articles.id, { onDelete: "cascade" }),
+    officialId: text("official_id")
+      .notNull()
+      .references(() => localOfficials.id, { onDelete: "cascade" }),
+    mentionCount: integer("mention_count").notNull(),
+    linkedBy: text("linked_by").$type<"auto" | "manual">().notNull().default("auto"),
+  },
+  (table) => [
+    primaryKey({ columns: [table.articleId, table.officialId] }),
+    index("article_local_officials_official_idx").on(table.officialId),
   ],
 );
 

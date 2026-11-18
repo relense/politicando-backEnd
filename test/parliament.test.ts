@@ -114,7 +114,7 @@ describe("GET /parliament", () => {
     expect(body.deputies).toHaveLength(230);
     expect(body.deputies.find((d: { id: number }) => d.id === 7341)).toEqual({
       id: 7341, name: "Francisco César", group: "PS", party: "ps", constituency: "Lisboa", seat: expect.any(Number),
-      seatEstimated: true, positions: ["Líder do grupo parlamentar"], parliamentRole: null, photoUrl: "https://app.parlamento.pt/webutils/getimage.aspx?id=7341&type=deputado",
+      seatEstimated: true, positions: ["Líder do grupo parlamentar"], parliamentRole: null, gender: expect.toBeOneOf(["M", "F", null]), photoUrl: "https://app.parlamento.pt/webutils/getimage.aspx?id=7341&type=deputado",
     });
     expect(body.initiativeCounts).toEqual({ approved: 1, rejected: 1, in_progress: 2, withdrawn: 1 });
   });
@@ -332,7 +332,7 @@ describe("news and deputies", () => {
     const b = await insertArticle(db, { sourceUri: "b", title: "Sem deputados", excerpt: "Nada." });
     await db.insert(articleDeputies).values({ articleId: b.id, deputyId: 817, mentionCount: 1, linkedBy: "manual" });
 
-    expect(await linkStoredArticles(db)).toEqual({ scanned: 2, deputyLinks: 2, governmentLinks: 0, presidentLinks: 0, initiativeLinks: 0 });
+    expect(await linkStoredArticles(db)).toEqual({ scanned: 2, deputyLinks: 2, governmentLinks: 0, presidentLinks: 0, localLinks: 0, initiativeLinks: 0 });
     const links = await db.select().from(articleDeputies);
     expect(links.map((l) => [l.articleId, l.deputyId, l.linkedBy]).sort()).toEqual(
       [[a.id, 7341, "auto"], [a.id, 817, "auto"], [b.id, 817, "manual"]].sort(),

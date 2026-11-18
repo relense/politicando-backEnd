@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import { pathToFileURL } from "node:url";
 import { loadDatabaseConfig } from "../config.js";
 import { PARTY_DEFINITIONS, SEATS_AS_OF } from "../matching/parties.js";
+import { syncLocalOfficials } from "../places/localOfficials.js";
 import { createDb, type Db } from "./client.js";
 import { parties } from "./schema.js";
 
@@ -36,6 +37,8 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   try {
     await seedParties(db);
     console.log(`Seeded ${PARTY_DEFINITIONS.length} parties`);
+    // Cheap, and keeps local officials in step with the election data after each deploy.
+    console.log(JSON.stringify(await syncLocalOfficials(db)));
   } finally {
     await pool.end();
   }

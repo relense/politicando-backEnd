@@ -292,7 +292,7 @@ describe("importElection on the newest platform", () => {
       municipalities: 1, candidates: 2, mayors: 1, unmatched: ["Nenhures (Aveiro)"],
     });
 
-    const mayor = { name: "Ana Exemplo", list: "PPD/PSD.CDS-PP", label: "Viva Águeda", parties: ["psd", "cds-pp"], election: "autarquicas-2025" };
+    const mayor = { id: "ana-exemplo-agueda", name: "Ana Exemplo", list: "PPD/PSD.CDS-PP", label: "Viva Águeda", parties: ["psd", "cds-pp"], election: "autarquicas-2025" };
     const town = await get("/places/LOCAL-010100");
     expect(town.body).toMatchObject({
       key: "LOCAL-010100", name: "ÁGUEDA", level: "municipality", parent: { key: "LOCAL-010000", name: "Aveiro" }, mayor,

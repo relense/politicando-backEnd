@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { Db } from "../../db/client.js";
 import { articles, deputies, governmentMembers, governmentPositions, governments, parties } from "../../db/schema.js";
 import { notFound } from "../../errors.js";
+import { mergeLinks } from "../../people/wikidata.js";
 import { articleColumns, articleSchema, visibleArticle } from "../articles/routes.js";
 import { errorSchema } from "../shared.js";
 import { memberParty } from "../../government/parties.js";
@@ -143,7 +144,9 @@ export const governmentRoutes =
               gender: z.enum(["M", "F"]).nullable(),
               photoUrl: z.string().nullable(),
               bio: z.array(z.string()).describe("Official biography, as plain-text paragraphs"),
-              links: z.array(z.object({ network: z.string(), url: z.string() })),
+              links: z
+                .array(z.object({ network: z.string(), url: z.string() }))
+                .describe('The portal\'s own links, then Wikipedia, official site, social accounts and Wikidata from Wikidata. For schema.org sameAs'),
               party: z.string().nullable().describe("Party slug: from their deputy record, or our curated list; null when unknown"),
               partySource: z.enum(["deputy", "curated"]).nullable(),
               independent: z.boolean(),
@@ -181,6 +184,7 @@ export const governmentRoutes =
             photoUrl: governmentMembers.photoUrl,
             bio: governmentMembers.bio,
             links: governmentMembers.links,
+            wikidataLinks: governmentMembers.wikidataLinks,
             deputyId: deputies.id,
             deputyName: deputies.name,
             party: parties.slug,
@@ -215,9 +219,10 @@ export const governmentRoutes =
           )
           .orderBy(desc(articles.publishedAt), desc(articles.id))
           .limit(10);
-        const { deputyId, deputyName, party, ...profile } = member;
+        const { deputyId, deputyName, party, wikidataLinks, ...profile } = member;
         return {
           ...profile,
+          links: mergeLinks(profile.links, wikidataLinks),
           ...memberParty(member.name, party),
           inOffice: positions.some((p) => p.endDate === null),
           deputy: deputyId !== null && deputyName !== null ? { id: deputyId, name: deputyName, party } : null,

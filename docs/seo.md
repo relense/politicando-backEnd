@@ -36,6 +36,7 @@ The backend now says exactly what to include:
 | `president` | id | `/presidente/:id` |
 | `election` | id | `/eleicoes/:id` |
 | `place` | key (+ `level`) | `/sitios/:key`: municipalities and districts first; parishes too |
+| `local-official` | id | `/autarcas/:id`: the 308 mayors (see `docs/places-api.md`) |
 | `initiative` | id | `/iniciativas/:id` |
 | `editorial` | slug | `/editorial/:slug` |
 | `case` | id | `/registo/:id` |
@@ -81,3 +82,27 @@ has them in one place. For each:
 - Municipalities and districts: `GET /places/:key` (`docs/places-api.md`).
 - Deputies and Government: `GET /people/:kind/:id/path` and the parliament and Government APIs.
 - Elections: `GET /elections/:id` and `/elections/:id/places/:key`.
+
+## IndexNow (Bing, Yandex and others)
+
+The backend tells IndexNow about new pages every hour, from the ingest job: new news
+(`/article/:id`, which shows the story), blog posts published or edited
+(`/editorial/:slug`), and local officials added or changed (`/autarcas/:id`). Google doesn't
+use IndexNow; for Google, the sitemap is what counts.
+
+What the frontend needs to do:
+1. Serve the key as a text file at the site root: `https://www.politicando.pt/<key>.txt`,
+   whose content is the key itself (e.g. `public/<key>.txt`). The key is 8 to 128 letters,
+   digits or dashes; pick one (e.g. a UUID) and share it with the backend.
+2. Tell us if any of those three routes differ, so the pings point at real pages.
+
+The key is `5b5bc5c4-6bd8-482f-97b8-3fabbef46451`, set as `INDEXNOW_KEY` on the
+`politicando-ingest` cron job in render.yaml. Without it, nothing is sent.
+
+## Person pages: structured data
+
+- Deputies and the Government have `links` (official site, Wikipedia, X, Instagram, Facebook,
+  Wikidata). Put every `url` in the JSON-LD `Person`'s `sameAs`, and show them on the page.
+- Deputies have `gender` (`M`/`F`) for "Deputado"/"Deputada" and "eleito"/"eleita".
+- Articles and stories have `people` (`{ kind, id, name }`): link every name to that person's
+  page.

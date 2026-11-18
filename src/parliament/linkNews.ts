@@ -4,6 +4,7 @@ import {
   articleDeputies,
   articleGovernmentMembers,
   articleInitiatives,
+  articleLocalOfficials,
   articlePresidents,
   articles,
   initiatives,
@@ -16,11 +17,12 @@ import {
 } from "../ingestion/ingest.js";
 import { buildInitiativeIndex, matchInitiatives } from "../matching/matchInitiatives.js";
 import { countMentions, matchDeputies, matchNames } from "../matching/matchParties.js";
+import { loadMatchableLocalOfficials } from "../places/localOfficials.js";
 
 const BATCH = 500;
 
 /**
- * Links stored articles to the deputies, members of the Government and initiatives they mention. The full text isn't
+ * Links stored articles to the deputies, members of the Government, mayors and initiatives they mention. The full text isn't
  * kept, so this only sees the headline and excerpt; new articles are linked by the scanner
  * with more text. By default it only adds links, so it never undoes the scanner's better
  * ones. With `replace`, automatic links are recomputed from scratch (use after changing
@@ -34,6 +36,7 @@ export const linkStoredArticles = async (
   const parties = await loadMatchableParties(db);
   const government = await loadMatchableGovernment(db);
   const president = await loadMatchablePresident(db);
+  const local = await loadMatchableLocalOfficials(db);
   const index = buildInitiativeIndex(
     await db
       .select({
@@ -44,7 +47,7 @@ export const linkStoredArticles = async (
       })
       .from(initiatives),
   );
-  const totals = { scanned: 0, deputyLinks: 0, governmentLinks: 0, presidentLinks: 0, initiativeLinks: 0 };
+  const totals = { scanned: 0, deputyLinks: 0, governmentLinks: 0, presidentLinks: 0, localLinks: 0, initiativeLinks: 0 };
   let lastId = 0;
 
   for (;;) {
@@ -84,6 +87,13 @@ export const linkStoredArticles = async (
         mentionCount: m.mentions,
       })),
     );
+    const localLinks = rows.flatMap((row) =>
+      matchNames({ title: row.title, content: row.excerpt }, local).map((m) => ({
+        articleId: row.id,
+        officialId: m.id,
+        mentionCount: m.mentions,
+      })),
+    );
     const initiativeLinks = rows.flatMap((row) =>
       matchInitiatives(index, { text: `${row.title}\n${row.excerpt}`, publishedAt: row.publishedAt }).map((m) => ({
         articleId: row.id,
@@ -103,6 +113,9 @@ export const linkStoredArticles = async (
           .delete(articlePresidents)
           .where(and(inArray(articlePresidents.articleId, ids), eq(articlePresidents.linkedBy, "auto")));
         await tx
+          .delete(articleLocalOfficials)
+          .where(and(inArray(articleLocalOfficials.articleId, ids), eq(articleLocalOfficials.linkedBy, "auto")));
+        await tx
           .delete(articleInitiatives)
           .where(and(inArray(articleInitiatives.articleId, ids), eq(articleInitiatives.linkedBy, "auto")));
       }
@@ -117,6 +130,10 @@ export const linkStoredArticles = async (
       if (presidentLinks.length > 0) {
         const added = await tx.insert(articlePresidents).values(presidentLinks).onConflictDoNothing().returning();
         totals.presidentLinks += added.length;
+      }
+      if (localLinks.length > 0) {
+        const added = await tx.insert(articleLocalOfficials).values(localLinks).onConflictDoNothing().returning();
+        totals.localLinks += added.length;
       }
       if (initiativeLinks.length > 0) {
         const added = await tx.insert(articleInitiatives).values(initiativeLinks).onConflictDoNothing().returning();

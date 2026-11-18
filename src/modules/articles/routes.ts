@@ -70,6 +70,12 @@ export const articleInitiativeSchema = z.object({
 
 export const articleGovernmentSchema = z.object({ id: z.string(), name: z.string() });
 
+export const articlePersonSchema = z.object({
+  kind: z.enum(["deputy", "government", "president", "local"]),
+  id: z.string().describe("As the person's own endpoint takes it: /deputies/:id, /government/members/:id, /president, /local-officials/:id"),
+  name: z.string(),
+});
+
 export const articleSchema = z.object({
   id: z.number(),
   title: z.string(),
@@ -88,6 +94,9 @@ export const articleSchema = z.object({
   deputies: z.array(articleDeputySchema),
   government: z.array(articleGovernmentSchema).describe("Members of the Government named in it"),
   president: z.object({ id: z.string(), name: z.string() }).nullable().describe("The President of the Republic, if named"),
+  people: z
+    .array(articlePersonSchema)
+    .describe("Everyone named in it who has a page (deputies, Government, President, mayors), most mentioned first. Matched by full name"),
   initiatives: z
     .array(articleInitiativeSchema)
     .describe("Initiatives it seems to be about. Found by keywords, so approximate"),
@@ -134,6 +143,26 @@ const presidentSql = sql<{ id: string; name: string } | null>`(
   order by ap.mention_count desc limit 1
 )`;
 
+/** Everyone with a page, most mentioned first; a deputy who is also in the Government appears once, as a deputy. */
+const peopleSql = sql<z.infer<typeof articlePersonSchema>[]>`coalesce((
+  select json_agg(json_build_object('kind', kind, 'id', id, 'name', name) order by n desc, ord, name)
+  from (
+    select 'deputy' as kind, d.id::text as id, d.name, ad.mention_count as n, 1 as ord
+    from article_deputies ad join deputies d on d.id = ad.deputy_id where ad.article_id = articles.id
+    union all
+    select 'government', g.id, g.name, agm.mention_count, 2
+    from article_government_members agm join government_members g on g.id = agm.member_id
+    where agm.article_id = articles.id
+      and not exists (select 1 from article_deputies ad where ad.article_id = articles.id and ad.deputy_id = g.deputy_id)
+    union all
+    select 'president', pr.id, pr.name, ap.mention_count, 3
+    from article_presidents ap join presidents pr on pr.id = ap.president_id where ap.article_id = articles.id
+    union all
+    select 'local', o.id, o.name, alo.mention_count, 4
+    from article_local_officials alo join local_officials o on o.id = alo.official_id where alo.article_id = articles.id
+  ) people
+), '[]'::json)`;
+
 const initiativesSql = sql<z.infer<typeof articleInitiativeSchema>[]>`coalesce((
   select json_agg(
     json_build_object('id', i.id, 'type', i.type, 'number', i.number, 'title', i.title, 'status', i.status,
@@ -165,6 +194,7 @@ export const articleColumns = {
   deputies: deputiesSql,
   government: governmentSql,
   president: presidentSql,
+  people: peopleSql,
   initiatives: initiativesSql,
 };
 

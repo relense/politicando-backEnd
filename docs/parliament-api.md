@@ -65,6 +65,8 @@ How to draw it:
 - Colour each seat by `party`, the same slug used across the API and the frontend.
 - `group` uses the parliament's acronyms (`CH`, `L`, `BE`). Use `party` for links and
   colours.
+- `gender`: `"M"`, `"F"` or `null`, from the parliament's records (every deputy has it). Use
+  it for "Deputado" / "Deputada", "eleito" / "eleita".
 
 **Photos are big** (often 0.5 MB each, served by parlamento.pt). Load a photo only
 when a deputy is hovered or opened, never all 230 at once.
@@ -86,6 +88,11 @@ when a deputy is hovered or opened, never all 230 at once.
   "committees": [{ "name": "Comissão de Agricultura e Pescas", "acronym": "CAPes",
                    "membership": "Suplente", "role": null }],
   "pastLegislatures": ["XVI", "XV"],
+  "links": [                                       // from Wikidata, by the parliament's own ID; [] when none
+    { "network": "Website", "url": "https://…" },  // order: Website, Wikipedia, X, Instagram, Facebook, Wikidata
+    { "network": "Wikipedia", "url": "https://pt.wikipedia.org/wiki/…" },
+    { "network": "Wikidata", "url": "https://www.wikidata.org/wiki/Q…" }
+  ],                                               // put every url in the JSON-LD Person's sameAs
   "initiatives": { "total": 20, "approved": 1, "latest": [/* 10 initiative summaries */] },
   "articles": [/* the 10 latest news articles about them, same shape as /articles */]
 }
