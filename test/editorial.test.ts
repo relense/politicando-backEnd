@@ -198,12 +198,18 @@ describe("posts from Markdown files", () => {
   it("publishes, then updates by slug keeping the first publication date and featured", async () => {
     const first = new Date("2026-11-16T10:00:00Z");
     expect(await saveMarkdownPosts(db, [parseMarkdownPost(file)!], { authorName: "Redação Politicando", publish: true, now: first }))
-      .toEqual([{ slug: "oe-explicado", created: true }]);
+      .toEqual([{ slug: "oe-explicado", created: true, changed: true }]);
     await db.update(editorialPosts).set({ featured: true });
 
     const edited = parseMarkdownPost(file.replace("Intro.", "Nova intro."))!;
     expect(await saveMarkdownPosts(db, [edited], { authorName: "Redação Politicando", publish: true, now: new Date("2026-11-17T10:00:00Z") }))
-      .toEqual([{ slug: "oe-explicado", created: false }]);
+      .toEqual([{ slug: "oe-explicado", created: false, changed: true }]);
+    // The same file again (each deploy): nothing changes, not even the date.
+    const [before] = await db.select({ updatedAt: editorialPosts.updatedAt }).from(editorialPosts);
+    expect(await saveMarkdownPosts(db, [edited], { authorName: "Redação Politicando", publish: true, now: new Date("2026-11-18T10:00:00Z") }))
+      .toEqual([{ slug: "oe-explicado", created: false, changed: false }]);
+    const [after] = await db.select({ updatedAt: editorialPosts.updatedAt }).from(editorialPosts);
+    expect(after!.updatedAt).toEqual(before!.updatedAt);
 
     const response = await app.inject({ method: "GET", url: "/api/v2/editorial/oe-explicado" });
     expect(response.json()).toMatchObject({ authorName: "Redação Politicando", featured: true, publishedAt: first.toISOString() });

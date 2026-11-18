@@ -1,3 +1,5 @@
+import { readdir, readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { sql } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import { editorialPosts } from "../db/schema.js";
@@ -105,7 +107,7 @@ export const saveMarkdownPosts = async (
   posts: MarkdownPost[],
   { authorName, publish, now = new Date() }: { authorName: string; publish: boolean; now?: Date },
 ) => {
-  const saved: { slug: string; created: boolean }[] = [];
+  const saved: { slug: string; created: boolean; changed: boolean }[] = [];
   for (const post of posts) {
     const [row] = await db
       .insert(editorialPosts)
@@ -121,9 +123,38 @@ export const saveMarkdownPosts = async (
           ...(publish && { status: "published" as const, publishedAt: sql`coalesce(${editorialPosts.publishedAt}, ${now.toISOString()}::timestamptz)` }),
           ...(post.featured !== null && { featured: publish && post.featured }),
         },
+        // Unchanged posts keep their dates, so re-importing (each deploy) doesn't look like an edit.
+        setWhere: sql`(${editorialPosts.kind}, ${editorialPosts.title}, ${editorialPosts.subtitle}, ${editorialPosts.body}, ${editorialPosts.tags},
+            ${editorialPosts.coverImageUrl}, ${editorialPosts.mediaUrl}, ${editorialPosts.authorName})
+          is distinct from (excluded.kind, excluded.title, excluded.subtitle, excluded.body, excluded.tags,
+            excluded.cover_image_url, excluded.media_url, excluded.author_name)
+          ${publish ? sql`or ${editorialPosts.status} <> 'published'` : sql``}
+          ${post.featured !== null ? sql`or ${editorialPosts.featured} is distinct from ${publish && post.featured}` : sql``}`,
       })
       .returning({ slug: editorialPosts.slug, created: sql<boolean>`${editorialPosts.createdAt} = ${now.toISOString()}::timestamptz` });
-    saved.push(row!);
+    saved.push(row ? { ...row, changed: true } : { slug: post.slug, created: false, changed: false });
   }
   return saved;
+};
+
+/** Blog posts kept in this repo: published on every deploy (the seed), until the admin screen takes over. */
+export const CONTENT_DIR = "content/editorial";
+
+export const importContentPosts = async (db: Db, dir = CONTENT_DIR) => {
+  let names: string[];
+  try {
+    names = (await readdir(dir)).filter((f) => f.endsWith(".md")).sort();
+  } catch {
+    return [];
+  }
+  const posts: MarkdownPost[] = [];
+  for (const name of names) {
+    try {
+      const post = parseMarkdownPost(await readFile(join(dir, name), "utf8"));
+      if (post) posts.push(post);
+    } catch (error) {
+      throw new Error(`${join(dir, name)}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  return saveMarkdownPosts(db, posts, { authorName: "Redação Politicando", publish: true });
 };
