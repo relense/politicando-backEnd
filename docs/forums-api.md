@@ -55,6 +55,9 @@ Query: `sort=active|new|top` (default `active`: last reply first; `new`: newest;
 upvoted, then most replies), `status` (only threads the team gave that status; see the
 ideas board), `page`, `limit` (1-50, default 25). Pinned threads come first. 404 for an
 unknown board.
+Keep `active` as the default view: discussion goes by activity, not popularity, so upvotes
+never bury anyone (`top` is something the reader picks). Logged-in readers follow the threads
+they open or reply in, and get told about new replies (see `engagement-api.md`).
 
 ```json
 {
@@ -202,3 +205,9 @@ ideas (moderators):
 `PUT /admin/forum/threads/:id/status` with `{ "status": "planned", "answer": "Está nos planos para dezembro" }`.
 Both can be `null`. Returns `{ status, answer, answeredAt }`. Threads on other boards get
 400 `not_an_idea`.
+
+## Votes board (`votacoes`)
+
+One thread per parliament vote open for "Passa ou chumba?". Each is created automatically and
+pinned, and readers can't open threads there themselves (403 `board_closed`). Posts carry `pick`,
+the poster's prediction, to show as their side. See `engagement-api.md`.

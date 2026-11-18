@@ -14,6 +14,8 @@ import {
 } from "../../accounts/sessions.js";
 import type { Db } from "../../db/client.js";
 import {
+  SAVE_KINDS,
+  type SaveKind,
   articleVotes,
   commentLikes,
   comments,
@@ -32,6 +34,7 @@ import {
 } from "../../db/schema.js";
 import { ApiError } from "../../errors.js";
 import { assertPublishable } from "../../moderation/screen.js";
+import { followsOf } from "../../notifications/index.js";
 import type { RecaptchaVerifier } from "../comments/recaptcha.js";
 import { errorSchema } from "../shared.js";
 
@@ -61,14 +64,27 @@ const userSchema = z.object({ id: z.number(), username: z.string(), createdAt: z
 const idSchema = z.coerce.number().int().positive().max(MAX_INT);
 const muteValue = { source: /^[a-z0-9.-]{1,100}$/, party: /^[a-z0-9-]{1,40}$/ } as const;
 
+/** Where each kind of save goes in /me/state and /me/merge. */
+const SAVED_LISTS = { article: "articles", story: "stories", editorial: "editorial", comment: "comments", thread: "threads", reply: "replies" } as const;
+
 const stateSchema = z.object({
-  saved: z.object({ articles: z.array(z.number()), stories: z.array(z.number()) }).describe("Newest first"),
+  saved: z
+    .object({
+      articles: z.array(z.number()),
+      stories: z.array(z.number()),
+      editorial: z.array(z.number()).describe("Blog post ids"),
+      comments: z.array(z.number()),
+      threads: z.array(z.number()).describe("Forum threads"),
+      replies: z.array(z.number()).describe("Forum replies (posts in a thread)"),
+    })
+    .describe("Ids, newest first. GET /me/saved has the details"),
   hidden: z.array(z.number()).describe("Article ids, newest first"),
   muted: z.object({ sources: z.array(z.string()), parties: z.array(z.string()) }),
   read: z.array(z.number()).describe("Story ids, newest first"),
+  follows: z.object({ stories: z.array(z.number()), threads: z.array(z.number()) }).describe('What the reader follows ("Seguir"), newest first'),
   votes: z.object({
     articles: z.record(z.string(), z.union([z.literal(1), z.literal(-1)])).describe("Article id → 1 or -1"),
-    editorial: z.record(z.string(), z.union([z.literal(1), z.literal(-1)])).describe("Post slug → 1 or -1"),
+    editorial: z.record(z.string(), z.literal(1)).describe('Blog posts marked "Importa": slug → 1'),
     stories: z.array(z.number()).describe('Stories marked "Importa"'),
     comments: z.array(z.number()).describe("Comments liked"),
     forum: z.array(z.number()).describe("Forum threads upvoted"),
@@ -77,8 +93,8 @@ const stateSchema = z.object({
 
 const mergeSchema = z.strictObject({
   saved: z
-    .strictObject({ articles: z.array(idSchema).max(CAPS.saved).default([]), stories: z.array(idSchema).max(CAPS.saved).default([]) })
-    .default({ articles: [], stories: [] }),
+    .strictObject(Object.fromEntries(Object.values(SAVED_LISTS).map((list) => [list, z.array(idSchema).max(CAPS.saved).default([])])) as Record<(typeof SAVED_LISTS)[SaveKind], z.ZodDefault<z.ZodArray<typeof idSchema>>>)
+    .default({ articles: [], stories: [], editorial: [], comments: [], threads: [], replies: [] }),
   hidden: z.array(idSchema).max(CAPS.hidden).default([]),
   muted: z
     .strictObject({
@@ -145,7 +161,7 @@ export const accountRoutes =
         db.select({ id: userReads.storyId }).from(userReads).where(eq(userReads.userId, userId)).orderBy(desc(userReads.createdAt)),
         db.select({ id: articleVotes.articleId, value: articleVotes.value }).from(articleVotes).where(eq(articleVotes.userId, userId)),
         db
-          .select({ slug: editorialPosts.slug, value: editorialVotes.value })
+          .select({ slug: editorialPosts.slug })
           .from(editorialVotes)
           .innerJoin(editorialPosts, eq(editorialPosts.id, editorialVotes.postId))
           .where(eq(editorialVotes.userId, userId)),
@@ -155,13 +171,14 @@ export const accountRoutes =
       ]);
       const vote = (v: number) => (v > 0 ? 1 : -1) as 1 | -1;
       return {
-        saved: { articles: saves.filter((s) => s.kind === "article").map((s) => s.id), stories: saves.filter((s) => s.kind === "story").map((s) => s.id) },
+        saved: Object.fromEntries(SAVE_KINDS.map((kind) => [SAVED_LISTS[kind], saves.filter((s) => s.kind === kind).map((s) => s.id)])) as z.infer<typeof stateSchema>["saved"],
         hidden: hidden.map((h) => h.id),
         muted: { sources: mutes.filter((m) => m.kind === "source").map((m) => m.value), parties: mutes.filter((m) => m.kind === "party").map((m) => m.value) },
         read: reads.map((r) => r.id),
+        follows: await followsOf(db, userId),
         votes: {
           articles: Object.fromEntries(aVotes.map((v) => [String(v.id), vote(v.value)])),
-          editorial: Object.fromEntries(eVotes.map((v) => [v.slug, vote(v.value)])),
+          editorial: Object.fromEntries(eVotes.map((v) => [v.slug, 1 as const])),
           stories: sVotes.map((v) => v.id),
           comments: likes.map((v) => v.id),
           forum: fVotes.map((v) => v.id),
@@ -300,10 +317,7 @@ export const accountRoutes =
         const { saved, hidden, muted, read } = request.body;
         // The browser's lists are newest first: keep that order in the stored dates.
         const at = (index: number) => new Date(Date.now() - index * 1000);
-        const saves = [
-          ...saved.articles.map((targetId, i) => ({ userId, kind: "article" as const, targetId, createdAt: at(i) })),
-          ...saved.stories.map((targetId, i) => ({ userId, kind: "story" as const, targetId, createdAt: at(i) })),
-        ];
+        const saves = SAVE_KINDS.flatMap((kind) => saved[SAVED_LISTS[kind]].map((targetId, i) => ({ userId, kind, targetId, createdAt: at(i) })));
         if (saves.length) await db.insert(userSaves).values(saves).onConflictDoNothing();
         if (hidden.length) await db.insert(userHidden).values(hidden.map((articleId, i) => ({ userId, articleId, createdAt: at(i) }))).onConflictDoNothing();
         const mutes = [
@@ -312,8 +326,7 @@ export const accountRoutes =
         ];
         if (mutes.length) await db.insert(userMutes).values(mutes).onConflictDoNothing();
         if (read.length) await db.insert(userReads).values(read.map((storyId, i) => ({ userId, storyId, createdAt: at(i) }))).onConflictDoNothing();
-        await trim("user_saves", userId, CAPS.saved, "article");
-        await trim("user_saves", userId, CAPS.saved, "story");
+        for (const kind of SAVE_KINDS) await trim("user_saves", userId, CAPS.saved, kind);
         await trim("user_hidden", userId, CAPS.hidden);
         await trim("user_mutes", userId, CAPS.muted, "source");
         await trim("user_mutes", userId, CAPS.muted, "party");
@@ -323,13 +336,31 @@ export const accountRoutes =
     );
 
     // One endpoint per list; PUT adds (idempotent), DELETE removes.
-    const savedParams = z.object({ kind: z.enum(["article", "story"]), id: idSchema });
+    const savedParams = z.object({ kind: z.enum(SAVE_KINDS), id: idSchema });
+    /** Only things readers can see can be saved. */
+    const visible = (kind: SaveKind, id: number) =>
+      ({
+        article: sql`select 1 from articles where id = ${id} and hidden_at is null`,
+        story: sql`select 1 from stories where id = ${id}`,
+        editorial: sql`select 1 from editorial_posts where id = ${id} and status = 'published'`,
+        comment: sql`select 1 from comments where id = ${id} and hidden_at is null`,
+        thread: sql`select 1 from forum_threads where id = ${id} and hidden_at is null`,
+        reply: sql`select 1 from forum_posts where id = ${id} and hidden_at is null`,
+      })[kind];
     app.put(
       "/me/saved/:kind/:id",
-      { schema: { tags: ["accounts"], summary: "Save a news article or a story", params: savedParams, response: { 204: z.null(), ...errors } } },
+      {
+        schema: {
+          tags: ["accounts"],
+          summary: "Save a news article, a story, a blog post (by id), a comment, a forum thread or a forum reply",
+          params: savedParams,
+          response: { 204: z.null(), ...errors, 404: errorSchema },
+        },
+      },
       async (request, reply) => {
         const { id: userId } = requireReader(request);
         const { kind, id } = request.params;
+        if ((await db.execute(visible(kind, id))).rows.length === 0) throw new ApiError(404, "not_found", "Nothing to save there");
         await db.insert(userSaves).values({ userId, kind, targetId: id }).onConflictDoNothing();
         await trim("user_saves", userId, CAPS.saved, kind);
         return reply.status(204).send(null);
@@ -343,6 +374,76 @@ export const accountRoutes =
         const { kind, id } = request.params;
         await db.delete(userSaves).where(and(eq(userSaves.userId, userId), eq(userSaves.kind, kind), eq(userSaves.targetId, id)));
         return reply.status(204).send(null);
+      },
+    );
+
+    const savedAt = z.string().describe("When the reader saved it");
+    const savedSchema = z.object({
+      editorial: z.array(z.object({ savedAt, id: z.number(), slug: z.string(), kind: z.string(), title: z.string(), subtitle: z.string().nullable(), coverImageUrl: z.string().nullable(), publishedAt: z.string().nullable() })),
+      comments: z.array(
+        z.object({
+          savedAt,
+          id: z.number(),
+          body: z.string(),
+          username: z.string().nullable(),
+          likes: z.number(),
+          createdAt: z.string(),
+          articleId: z.number().nullable().describe("What it's on: one of articleId, storyId or postSlug"),
+          storyId: z.number().nullable(),
+          postSlug: z.string().nullable(),
+        }),
+      ),
+      threads: z.array(z.object({ savedAt, id: z.number(), board: z.string(), title: z.string(), nickname: z.string().nullable(), score: z.number(), replyCount: z.number(), createdAt: z.string() })),
+      replies: z.array(z.object({ savedAt, id: z.number(), threadId: z.number(), threadTitle: z.string(), board: z.string(), body: z.string(), nickname: z.string().nullable(), createdAt: z.string() })),
+    });
+    app.get(
+      "/me/saved",
+      {
+        schema: {
+          tags: ["accounts"],
+          summary: "The saved blog posts, comments, forum threads and replies, with what's needed to show them, newest saved first",
+          description: "News and stories are in /me/state as ids (the site already loads those). Things since hidden or deleted are left out.",
+          response: { 200: savedSchema, 401: errorSchema },
+        },
+      },
+      async (request) => {
+        const { id: userId } = requireReader(request);
+        const saved = (kind: SaveKind) => and(eq(userSaves.userId, userId), eq(userSaves.kind, kind));
+        const [posts, ownComments, threads, replies] = await Promise.all([
+          db
+            .select({ savedAt: userSaves.createdAt, id: editorialPosts.id, slug: editorialPosts.slug, kind: editorialPosts.kind, title: editorialPosts.title, subtitle: editorialPosts.subtitle, coverImageUrl: editorialPosts.coverImageUrl, publishedAt: editorialPosts.publishedAt })
+            .from(userSaves)
+            .innerJoin(editorialPosts, and(eq(editorialPosts.id, userSaves.targetId), eq(editorialPosts.status, "published")))
+            .where(saved("editorial"))
+            .orderBy(desc(userSaves.createdAt)),
+          db
+            .select({ savedAt: userSaves.createdAt, id: comments.id, body: comments.body, username: comments.username, likes: comments.likes, createdAt: comments.createdAt, articleId: comments.articleId, storyId: comments.storyId, postSlug: editorialPosts.slug })
+            .from(userSaves)
+            .innerJoin(comments, and(eq(comments.id, userSaves.targetId), sql`${comments.hiddenAt} is null`))
+            .leftJoin(editorialPosts, eq(editorialPosts.id, comments.editorialPostId))
+            .where(saved("comment"))
+            .orderBy(desc(userSaves.createdAt)),
+          db
+            .select({ savedAt: userSaves.createdAt, id: forumThreads.id, board: forumThreads.board, title: forumThreads.title, nickname: forumThreads.nickname, score: forumThreads.score, replyCount: forumThreads.replyCount, createdAt: forumThreads.createdAt })
+            .from(userSaves)
+            .innerJoin(forumThreads, and(eq(forumThreads.id, userSaves.targetId), sql`${forumThreads.hiddenAt} is null`))
+            .where(saved("thread"))
+            .orderBy(desc(userSaves.createdAt)),
+          db
+            .select({ savedAt: userSaves.createdAt, id: forumPosts.id, threadId: forumPosts.threadId, threadTitle: forumThreads.title, board: forumThreads.board, body: forumPosts.body, nickname: forumPosts.nickname, createdAt: forumPosts.createdAt })
+            .from(userSaves)
+            .innerJoin(forumPosts, and(eq(forumPosts.id, userSaves.targetId), sql`${forumPosts.hiddenAt} is null`))
+            .innerJoin(forumThreads, and(eq(forumThreads.id, forumPosts.threadId), sql`${forumThreads.hiddenAt} is null`))
+            .where(saved("reply"))
+            .orderBy(desc(userSaves.createdAt)),
+        ]);
+        const iso = <T extends { savedAt: Date; createdAt?: Date; publishedAt?: Date | null }>(r: T) => ({
+          ...r,
+          savedAt: r.savedAt.toISOString(),
+          ...(r.createdAt ? { createdAt: r.createdAt.toISOString() } : {}),
+          ...("publishedAt" in r ? { publishedAt: r.publishedAt?.toISOString() ?? null } : {}),
+        });
+        return { editorial: posts.map(iso), comments: ownComments.map(iso), threads: threads.map(iso), replies: replies.map(iso) } as z.infer<typeof savedSchema>;
       },
     );
 
@@ -524,9 +625,7 @@ export const deleteAccount = (db: Db, userId: number) =>
         where a.id in (${sql.join(votedArticles.map((id) => sql`${id}`), sql`, `)})`);
     }
     if (votedPosts.length) {
-      await tx.execute(sql`update editorial_posts p set
-        upvotes = (select count(*)::int from editorial_votes v where v.post_id = p.id and v.value = 1),
-        downvotes = (select count(*)::int from editorial_votes v where v.post_id = p.id and v.value = -1)
+      await tx.execute(sql`update editorial_posts p set importa = (select count(*)::int from editorial_votes v where v.post_id = p.id)
         where p.id in (${sql.join(votedPosts.map((id) => sql`${id}`), sql`, `)})`);
     }
     if (markedStories.length) {

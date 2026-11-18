@@ -27,21 +27,24 @@ const titles = async (query: string) => (await call("GET", `/articles?${query}`)
 const reads = (articleId: number, views: number, daysAgo = 0) =>
   db.insert(articleViews).values({ articleId, views, day: sql`(now() at time zone 'Europe/Lisbon')::date - ${daysAgo}::int` });
 
-describe("votes on blog posts", () => {
-  it("keeps one replaceable vote per reader and shows the counts on posts", async () => {
+describe("Importa on blog posts", () => {
+  it("keeps one mark per reader and shows the count on posts", async () => {
     await db.insert(editorialPosts).values([
       { slug: "orcamento", title: "Orçamento", kind: "article", body: "texto", authorName: "Ana", status: "published", publishedAt: new Date() },
       { slug: "rascunho", title: "Rascunho", kind: "article", body: "texto", authorName: "Ana", status: "draft" },
     ]);
-    expect((await call("POST", "/editorial/orcamento/vote", { value: 1 })).body).toEqual({ up: 1, down: 0, mine: 1 });
-    expect((await call("POST", "/editorial/orcamento/vote", { value: -1 })).body).toEqual({ up: 0, down: 1, mine: -1 });
-    expect((await call("POST", "/editorial/orcamento/vote", { value: 1 }, "10.0.0.2")).body).toEqual({ up: 1, down: 1, mine: 1 });
-    expect((await call("POST", "/editorial/orcamento/vote", { value: 0 })).body).toEqual({ up: 1, down: 0, mine: 0 });
+    expect((await call("POST", "/editorial/orcamento/vote", { value: 1 })).body).toEqual({ importa: 1, mine: 1, up: 1, down: 0 });
+    expect((await call("POST", "/editorial/orcamento/vote", { value: 1 })).body).toMatchObject({ importa: 1 });
+    expect((await call("POST", "/editorial/orcamento/vote", { value: 1 }, "10.0.0.2")).body).toMatchObject({ importa: 2, mine: 1 });
+    expect((await call("POST", "/editorial/orcamento/vote", { value: 0 })).body).toEqual({ importa: 1, mine: 0, up: 1, down: 0 });
+    // The old "down" button takes the mark back instead.
+    expect((await call("POST", "/editorial/orcamento/vote", { value: -1 }, "10.0.0.2")).body).toMatchObject({ importa: 0, mine: 0 });
+    await call("POST", "/editorial/orcamento/vote", { value: 1 });
     expect((await call("POST", "/editorial/rascunho/vote", { value: 1 })).status).toBe(404);
     expect((await call("POST", "/editorial/orcamento/vote", { value: 2 })).status).toBe(400);
 
-    expect((await call("GET", "/editorial/orcamento")).body).toMatchObject({ upvotes: 1, downvotes: 0 });
-    expect((await call("GET", "/editorial")).body.items[0]).toMatchObject({ upvotes: 1, downvotes: 0, commentCount: 0 });
+    expect((await call("GET", "/editorial/orcamento")).body).toMatchObject({ importa: 1, upvotes: 1, downvotes: 0 });
+    expect((await call("GET", "/editorial")).body.items[0]).toMatchObject({ importa: 1, commentCount: 0 });
   });
 });
 

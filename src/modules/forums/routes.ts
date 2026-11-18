@@ -9,6 +9,8 @@ import { posterId, reporterKey, voterKey } from "../../forums/identity.js";
 import type { RecaptchaVerifier } from "../comments/recaptcha.js";
 import { autoModerate } from "../../moderation/reports.js";
 import { assertPublishable } from "../../moderation/screen.js";
+import { follow, followers, notify } from "../../notifications/index.js";
+import { VOTES_BOARD } from "../../predictions/rounds.js";
 import { errorSchema } from "../shared.js";
 import type { Participant } from "../../accounts/participant.js";
 
@@ -18,6 +20,7 @@ export const IDEAS_BOARD = "ideias";
 const OWN_BOARDS = [
   { board: GENERAL_BOARD, name: "Geral", acronym: null },
   { board: IDEAS_BOARD, name: "Ideias", acronym: null },
+  { board: VOTES_BOARD, name: "Votações", acronym: null },
 ];
 export const IDEA_STATUSES = ["reviewing", "planned", "in_progress", "done", "declined"] as const;
 const MAX_INT = 2_147_483_647;
@@ -66,6 +69,7 @@ const postSchema = z.object({
   replyTo: z.number().nullable(),
   createdAt: z.string(),
   hidden: z.boolean(),
+  pick: z.enum(["pass", "fail"]).nullable().describe('In a vote\'s megathread (board "votacoes"): the poster\'s "Passa ou chumba?" pick, shown as their side'),
 });
 
 export const REPORT_REASONS = ["spam", "insult", "hate", "personal_data", "illegal", "other"] as const;
@@ -231,15 +235,19 @@ export const forumRoutes =
         const thread = rows.rows[0];
         if (!thread) throw notFound("Thread");
         const { after, limit } = request.query;
-        const posts = await db.execute<{ id: number; body: string; nickname: string | null; account: boolean; poster_id: string; reply_to: number | null; created_at: string; hidden: boolean }>(sql`
-          select p.id, p.body, p.nickname, p.user_id is not null as account, p.poster_id, p.reply_to, ${iso("p.created_at")} as created_at, p.hidden_at is not null as hidden
-          from forum_posts p where p.thread_id = ${thread.id} and p.id > ${after} order by p.id limit ${limit + 1}`);
+        const posts = await db.execute<{ id: number; body: string; nickname: string | null; account: boolean; poster_id: string; reply_to: number | null; created_at: string; hidden: boolean; pick: "pass" | "fail" | null }>(sql`
+          select p.id, p.body, p.nickname, p.user_id is not null as account, p.poster_id, p.reply_to, ${iso("p.created_at")} as created_at, p.hidden_at is not null as hidden,
+            pr.pick
+          from forum_posts p
+          left join predictions pr on pr.initiative_id = ${thread.board === VOTES_BOARD ? thread.initiative_id : null} and pr.user_id = p.user_id
+          where p.thread_id = ${thread.id} and p.id > ${after} order by p.id limit ${limit + 1}`);
         const { excerpt: _excerpt, ...rest } = summary(thread);
         return {
           thread: { ...rest, body: thread.body },
           posts: posts.rows.slice(0, limit).map((p) => ({
             id: p.id, body: p.hidden ? null : p.body, nickname: p.hidden ? null : p.nickname, account: !p.hidden && p.account, posterId: p.hidden ? null : p.poster_id,
             isOp: !p.hidden && p.poster_id === thread.poster_id, replyTo: p.reply_to, createdAt: p.created_at, hidden: p.hidden,
+            pick: p.hidden ? null : p.pick,
           })),
           hasMore: posts.rows.length > limit,
         };
@@ -275,6 +283,7 @@ export const forumRoutes =
         assertPublishable(title, body, name);
         await checkHuman(who, request.body.recaptchaToken, request.ip, request.log);
         await assertBoard(board);
+        if (board === VOTES_BOARD) throw new ApiError(403, "board_closed", "Vote threads open on their own when a vote is on the agenda");
         if (articleId) {
           const [found] = await db.select({ id: articles.id }).from(articles).where(and(eq(articles.id, articleId), isNull(articles.hiddenAt)));
           if (!found) throw notFound("Article");
@@ -291,6 +300,13 @@ export const forumRoutes =
           await tx.update(forumThreads).set({ posterId: posterId(forumSecret, who.key, created!.id) }).where(eq(forumThreads.id, created!.id));
           return created!.id;
         });
+        if (who.userId !== null) {
+          try {
+            await follow(db, who.userId, "thread", id);
+          } catch (error) {
+            request.log.error(error, "follow failed");
+          }
+        }
         return reply.status(201).send({ id, posterId: posterId(forumSecret, who.key, id) });
       },
     );
@@ -333,12 +349,14 @@ export const forumRoutes =
           .where(and(eq(forumThreads.id, threadId), isNull(forumThreads.hiddenAt)));
         if (!thread) throw notFound("Thread");
         if (thread.lockedAt) throw new ApiError(409, "thread_locked", "This thread is closed to replies");
+        let quotedUserId: number | null = null;
         if (replyTo) {
           const [quoted] = await db
-            .select({ id: forumPosts.id })
+            .select({ id: forumPosts.id, userId: forumPosts.userId })
             .from(forumPosts)
             .where(and(eq(forumPosts.id, replyTo), eq(forumPosts.threadId, threadId)));
           if (!quoted) throw new ApiError(400, "invalid_reply", "That post is not in this thread");
+          quotedUserId = quoted.userId;
         }
         const poster = posterId(forumSecret, who.key, threadId);
         const id = await db.transaction(async (tx) => {
@@ -352,6 +370,16 @@ export const forumRoutes =
             .where(eq(forumThreads.id, threadId));
           return created!.id;
         });
+        // Best effort: the one answered hears it as a reply, the thread's followers as news.
+        try {
+          const answered = quotedUserId !== null && quotedUserId !== who.userId ? quotedUserId : null;
+          if (answered !== null) await notify(db, { userIds: [answered], kind: "forum_reply", targetId: id, actorName: name });
+          const others = (await followers(db, "thread", threadId)).filter((userId) => userId !== who.userId && userId !== answered);
+          await notify(db, { userIds: others, kind: "thread_update", targetId: threadId, actorName: name });
+          if (who.userId !== null) await follow(db, who.userId, "thread", threadId);
+        } catch (error) {
+          request.log.error(error, "forum notification failed");
+        }
         return reply.status(201).send({ id, posterId: poster });
       },
     );

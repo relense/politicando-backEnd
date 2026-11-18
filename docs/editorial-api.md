@@ -34,8 +34,7 @@ read with `sort=popular` (see [Most read](#most-read)).
       "publishedAt": "2026-11-15T12:00:00.000Z",
       "commentCount": 3,
       "views": 128,
-      "upvotes": 12,
-      "downvotes": 1
+      "importa": 12
     }
   ],
   "total": 1
@@ -51,7 +50,9 @@ read with `sort=popular` (see [Most read](#most-read)).
   For podcasts and videos it reflects the text only; prefer the media's own length there.
 - `opinion`: label it clearly as opinion ("Opinião"), with the author.
 - `commentCount`: visible comments on the post.
-- `upvotes` and `downvotes`: readers' votes (see [Votes](#votes)).
+- `importa`: readers who marked the post "Importa" (see [Importa](#importa)). `upvotes`
+  (the same number) and `downvotes` (always 0) are still sent for the old buttons; they go away
+  once the site uses `importa`.
 - `views`: reads since publication (one per reader per day, see [Most read](#most-read)),
   on every item and on the post. Show "N leituras" when it's above 0; 0 until the post is
   first read.
@@ -75,13 +76,17 @@ escapes raw HTML (e.g. markdown-it with `html: false`). Pages live at `/editoria
   then. `recentViews` only comes with `sort=popular`. The list is already in order: keep it,
   or sort by `recentViews`, **not** by `views`, which counts every read since publication.
 
-## Votes
+## Importa
 
-Like on news: `POST /editorial/:slug/vote` with `{ "value": 1 }` (up), `-1` (down) or `0`
-(remove). Answers `{ "up": 12, "down": 1, "mine": 1 }`. One vote per reader per post (a keyed
-hash of the IP; the IP is never stored); voting again replaces it. 30 a minute per IP, no
-captcha, 404 for unknown or unpublished posts. Remember the reader's vote in the browser. Send
-it from the browser.
+Blog posts have one "Importa" mark, like stories, instead of up and down votes (no downvotes, so
+readers can't vote a post down). `POST /editorial/:slug/vote` with `{ "value": 1 }` (mark) or `0`
+(take it back). Answers `{ "importa": 12, "mine": 1 }`. One per reader per post: per account
+when logged in, otherwise a keyed hash of the IP (never stored). Needs a login when
+`LOGIN_REQUIRED` includes `votes` (401 `login_required`). 30 a minute, 404 for unknown or
+unpublished posts. `GET /me/state` lists the logged-in reader's marks (`votes.editorial`).
+
+For the transition, `-1` is still accepted (it takes the mark back) and the answer also carries
+`up` (= `importa`) and `down` (0).
 
 ## Comments
 

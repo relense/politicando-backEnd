@@ -19,6 +19,8 @@ import { type Participation, limitKey, participantFor } from "./accounts/partici
 import { READER_COOKIE, readerCookieOptions, sessionReader } from "./accounts/sessions.js";
 import type { Db } from "./db/client.js";
 import { accountRoutes } from "./modules/accounts/routes.js";
+import { notificationRoutes } from "./modules/notifications/routes.js";
+import { predictionRoutes } from "./modules/predictions/routes.js";
 import { ApiError } from "./errors.js";
 import { adminForumRoutes } from "./modules/admin/forums.js";
 import { adminRecordRoutes } from "./modules/admin/records.js";
@@ -223,6 +225,8 @@ export const buildApp = async ({
       await api.register(contractRoutes(db, { warm: warmCaches, recheckMs: warmCaches ? 60_000 : 0 }));
       await api.register(adminRoutes({ db, secureCookies, loginLimitPerMinute }));
       await api.register(accountRoutes({ db, verifyRecaptcha, secureCookies, loginLimitPerMinute, registerLimitPerHour }));
+      await api.register(notificationRoutes(db));
+      await api.register(predictionRoutes(db));
       await api.register(adminRecordRoutes(db));
       await api.register(adminForumRoutes(db));
       await api.register(adminUserRoutes(db));

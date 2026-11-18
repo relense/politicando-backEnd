@@ -1063,9 +1063,8 @@ export const editorialPosts = pgTable(
     tags: text().array().notNull().default(sql`'{}'::text[]`),
     status: text().$type<"draft" | "published">().notNull().default("draft"),
     featured: boolean().notNull().default(false),
-    /** Readers' votes, kept in step with editorial_votes. */
-    upvotes: integer().notNull().default(0),
-    downvotes: integer().notNull().default(0),
+    /** Readers' "Importa" marks, kept in step with editorial_votes. */
+    importa: integer().notNull().default(0),
     publishedAt: timestamp("published_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -1073,7 +1072,7 @@ export const editorialPosts = pgTable(
   (table) => [index("editorial_published_idx").on(table.status, table.publishedAt.desc())],
 );
 
-/** One vote (+1 or -1) per reader per editorial post; `voter` is a keyed hash of the IP. */
+/** One "Importa" per reader per editorial post; `voter` is a keyed hash of the account (or the IP). */
 export const editorialVotes = pgTable(
   "editorial_votes",
   {
@@ -1083,15 +1082,9 @@ export const editorialVotes = pgTable(
     voter: text().notNull(),
     /** The reader's account, when they were logged in. */
     userId: integer("user_id").references(() => users.id, { onDelete: "set null" }),
-    value: smallint().notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [
-    index("editorial_votes_user_idx").on(table.userId),
-    primaryKey({ columns: [table.postId, table.voter] }),
-    check("editorial_votes_value_check", sql`${table.value} in (-1, 1)`),
-  ],
+  (table) => [index("editorial_votes_user_idx").on(table.userId), primaryKey({ columns: [table.postId, table.voter] })],
 );
 
 /** Reads of a news article on our site, per Lisbon day (one per reader per day; nothing about readers kept). */
@@ -1278,12 +1271,15 @@ export const userSessions = pgTable(
   (table) => [index("user_sessions_user_idx").on(table.userId)],
 );
 
-/** Saved news and stories ("Guardadas"). */
+export const SAVE_KINDS = ["article", "story", "editorial", "comment", "thread", "reply"] as const;
+export type SaveKind = (typeof SAVE_KINDS)[number];
+
+/** What the reader saved ("Guardadas"): news, stories, blog posts, comments, forum threads and replies. */
 export const userSaves = pgTable(
   "user_saves",
   {
     userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-    kind: text().$type<"article" | "story">().notNull(),
+    kind: text().$type<SaveKind>().notNull(),
     targetId: integer("target_id").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -1323,3 +1319,86 @@ export const userReads = pgTable(
   },
   (table) => [primaryKey({ columns: [table.userId, table.storyId] })],
 );
+
+export const NOTIFICATION_KINDS = ["comment_reply", "forum_reply", "thread_update", "story_update", "prediction_result"] as const;
+export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
+
+/**
+ * A reader's private inbox (src/notifications): replies to them, news on what they follow,
+ * their predictions' results. `target_id` is the new comment or forum post for replies, the
+ * thread or story for updates, the initiative for predictions. Updates are coalesced: one
+ * unread line per thread or story, with `count` going up.
+ */
+export const notifications = pgTable(
+  "notifications",
+  {
+    id: integer().primaryKey().generatedAlwaysAsIdentity(),
+    userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    kind: text().$type<NotificationKind>().notNull(),
+    targetId: integer("target_id").notNull(),
+    /** Who did it, as shown on their post; null for news and results. */
+    actorName: text("actor_name"),
+    count: integer().notNull().default(1),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    readAt: timestamp("read_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("notifications_inbox_idx").on(table.userId, table.createdAt.desc()),
+    uniqueIndex("notifications_unread_once_idx").on(table.userId, table.kind, table.targetId).where(sql`read_at is null`),
+  ],
+);
+
+/** Stories and forum threads a reader follows ("Seguir"). */
+export const userFollows = pgTable(
+  "user_follows",
+  {
+    userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    kind: text().$type<"story" | "thread">().notNull(),
+    targetId: integer("target_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.kind, table.targetId] }), index("user_follows_target_idx").on(table.kind, table.targetId)],
+);
+
+/**
+ * "Passa ou chumba?": a reader's guess on an initiative's next deciding vote (src/predictions).
+ * Private: only the reader sees their record.
+ */
+export const predictions = pgTable(
+  "predictions",
+  {
+    userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    initiativeId: integer("initiative_id").notNull().references(() => initiatives.id, { onDelete: "cascade" }),
+    pick: text().$type<"pass" | "fail">().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    /** The last change; only votes from the next Lisbon day on count. */
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    /** Null while pending; void when no vote settled it (withdrawn, not admitted…). */
+    outcome: text().$type<"hit" | "miss" | "void">(),
+    /** The vote that settled it: its date and result. */
+    voteDate: date("vote_date"),
+    voteResult: text("vote_result"),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+  },
+  (table) => [
+    primaryKey({ columns: [table.userId, table.initiativeId] }),
+    index("predictions_pending_idx").on(table.initiativeId).where(sql`outcome is null`),
+    check("predictions_pick_check", sql`${table.pick} in ('pass', 'fail')`),
+  ],
+);
+
+/**
+ * A vote open for "Passa ou chumba?": an initiative named in a plenary agenda within the next
+ * week (src/predictions/rounds.ts). Predictions close when that session starts; its megathread
+ * (board "votacoes") is where readers defend their pick.
+ */
+export const voteRounds = pgTable("vote_rounds", {
+  initiativeId: integer("initiative_id")
+    .primaryKey()
+    .references(() => initiatives.id, { onDelete: "cascade" }),
+  /** The agenda event it's on; moves if the vote is postponed. */
+  agendaEventId: text("agenda_event_id").notNull(),
+  closesAt: timestamp("closes_at", { withTimezone: true }).notNull(),
+  threadId: integer("thread_id").references(() => forumThreads.id, { onDelete: "set null" }),
+  openedAt: timestamp("opened_at", { withTimezone: true }).notNull().defaultNow(),
+});

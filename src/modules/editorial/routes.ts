@@ -32,8 +32,9 @@ const summarySchema = z.object({
   tags: z.array(z.string()),
   featured: z.boolean(),
   readingMinutes: z.number().describe("Words ÷ 200, rounded up; at least 1"),
-  upvotes: z.number(),
-  downvotes: z.number(),
+  importa: z.number().describe('Readers who marked it "Importa"'),
+  upvotes: z.number().describe("Deprecated: the same as importa, until the site moves to it"),
+  downvotes: z.number().describe("Deprecated: always 0"),
   publishedAt: z.string().nullable(),
 });
 const bodySchema = z.string().describe("Markdown. Render it without raw HTML");
@@ -79,7 +80,7 @@ export const readingMinutes = (markdown: string) => {
 const present = (r: Row) => ({
   id: r.id, slug: r.slug, kind: r.kind, title: r.title, subtitle: r.subtitle, authorName: r.authorName,
   coverImageUrl: r.coverImageUrl, media: r.mediaUrl ? parseMedia(r.mediaUrl) : null, tags: r.tags, featured: r.featured,
-  readingMinutes: readingMinutes(r.body), upvotes: r.upvotes, downvotes: r.downvotes, publishedAt: r.publishedAt?.toISOString() ?? null,
+  readingMinutes: readingMinutes(r.body), importa: r.importa, upvotes: r.importa, downvotes: 0, publishedAt: r.publishedAt?.toISOString() ?? null,
 });
 const presentAdmin = (r: Row) => ({
   ...present(r), body: r.body, status: r.status, authorId: r.authorId, mediaUrl: r.mediaUrl, updatedAt: r.updatedAt.toISOString(),
@@ -211,11 +212,17 @@ export const editorialRoutes =
         config: { rateLimit: { max: 30, timeWindow: "1 minute" } },
         schema: {
           tags: ["editorial"],
-          summary: "Vote a post up (1) or down (-1), or remove the vote (0). One vote per reader; voting again replaces it",
+          summary: 'Mark a post "Importa" (1) or take the mark back (0). One per reader',
+          description: "-1 is still accepted and means 0, for the site's old up/down buttons.",
           params: slugParams,
-          body: z.strictObject({ value: z.union([z.literal(1), z.literal(-1), z.literal(0)]) }),
+          body: z.strictObject({ value: z.union([z.literal(1), z.literal(0), z.literal(-1)]) }),
           response: {
-            200: z.object({ up: z.number(), down: z.number(), mine: z.union([z.literal(1), z.literal(-1), z.literal(0)]) }),
+            200: z.object({
+              importa: z.number(),
+              mine: z.union([z.literal(1), z.literal(0)]),
+              up: z.number().describe("Deprecated: the same as importa"),
+              down: z.number().describe("Deprecated: always 0"),
+            }),
             400: errorSchema,
             404: errorSchema,
             429: errorSchema,
@@ -223,10 +230,10 @@ export const editorialRoutes =
         },
       },
       async (request) => {
-        const { value } = request.body;
+        const value = request.body.value === 1 ? 1 : 0;
         const who = app.participant(request, "votes");
-        return db.transaction(async (tx) => {
-          // Locks the post, so votes on it count one at a time and the totals stay exact.
+        const importa = await db.transaction(async (tx) => {
+          // Locks the post, so marks on it count one at a time and the total stays exact.
           const [post] = await tx
             .select({ id: editorialPosts.id })
             .from(editorialPosts)
@@ -234,24 +241,16 @@ export const editorialRoutes =
             .for("update");
           if (!post) throw notFound("Post");
           const voter = postVoterKey(voteSecret, who.key, post.id);
-          const mine = and(eq(editorialVotes.postId, post.id), eq(editorialVotes.voter, voter));
-          if (value === 0) await tx.delete(editorialVotes).where(mine);
-          else {
-            await tx
-              .insert(editorialVotes)
-              .values({ postId: post.id, voter, value, userId: who.userId })
-              .onConflictDoUpdate({ target: [editorialVotes.postId, editorialVotes.voter], set: { value, userId: who.userId, updatedAt: sql`now()` } });
-          }
-          const [counts] = await tx
+          if (value === 0) await tx.delete(editorialVotes).where(and(eq(editorialVotes.postId, post.id), eq(editorialVotes.voter, voter)));
+          else await tx.insert(editorialVotes).values({ postId: post.id, voter, userId: who.userId }).onConflictDoNothing();
+          const [row] = await tx
             .update(editorialPosts)
-            .set({
-              upvotes: sql`(select count(*)::int from editorial_votes v where v.post_id = ${post.id} and v.value = 1)`,
-              downvotes: sql`(select count(*)::int from editorial_votes v where v.post_id = ${post.id} and v.value = -1)`,
-            })
+            .set({ importa: sql`(select count(*)::int from editorial_votes v where v.post_id = ${post.id})` })
             .where(eq(editorialPosts.id, post.id))
-            .returning({ up: editorialPosts.upvotes, down: editorialPosts.downvotes });
-          return { up: counts!.up, down: counts!.down, mine: value };
+            .returning({ importa: editorialPosts.importa });
+          return row!.importa;
         });
+        return { importa, mine: value as 1 | 0, up: importa, down: 0 };
       },
     );
 
