@@ -17,7 +17,7 @@ import { STAGE_GROUP_SQL } from "../parliament/plain.js";
 export const OPEN_FOR_PREDICTION = sql.raw(`${STAGE_GROUP_SQL} in ('submitted', 'debate')`);
 /** Open right now: waiting for a vote, and on the agenda with the session not started yet. */
 export const PREDICTABLE_NOW = sql`initiatives.status = 'in_progress' and ${OPEN_FOR_PREDICTION}
-  and exists (select 1 from vote_rounds r where r.initiative_id = initiatives.id and r.closes_at > now())`;
+  and exists (select 1 from vote_rounds r where r.initiative_id = initiatives.id and r.opens_at <= now() and r.closes_at > now())`;
 
 export type Outcome = "hit" | "miss" | "void";
 

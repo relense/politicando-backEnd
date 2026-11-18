@@ -1398,7 +1398,11 @@ export const voteRounds = pgTable("vote_rounds", {
     .references(() => initiatives.id, { onDelete: "cascade" }),
   /** The agenda event it's on; moves if the vote is postponed. */
   agendaEventId: text("agenda_event_id").notNull(),
+  /** When picks open: a week before the session (rounds are known two weeks ahead, as "upcoming"). */
+  opensAt: timestamp("opens_at", { withTimezone: true }).notNull().defaultNow(),
   closesAt: timestamp("closes_at", { withTimezone: true }).notNull(),
+  /** Created when picks open, not before. */
   threadId: integer("thread_id").references(() => forumThreads.id, { onDelete: "set null" }),
+  /** When we first saw it on the agenda. */
   openedAt: timestamp("opened_at", { withTimezone: true }).notNull().defaultNow(),
 });

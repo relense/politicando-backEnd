@@ -118,7 +118,7 @@ export const initiativeSummarySchema = z.object({
     .describe("Plain-language reading, by fixed rules (no AI)"),
 });
 
-const TOPIC_LABELS = new Map(TOPICS.map((t) => [t.slug, t.label]));
+export const TOPIC_LABELS = new Map(TOPICS.map((t) => [t.slug, t.label]));
 
 /** Adds the plain-language reading and topic labels to a summary row. */
 export const withPlain = <
@@ -132,7 +132,7 @@ export const withPlain = <
 const withGroup = (status: ReturnType<typeof plainStatus>) => ({ ...status, group: STAGE_GROUP[status.stage] });
 
 /** The plain title, or null when it says the same as the official one. */
-const simplerTitle = (title: string) => {
+export const simplerTitle = (title: string) => {
   const simple = plainTitle(title);
   const same = (a: string) => a.replace(/[\s.,;:]+/g, " ").trim().toLowerCase();
   return same(simple) === same(title) ? null : simple;

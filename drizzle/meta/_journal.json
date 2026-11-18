@@ -260,6 +260,13 @@
       "when": 1795039325683,
       "tag": "0036_vote_rounds",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1795042866857,
+      "tag": "0037_vote_rounds_opens_at",
+      "breakpoints": true
     }
   ]
 }

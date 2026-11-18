@@ -68,10 +68,20 @@ describe("Passa ou chumba?", () => {
     await plenary("later", 10, [3]);
     expect((await call("GET", "/predictions/open")).json().items).toEqual([]);
 
-    expect(await openVoteRounds(db)).toEqual({ opened: 1, moved: 0, unpinned: 0 });
-    expect(await openVoteRounds(db)).toEqual({ opened: 0, moved: 0, unpinned: 0 });
+    // Known two weeks ahead: 2 opens now (session in 2 days), 3 is upcoming (session in 10 days, opens in 3).
+    expect(await openVoteRounds(db)).toEqual({ scheduled: 2, opened: 1, moved: 0, unpinned: 0 });
+    expect(await openVoteRounds(db)).toEqual({ scheduled: 0, opened: 0, moved: 0, unpinned: 0 });
     const open = (await call("GET", "/predictions/open")).json().items;
-    expect(open).toEqual([expect.objectContaining({ id: 2, myPick: null, split: null, threadId: expect.any(Number), closesAt: expect.any(String) })]);
+    expect(open).toEqual([
+      expect.objectContaining({
+        id: 2, state: "open", count: 0, myPick: null, split: null, threadId: expect.any(Number), closesAt: expect.any(String), opensAt: expect.any(String),
+        plain: expect.objectContaining({ typeLabel: expect.any(String), typeExplainer: expect.any(String) }), topics: [],
+      }),
+    ]);
+    const week = (await call("GET", "/predictions/open?upcoming=true")).json().items;
+    expect(week.map((i: { id: number; state: string }) => [i.id, i.state])).toEqual([[2, "open"], [3, "upcoming"]]);
+    expect(week[1]).toMatchObject({ count: 0, threadId: null, split: null });
+    expect(new Date(week[1].closesAt).getTime() - new Date(week[1].opensAt).getTime()).toBe(7 * 86_400_000);
     const [thread] = await db.select().from(forumThreads);
     expect(thread).toMatchObject({ board: "votacoes", pinned: true, initiativeId: 2, title: "Passa ou chumba? Projeto de Lei n.º 2: Iniciativa 2" });
 
@@ -85,7 +95,8 @@ describe("Passa ou chumba?", () => {
 
     await call("PUT", "/predictions/2", rui, { pick: "fail" });
     expect((await call("PUT", "/predictions/2", ana, { pick: "pass" })).json()).toEqual({ pick: "pass", split: { pass: 1, fail: 1 } });
-    expect((await call("GET", "/predictions/open", ana)).json().items[0]).toMatchObject({ myPick: "pass", split: { pass: 1, fail: 1 } });
+    expect((await call("GET", "/predictions/open", ana)).json().items[0]).toMatchObject({ myPick: "pass", split: { pass: 1, fail: 1 }, count: 2 });
+    expect((await call("GET", "/predictions/open")).json().items[0]).toMatchObject({ count: 2, split: null });
     // Picking followed the megathread; replies there show each side.
     expect((await call("GET", "/me/state", ana)).json().follows.threads).toEqual([thread!.id]);
     await call("POST", `/forums/threads/${thread!.id}/posts`, ana, { body: "Passa, há maioria" });
@@ -96,13 +107,13 @@ describe("Passa ou chumba?", () => {
     expect((await call("POST", "/forums/votacoes/threads", ana, { title: "Outra", body: "Texto" })).statusCode).toBe(403);
 
     // The session starts: picks lock. Postponed: it reopens for the new date, pinned again.
-    await db.update(voteRounds).set({ closesAt: new Date(Date.now() - 3 * 86_400_000) });
+    await db.update(voteRounds).set({ closesAt: new Date(Date.now() - 3 * 86_400_000) }).where(eq(voteRounds.initiativeId, 2));
     expect((await call("PUT", "/predictions/2", ana, { pick: "fail" })).statusCode).toBe(409);
-    expect(await openVoteRounds(db)).toEqual({ opened: 0, moved: 1, unpinned: 0 });
+    expect(await openVoteRounds(db)).toMatchObject({ opened: 0, moved: 1, unpinned: 0 });
     expect((await call("GET", "/predictions/open")).json().items).toHaveLength(1);
     await db.update(voteRounds).set({ closesAt: new Date(Date.now() - 3 * 86_400_000) });
     await db.delete(agendaEvents);
-    expect(await openVoteRounds(db)).toEqual({ opened: 0, moved: 0, unpinned: 1 });
+    expect(await openVoteRounds(db)).toMatchObject({ opened: 0, moved: 0, unpinned: 1 });
   });
 
   it("settles after the parliament sync, tells the reader, and keeps their record", async () => {
