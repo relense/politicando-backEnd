@@ -2,8 +2,8 @@
 
 ## The limits
 
-Every limit counts per reader IP, per minute unless said otherwise. Past it, the API
-answers 429 `{ "error": { "code": "rate_limited" } }`.
+Every limit counts per logged-in account, or per reader IP for anonymous requests, per minute
+unless said otherwise. Past it, the API answers 429 `{ "error": { "code": "rate_limited" } }`.
 
 | What | Limit |
 |---|---|
@@ -13,8 +13,11 @@ answers 429 `{ "error": { "code": "rate_limited" } }`.
 | Reports | 10 a minute |
 | Feedback form | 10 an hour |
 | Admin login | 5 a minute |
+| Reader sign-up (`/auth/register`) | 3 an hour |
+| Reader login, password change, account deletion | 5 a minute (plus 10 failures for one username lock it for up to 15 minutes) |
 
-Everything readers post also needs a reCAPTCHA token.
+Anonymous posts also need a reCAPTCHA token; a logged-in reader's account replaces it (see
+`docs/accounts-api.md`).
 
 The reader's IP comes from Cloudflare's `True-Client-IP` (Render sits behind Cloudflare), which
 clients can't forge. A client-sent `X-Forwarded-For` is ignored.

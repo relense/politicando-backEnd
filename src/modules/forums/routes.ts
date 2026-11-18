@@ -10,6 +10,7 @@ import type { RecaptchaVerifier } from "../comments/recaptcha.js";
 import { autoModerate } from "../../moderation/reports.js";
 import { assertPublishable } from "../../moderation/screen.js";
 import { errorSchema } from "../shared.js";
+import type { Participant } from "../../accounts/participant.js";
 
 export const GENERAL_BOARD = "geral";
 /** Readers' ideas for the site, which the team answers with a status (see /feedback/ideias). */
@@ -27,7 +28,7 @@ const nickname = z
   .max(40)
   .nullish()
   .transform((value) => value || null);
-const recaptchaToken = z.string().min(1).max(4_096);
+const recaptchaToken = z.string().min(1).max(4_096).optional().describe("Anonymous posts only (when login isn't required)");
 const idParams = z.object({ id: z.coerce.number().int().positive().max(MAX_INT) });
 
 const linkSchema = z.object({
@@ -40,7 +41,8 @@ const threadSummarySchema = z.object({
   board: z.string(),
   title: z.string(),
   excerpt: z.string().describe("The opening post's first 300 characters"),
-  nickname: z.string().nullable(),
+  nickname: z.string().nullable().describe("The account's username when `account` is true"),
+  account: z.boolean().describe("Opened by a logged-in reader"),
   posterId: z.string().describe("The poster's ID in this thread"),
   replyCount: z.number(),
   createdAt: z.string(),
@@ -57,7 +59,8 @@ const threadSummarySchema = z.object({
 const postSchema = z.object({
   id: z.number(),
   body: z.string().nullable().describe("Plain text; null when a moderator removed it"),
-  nickname: z.string().nullable(),
+  nickname: z.string().nullable().describe("The account's username when `account` is true"),
+  account: z.boolean().describe("Written by a logged-in reader"),
   posterId: z.string().nullable(),
   isOp: z.boolean().describe("Posted by whoever opened the thread"),
   replyTo: z.number().nullable(),
@@ -81,7 +84,10 @@ const iso = (column: string) => sql.raw(`to_char(${column} at time zone 'UTC', '
 export const forumRoutes =
   ({ db, verifyRecaptcha, forumSecret, createLimitPerMinute }: ForumRouteOptions): FastifyPluginAsyncZod =>
   async (app) => {
-    const checkHuman = async (token: string, ip: string, log: FastifyBaseLogger) => {
+    /** Anonymous posters prove they're human; a logged-in reader's account does that. */
+    const checkHuman = async (who: Participant, token: string | undefined, ip: string, log: FastifyBaseLogger) => {
+      if (who.userId !== null) return;
+      if (!token) throw new ApiError(400, "recaptcha_required", "reCAPTCHA token missing");
       let human: boolean;
       try {
         human = await verifyRecaptcha(token, ip);
@@ -99,12 +105,12 @@ export const forumRoutes =
     };
 
     type ThreadRow = {
-      id: number; board: string; title: string; body: string; nickname: string | null; poster_id: string; reply_count: number;
+      id: number; board: string; title: string; body: string; nickname: string | null; account: boolean; poster_id: string; reply_count: number;
       created_at: string; bumped_at: string; pinned: boolean; locked: boolean;
       score: number; status: (typeof IDEA_STATUSES)[number] | null; answer: string | null; answered_at: string | null;
       article_id: number | null; article_title: string | null; initiative_id: number | null; initiative_title: string | null;
     };
-    const threadColumns = sql`t.id, t.board, t.title, t.body, t.nickname, t.poster_id, t.reply_count,
+    const threadColumns = sql`t.id, t.board, t.title, t.body, t.nickname, t.user_id is not null as account, t.poster_id, t.reply_count,
       ${iso("t.created_at")} as created_at, ${iso("t.bumped_at")} as bumped_at, t.pinned, t.locked_at is not null as locked,
       t.score, t.status, t.answer, ${iso("t.answered_at")} as answered_at,
       a.id as article_id, a.title as article_title, i.id as initiative_id, i.title as initiative_title`;
@@ -113,7 +119,7 @@ export const forumRoutes =
       left join initiatives i on i.id = t.initiative_id`;
     const summary = (r: ThreadRow) => ({
       id: r.id, board: r.board, title: r.title, excerpt: r.body.length > 300 ? `${r.body.slice(0, 299)}…` : r.body,
-      nickname: r.nickname, posterId: r.poster_id, replyCount: r.reply_count, createdAt: r.created_at, bumpedAt: r.bumped_at,
+      nickname: r.nickname, account: r.account, posterId: r.poster_id, replyCount: r.reply_count, createdAt: r.created_at, bumpedAt: r.bumped_at,
       pinned: r.pinned, locked: r.locked, score: r.score, status: r.status, answer: r.answer, answeredAt: r.answered_at,
       link: {
         article: r.article_id !== null ? { id: r.article_id, title: r.article_title! } : null,
@@ -225,14 +231,14 @@ export const forumRoutes =
         const thread = rows.rows[0];
         if (!thread) throw notFound("Thread");
         const { after, limit } = request.query;
-        const posts = await db.execute<{ id: number; body: string; nickname: string | null; poster_id: string; reply_to: number | null; created_at: string; hidden: boolean }>(sql`
-          select p.id, p.body, p.nickname, p.poster_id, p.reply_to, ${iso("p.created_at")} as created_at, p.hidden_at is not null as hidden
+        const posts = await db.execute<{ id: number; body: string; nickname: string | null; account: boolean; poster_id: string; reply_to: number | null; created_at: string; hidden: boolean }>(sql`
+          select p.id, p.body, p.nickname, p.user_id is not null as account, p.poster_id, p.reply_to, ${iso("p.created_at")} as created_at, p.hidden_at is not null as hidden
           from forum_posts p where p.thread_id = ${thread.id} and p.id > ${after} order by p.id limit ${limit + 1}`);
         const { excerpt: _excerpt, ...rest } = summary(thread);
         return {
           thread: { ...rest, body: thread.body },
           posts: posts.rows.slice(0, limit).map((p) => ({
-            id: p.id, body: p.hidden ? null : p.body, nickname: p.hidden ? null : p.nickname, posterId: p.hidden ? null : p.poster_id,
+            id: p.id, body: p.hidden ? null : p.body, nickname: p.hidden ? null : p.nickname, account: !p.hidden && p.account, posterId: p.hidden ? null : p.poster_id,
             isOp: !p.hidden && p.poster_id === thread.poster_id, replyTo: p.reply_to, createdAt: p.created_at, hidden: p.hidden,
           })),
           hasMore: posts.rows.length > limit,
@@ -263,9 +269,11 @@ export const forumRoutes =
       },
       async (request, reply) => {
         const { board } = request.params;
-        const { title, body, nickname: name, articleId, initiativeId } = request.body;
+        const who = app.participant(request, "forum");
+        const { title, body, articleId, initiativeId } = request.body;
+        const name = who.username ?? request.body.nickname;
         assertPublishable(title, body, name);
-        await checkHuman(request.body.recaptchaToken, request.ip, request.log);
+        await checkHuman(who, request.body.recaptchaToken, request.ip, request.log);
         await assertBoard(board);
         if (articleId) {
           const [found] = await db.select({ id: articles.id }).from(articles).where(and(eq(articles.id, articleId), isNull(articles.hiddenAt)));
@@ -278,12 +286,12 @@ export const forumRoutes =
         const id = await db.transaction(async (tx) => {
           const [created] = await tx
             .insert(forumThreads)
-            .values({ board, title, body, nickname: name, posterId: "", articleId: articleId ?? null, initiativeId: initiativeId ?? null })
+            .values({ board, title, body, nickname: name, userId: who.userId, posterId: "", articleId: articleId ?? null, initiativeId: initiativeId ?? null })
             .returning({ id: forumThreads.id });
-          await tx.update(forumThreads).set({ posterId: posterId(forumSecret, request.ip, created!.id) }).where(eq(forumThreads.id, created!.id));
+          await tx.update(forumThreads).set({ posterId: posterId(forumSecret, who.key, created!.id) }).where(eq(forumThreads.id, created!.id));
           return created!.id;
         });
-        return reply.status(201).send({ id, posterId: posterId(forumSecret, request.ip, id) });
+        return reply.status(201).send({ id, posterId: posterId(forumSecret, who.key, id) });
       },
     );
 
@@ -314,9 +322,11 @@ export const forumRoutes =
       },
       async (request, reply) => {
         const threadId = request.params.id;
-        const { body, nickname: name, replyTo } = request.body;
+        const who = app.participant(request, "forum");
+        const { body, replyTo } = request.body;
+        const name = who.username ?? request.body.nickname;
         assertPublishable(body, name);
-        await checkHuman(request.body.recaptchaToken, request.ip, request.log);
+        await checkHuman(who, request.body.recaptchaToken, request.ip, request.log);
         const [thread] = await db
           .select({ id: forumThreads.id, lockedAt: forumThreads.lockedAt })
           .from(forumThreads)
@@ -330,11 +340,11 @@ export const forumRoutes =
             .where(and(eq(forumPosts.id, replyTo), eq(forumPosts.threadId, threadId)));
           if (!quoted) throw new ApiError(400, "invalid_reply", "That post is not in this thread");
         }
-        const poster = posterId(forumSecret, request.ip, threadId);
+        const poster = posterId(forumSecret, who.key, threadId);
         const id = await db.transaction(async (tx) => {
           const [created] = await tx
             .insert(forumPosts)
-            .values({ threadId, body, nickname: name, posterId: poster, replyTo: replyTo ?? null })
+            .values({ threadId, body, nickname: name, userId: who.userId, posterId: poster, replyTo: replyTo ?? null })
             .returning({ id: forumPosts.id });
           await tx
             .update(forumThreads)
@@ -359,6 +369,7 @@ export const forumRoutes =
       },
       async (request) => {
         const threadId = request.params.id;
+        const who = app.participant(request, "votes");
         const [thread] = await db
           .select({ id: forumThreads.id })
           .from(forumThreads)
@@ -367,7 +378,7 @@ export const forumRoutes =
         return db.transaction(async (tx) => {
           const added = await tx
             .insert(forumVotes)
-            .values({ threadId, voter: voterKey(forumSecret, request.ip, threadId) })
+            .values({ threadId, voter: voterKey(forumSecret, who.key, threadId), userId: who.userId })
             .onConflictDoNothing()
             .returning({ threadId: forumVotes.threadId });
           const [row] = added.length
@@ -403,13 +414,14 @@ export const forumRoutes =
         },
       },
       async (request, reply) => {
+        const who = app.participant(request, "reports");
         const { kind, id, reason, details } = request.body;
         const table = kind === "thread" ? forumThreads : kind === "post" ? forumPosts : kind === "article" ? articles : comments;
         const [found] = await db.select({ id: table.id }).from(table).where(and(eq(table.id, id), isNull(table.hiddenAt)));
         if (!found) throw notFound(kind === "thread" ? "Thread" : kind === "post" ? "Post" : kind === "article" ? "Article" : "Comment");
         await db
           .insert(reports)
-          .values({ kind, targetId: id, reason, details: details || null, reporter: reporterKey(forumSecret, request.ip) })
+          .values({ kind, targetId: id, reason, details: details || null, reporter: reporterKey(forumSecret, who.key), userId: who.userId })
           .onConflictDoNothing();
         await autoModerate(db, kind, id);
         return reply.status(202).send(null);

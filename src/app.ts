@@ -15,11 +15,15 @@ import {
   validatorCompiler,
   type ZodTypeProvider,
 } from "fastify-type-provider-zod";
+import { type Participation, limitKey, participantFor } from "./accounts/participant.js";
+import { READER_COOKIE, readerCookieOptions, sessionReader } from "./accounts/sessions.js";
 import type { Db } from "./db/client.js";
+import { accountRoutes } from "./modules/accounts/routes.js";
 import { ApiError } from "./errors.js";
 import { adminForumRoutes } from "./modules/admin/forums.js";
 import { adminRecordRoutes } from "./modules/admin/records.js";
 import { adminRoutes } from "./modules/admin/routes.js";
+import { adminUserRoutes } from "./modules/admin/users.js";
 import { caseRoutes } from "./modules/cases/routes.js";
 import { forumRoutes } from "./modules/forums/routes.js";
 import { agendaRoutes } from "./modules/agenda/routes.js";
@@ -77,6 +81,9 @@ export interface AppOptions {
   /** Sends the team's answers to feedback; without it, answers are only noted. */
   mailer?: Mailer | null;
   feedbackLimitPerHour?: number;
+  /** What needs a reader account (LOGIN_REQUIRED). Default none: anonymous, keyed by IP. */
+  loginRequired?: readonly Participation[];
+  registerLimitPerHour?: number;
 }
 
 const errorBody = (code: string, message: string) => ({ error: { code, message } });
@@ -97,6 +104,8 @@ export const buildApp = async ({
   frontendKey,
   mailer = null,
   feedbackLimitPerHour = 10,
+  loginRequired = [],
+  registerLimitPerHour = 3,
 }: AppOptions) => {
   const proxied = trustProxy || clientIpHeader !== undefined;
   const app = Fastify({ logger, trustProxy: proxied || frontendKey !== undefined, bodyLimit: 64 * 1024 });
@@ -158,9 +167,24 @@ export const buildApp = async ({
     crossOriginResourcePolicy: { policy: "cross-origin" },
   });
   await app.register(cookie);
-  // credentials: the admin frontend sends its session cookie; only the listed origins may.
-  await app.register(cors, { origin: corsOrigins, methods: ["GET", "POST", "PATCH", "DELETE"], credentials: true });
-  await app.register(rateLimit, { max: 300, timeWindow: "1 minute", allowList: (request) => fromFrontend.has(request.raw) });
+  // The logged-in reader, before the rate limits (they count per account).
+  app.decorateRequest("reader", null);
+  app.decorate("participant", participantFor(loginRequired));
+  app.addHook("onRequest", async (request, reply) => {
+    const token = request.cookies[READER_COOKIE];
+    if (!token) return;
+    const session = await sessionReader(db, token);
+    request.reader = session?.reader ?? null;
+    if (session?.renewedUntil) reply.setCookie(READER_COOKIE, token, { ...readerCookieOptions(secureCookies), expires: session.renewedUntil });
+  });
+  // credentials: the website's server forwards the session cookies; only the listed origins may.
+  await app.register(cors, { origin: corsOrigins, methods: ["GET", "POST", "PUT", "PATCH", "DELETE"], credentials: true });
+  await app.register(rateLimit, {
+    max: 300,
+    timeWindow: "1 minute",
+    keyGenerator: limitKey,
+    allowList: (request) => fromFrontend.has(request.raw),
+  });
   await app.register(swagger, {
     openapi: { info: { title: "Politicando API", version: "2.0.0", contact: { name: "Politicando", email: "info@politicando.pt", url: "https://www.politicando.pt" } } },
     transform: jsonSchemaTransform,
@@ -194,8 +218,10 @@ export const buildApp = async ({
       await api.register(legislatureRoutes(db));
       await api.register(contractRoutes(db, { warm: warmCaches, recheckMs: warmCaches ? 60_000 : 0 }));
       await api.register(adminRoutes({ db, secureCookies, loginLimitPerMinute }));
+      await api.register(accountRoutes({ db, verifyRecaptcha, secureCookies, loginLimitPerMinute, registerLimitPerHour }));
       await api.register(adminRecordRoutes(db));
       await api.register(adminForumRoutes(db));
+      await api.register(adminUserRoutes(db));
       await api.register(editorialRoutes(db, { voteSecret: forumSecret }));
       await api.register(agendaRoutes(db));
       await api.register(feedbackRoutes({ db, verifyRecaptcha, mailer, limitPerHour: feedbackLimitPerHour }));

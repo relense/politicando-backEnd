@@ -224,6 +224,7 @@ export const editorialRoutes =
       },
       async (request) => {
         const { value } = request.body;
+        const who = app.participant(request, "votes");
         return db.transaction(async (tx) => {
           // Locks the post, so votes on it count one at a time and the totals stay exact.
           const [post] = await tx
@@ -232,14 +233,14 @@ export const editorialRoutes =
             .where(and(eq(editorialPosts.slug, request.params.slug), eq(editorialPosts.status, "published")))
             .for("update");
           if (!post) throw notFound("Post");
-          const voter = postVoterKey(voteSecret, request.ip, post.id);
+          const voter = postVoterKey(voteSecret, who.key, post.id);
           const mine = and(eq(editorialVotes.postId, post.id), eq(editorialVotes.voter, voter));
           if (value === 0) await tx.delete(editorialVotes).where(mine);
           else {
             await tx
               .insert(editorialVotes)
-              .values({ postId: post.id, voter, value })
-              .onConflictDoUpdate({ target: [editorialVotes.postId, editorialVotes.voter], set: { value, updatedAt: sql`now()` } });
+              .values({ postId: post.id, voter, value, userId: who.userId })
+              .onConflictDoUpdate({ target: [editorialVotes.postId, editorialVotes.voter], set: { value, userId: who.userId, updatedAt: sql`now()` } });
           }
           const [counts] = await tx
             .update(editorialPosts)

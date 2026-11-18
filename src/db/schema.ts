@@ -78,9 +78,11 @@ export const storyVotes = pgTable(
       .notNull()
       .references(() => stories.id, { onDelete: "cascade" }),
     voter: text().notNull(),
+    /** The reader's account, when they were logged in. */
+    userId: integer("user_id").references(() => users.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [primaryKey({ columns: [table.storyId, table.voter] })],
+  (table) => [primaryKey({ columns: [table.storyId, table.voter] }), index("story_votes_user_idx").on(table.userId)],
 );
 
 /** One vote (+1 or -1) per reader per article; `voter` is a keyed hash of the IP, never the IP. */
@@ -91,11 +93,14 @@ export const articleVotes = pgTable(
       .notNull()
       .references(() => articles.id, { onDelete: "cascade" }),
     voter: text().notNull(),
+    /** The reader's account, when they were logged in. */
+    userId: integer("user_id").references(() => users.id, { onDelete: "set null" }),
     value: smallint().notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
+    index("article_votes_user_idx").on(table.userId),
     primaryKey({ columns: [table.articleId, table.voter] }),
     check("article_votes_value_check", sql`${table.value} in (-1, 1)`),
   ],
@@ -130,6 +135,8 @@ export const comments = pgTable(
       onDelete: "cascade",
     }),
     username: text(),
+    /** The reader's account, when they were logged in. */
+    userId: integer("user_id").references(() => users.id, { onDelete: "set null" }),
     body: text().notNull(),
     /** The commenter's own side, if they picked one: "Concordo" or "Discordo". */
     stance: text().$type<"agree" | "disagree">(),
@@ -142,6 +149,7 @@ export const comments = pgTable(
     hiddenAt: timestamp("hidden_at", { withTimezone: true }),
   },
   (table) => [
+    index("comments_user_idx").on(table.userId),
     index("comments_article_idx").on(table.articleId, table.createdAt),
     index("comments_editorial_idx").on(table.editorialPostId, table.createdAt),
     index("comments_story_idx").on(table.storyId, table.createdAt),
@@ -159,9 +167,11 @@ export const commentLikes = pgTable(
       .notNull()
       .references(() => comments.id, { onDelete: "cascade" }),
     voter: text().notNull(),
+    /** The reader's account, when they were logged in. */
+    userId: integer("user_id").references(() => users.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [primaryKey({ columns: [table.commentId, table.voter] })],
+  (table) => [primaryKey({ columns: [table.commentId, table.voter] }), index("comment_likes_user_idx").on(table.userId)],
 );
 
 /** Articles that matched no party, kept so later runs don't score them again. */
@@ -946,6 +956,8 @@ export const forumThreads = pgTable(
     body: text().notNull(),
     nickname: text(),
     posterId: text("poster_id").notNull(),
+    /** The reader's account, when they were logged in. */
+    userId: integer("user_id").references(() => users.id, { onDelete: "set null" }),
     /** Optional link to what the thread is about. */
     articleId: integer("article_id").references(() => articles.id, { onDelete: "set null" }),
     initiativeId: integer("initiative_id").references(() => initiatives.id, { onDelete: "set null" }),
@@ -964,6 +976,7 @@ export const forumThreads = pgTable(
     answeredAt: timestamp("answered_at", { withTimezone: true }),
   },
   (table) => [
+    index("forum_threads_user_idx").on(table.userId),
     index("forum_threads_board_bumped_idx").on(table.board, table.bumpedAt.desc()),
     index("forum_threads_board_created_idx").on(table.board, table.createdAt.desc()),
     index("forum_threads_board_score_idx").on(table.board, table.score.desc()),
@@ -978,9 +991,11 @@ export const forumVotes = pgTable(
       .notNull()
       .references(() => forumThreads.id, { onDelete: "cascade" }),
     voter: text().notNull(),
+    /** The reader's account, when they were logged in. */
+    userId: integer("user_id").references(() => users.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [primaryKey({ columns: [table.threadId, table.voter] })],
+  (table) => [primaryKey({ columns: [table.threadId, table.voter] }), index("forum_votes_user_idx").on(table.userId)],
 );
 
 export const forumPosts = pgTable(
@@ -993,12 +1008,14 @@ export const forumPosts = pgTable(
     body: text().notNull(),
     nickname: text(),
     posterId: text("poster_id").notNull(),
+    /** The reader's account, when they were logged in. */
+    userId: integer("user_id").references(() => users.id, { onDelete: "set null" }),
     /** The post it quotes, in the same thread. */
     replyTo: integer("reply_to"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     hiddenAt: timestamp("hidden_at", { withTimezone: true }),
   },
-  (table) => [index("forum_posts_thread_idx").on(table.threadId, table.id)],
+  (table) => [index("forum_posts_thread_idx").on(table.threadId, table.id), index("forum_posts_user_idx").on(table.userId)],
 );
 
 /** Readers' reports of threads, posts and comments, for moderators. */
@@ -1012,12 +1029,15 @@ export const reports = pgTable(
     details: text(),
     /** Hash of the reporter's IP, so one person reporting twice counts once. */
     reporter: text().notNull(),
+    /** The reader's account, when they were logged in. */
+    userId: integer("user_id").references(() => users.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
     resolvedBy: integer("resolved_by").references(() => admins.id, { onDelete: "set null" }),
     resolution: text().$type<"hidden" | "dismissed">(),
   },
   (table) => [
+    index("reports_user_idx").on(table.userId),
     index("reports_open_idx").on(table.resolvedAt, table.createdAt),
     uniqueIndex("reports_once_idx").on(table.kind, table.targetId, table.reporter),
   ],
@@ -1061,11 +1081,14 @@ export const editorialVotes = pgTable(
       .notNull()
       .references(() => editorialPosts.id, { onDelete: "cascade" }),
     voter: text().notNull(),
+    /** The reader's account, when they were logged in. */
+    userId: integer("user_id").references(() => users.id, { onDelete: "set null" }),
     value: smallint().notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
+    index("editorial_votes_user_idx").on(table.userId),
     primaryKey({ columns: [table.postId, table.voter] }),
     check("editorial_votes_value_check", sql`${table.value} in (-1, 1)`),
   ],
@@ -1222,4 +1245,81 @@ export const podcastEpisodes = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [index("podcast_episodes_published_idx").on(table.publishedAt.desc())],
+);
+
+/*
+ * Reader accounts: a public username and a password, nothing else (no email). Taking part
+ * (comments, forum, votes, reports) needs one; reading doesn't.
+ */
+export const users = pgTable(
+  "users",
+  {
+    id: integer().primaryKey().generatedAlwaysAsIdentity(),
+    /** Public, shown on everything they post; unique ignoring case. */
+    username: text().notNull(),
+    passwordHash: text("password_hash").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
+    /** Set by a moderator: the account can't log in or take part. */
+    disabledAt: timestamp("disabled_at", { withTimezone: true }),
+  },
+  (table) => [uniqueIndex("users_username_idx").on(sql`lower(${table.username})`)],
+);
+
+export const userSessions = pgTable(
+  "user_sessions",
+  {
+    /** SHA-256 of the cookie's token; the token itself is never stored. */
+    tokenHash: text("token_hash").primaryKey(),
+    userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("user_sessions_user_idx").on(table.userId)],
+);
+
+/** Saved news and stories ("Guardadas"). */
+export const userSaves = pgTable(
+  "user_saves",
+  {
+    userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    kind: text().$type<"article" | "story">().notNull(),
+    targetId: integer("target_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.kind, table.targetId] })],
+);
+
+/** News the reader hid from their feed. */
+export const userHidden = pgTable(
+  "user_hidden",
+  {
+    userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    articleId: integer("article_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.articleId] })],
+);
+
+/** Outlets (by domain) and parties (by slug) the reader muted. */
+export const userMutes = pgTable(
+  "user_mutes",
+  {
+    userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    kind: text().$type<"source" | "party">().notNull(),
+    value: text().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.kind, table.value] })],
+);
+
+/** Stories the reader has read ("Hoje em 5" ticks). */
+export const userReads = pgTable(
+  "user_reads",
+  {
+    userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    storyId: integer("story_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.storyId] })],
 );

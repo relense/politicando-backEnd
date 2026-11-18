@@ -11,7 +11,9 @@ their IP and a server secret:
 
 Base path: `/api/v2`. Errors use the usual `{ error: { code, message } }`.
 
-Posting works like comments: a reCAPTCHA v2 token on every post (`recaptchaToken`), and a
+**Accounts:** with `LOGIN_REQUIRED` covering `forum`, posting needs a logged-in reader, whose username becomes `nickname` (with `account: true`), and needs no reCAPTCHA; see `docs/accounts-api.md`.
+
+Anonymous posting works like comments: a reCAPTCHA v2 token on every post (`recaptchaToken`), and a
 per-IP limit (5 posts a minute by default; 429 `rate_limited`). If Google can't be reached,
 posting fails with 503 `recaptcha_unavailable`. A failed check is 403 `recaptcha_failed`.
 
