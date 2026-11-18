@@ -4,10 +4,10 @@ import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
 import type { Reader } from "../../accounts/sessions.js";
 import type { Db } from "../../db/client.js";
-import { initiatives, predictions } from "../../db/schema.js";
+import { initiatives, predictions, voteRounds } from "../../db/schema.js";
+import { follow } from "../../notifications/index.js";
 import { ApiError, notFound } from "../../errors.js";
-import { STAGE_GROUP_SQL } from "../../parliament/plain.js";
-import { OPEN_FOR_PREDICTION, record } from "../../predictions/index.js";
+import { PREDICTABLE_NOW, record } from "../../predictions/index.js";
 import { errorSchema } from "../shared.js";
 
 /*
@@ -28,7 +28,8 @@ const openItemSchema = z.object({
   title: z.string(),
   phase: z.string().describe("Its latest stage"),
   phaseDate: z.string(),
-  onAgenda: z.boolean().describe("Named in an upcoming plenary agenda: likely voted soon"),
+  closesAt: z.string().describe("When the plenary session starts: picks lock then (show a countdown)"),
+  threadId: z.number().nullable().describe('The vote\'s megathread (board "votacoes"), where readers defend their pick'),
   myPick: pickSchema.nullable(),
   split: splitSchema,
 });
@@ -67,8 +68,8 @@ export const predictionRoutes =
       {
         schema: {
           tags: ["predictions"],
-          summary: '"Passa ou chumba?": initiatives waiting for a deciding vote, likeliest to be voted soon first',
-          description: "Those named in an upcoming plenary agenda come first, then those in debate, then the newest.",
+          summary: '"Passa ou chumba?": votes on the plenary agenda within the week, soonest first',
+          description: "A vote opens when it's on a plenary agenda within 7 days and closes when that session starts. Empty when nothing is coming up.",
           querystring: z.object({ limit: z.coerce.number().int().min(1).max(50).default(10) }),
           response: { 200: z.object({ items: z.array(openItemSchema) }) },
         },
@@ -76,22 +77,20 @@ export const predictionRoutes =
       async (request, reply) => {
         const userId = request.reader?.id ?? null;
         if (userId) reply.header("Cache-Control", "private, no-store");
-        // An agenda names them as "Proposta de Lei n.º 110/XVII/2.ª".
         const rows = (
           await db.execute<{
             id: number; type: string; number: string; title: string; phase: string; phase_date: string;
-            on_agenda: boolean; my_pick: "pass" | "fail" | null; pass: number | null; fail: number | null;
+            closes_at: Date | string; thread_id: number | null; my_pick: "pass" | "fail" | null; pass: number | null; fail: number | null;
           }>(sql`
             select initiatives.id, initiatives.type, initiatives.number, initiatives.title, initiatives.phase, initiatives.phase_date,
-              exists (select 1 from agenda_events e where e.source = 'parliament' and not e.hidden and e.until > now()
-                and strpos(coalesce(e.summary, '') || ' ' || e.title, initiatives.type || ' n.º ' || initiatives.number || '/' || initiatives.legislature) > 0) as on_agenda,
-              mine.pick as my_pick,
+              r.closes_at, r.thread_id, mine.pick as my_pick,
               case when mine.pick is not null then (select count(*) filter (where p.pick = 'pass') from predictions p where p.initiative_id = initiatives.id)::int end as pass,
               case when mine.pick is not null then (select count(*) filter (where p.pick = 'fail') from predictions p where p.initiative_id = initiatives.id)::int end as fail
             from initiatives
+            join vote_rounds r on r.initiative_id = initiatives.id
             left join predictions mine on mine.initiative_id = initiatives.id and mine.user_id = ${userId}
-            where initiatives.status = 'in_progress' and ${OPEN_FOR_PREDICTION}
-            order by on_agenda desc, (${sql.raw(STAGE_GROUP_SQL)} = 'debate') desc, initiatives.phase_date desc, initiatives.id desc
+            where ${PREDICTABLE_NOW}
+            order by r.closes_at, initiatives.id
             limit ${request.query.limit}`)
         ).rows;
         return {
@@ -102,7 +101,8 @@ export const predictionRoutes =
             title: r.title,
             phase: r.phase,
             phaseDate: typeof r.phase_date === "string" ? r.phase_date : new Date(r.phase_date).toISOString().slice(0, 10),
-            onAgenda: r.on_agenda,
+            closesAt: new Date(r.closes_at).toISOString(),
+            threadId: r.thread_id,
             myPick: r.my_pick,
             split: r.my_pick ? { pass: r.pass ?? 0, fail: r.fail ?? 0 } : null,
           })),
@@ -116,8 +116,8 @@ export const predictionRoutes =
         config: { rateLimit: { max: 60, timeWindow: "1 minute" } },
         schema: {
           tags: ["predictions"],
-          summary: "Predict (or change) whether it passes its next deciding vote. Needs an account",
-          description: "Changeable until it's decided. Only votes from the day after the last change count (a change on the vote day waits for the next vote).",
+          summary: "Predict (or change) whether it passes its vote. Needs an account; only while the vote is open",
+          description: "Changeable until the session starts (closesAt). Picking follows the vote's megathread.",
           params: idParams,
           body: z.strictObject({ pick: pickSchema }),
           response: { 200: z.object({ pick: pickSchema, split: splitSchema }), 401: errorSchema, 404: errorSchema, 409: errorSchema },
@@ -127,7 +127,7 @@ export const predictionRoutes =
         const reader = requireReader(request);
         const { initiativeId } = request.params;
         const [initiative] = await db
-          .select({ id: initiatives.id, open: sql<boolean>`initiatives.status = 'in_progress' and ${OPEN_FOR_PREDICTION}` })
+          .select({ id: initiatives.id, open: sql<boolean>`${PREDICTABLE_NOW}` })
           .from(initiatives)
           .where(eq(initiatives.id, initiativeId));
         if (!initiative) throw notFound("Initiative");
@@ -135,7 +135,7 @@ export const predictionRoutes =
           .select({ outcome: predictions.outcome })
           .from(predictions)
           .where(and(eq(predictions.userId, reader.id), eq(predictions.initiativeId, initiativeId)));
-        if (!initiative.open || (existing && existing.outcome !== null)) throw new ApiError(409, "closed", "This one is already decided");
+        if (!initiative.open || (existing && existing.outcome !== null)) throw new ApiError(409, "closed", "Not open for predictions: it opens a week before the vote and closes when the session starts");
         await db
           .insert(predictions)
           .values({ userId: reader.id, initiativeId, pick: request.body.pick })
@@ -144,6 +144,9 @@ export const predictionRoutes =
             set: { pick: request.body.pick, updatedAt: sql`now()` },
             setWhere: sql`${predictions.outcome} is null and ${predictions.pick} is distinct from excluded.pick`,
           });
+        // Picking a side follows the vote's megathread, where that side gets argued.
+        const [round] = await db.select({ threadId: voteRounds.threadId }).from(voteRounds).where(eq(voteRounds.initiativeId, initiativeId));
+        if (round?.threadId) await follow(db, reader.id, "thread", round.threadId);
         return { pick: request.body.pick, split: await split(initiativeId) };
       },
     );

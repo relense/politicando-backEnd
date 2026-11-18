@@ -1,8 +1,9 @@
 import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { buildApp } from "../src/app.js";
-import { agendaEvents, initiatives, notifications, predictions, type VoteRecord } from "../src/db/schema.js";
+import { agendaEvents, forumThreads, initiatives, notifications, predictions, voteRounds, type VoteRecord } from "../src/db/schema.js";
 import { record, resolvePredictions, settle } from "../src/predictions/index.js";
+import { openVoteRounds } from "../src/predictions/rounds.js";
 import { createTestDb, resetDb } from "./helpers.js";
 
 const { db, pool } = createTestDb();
@@ -24,6 +25,14 @@ const register = async (username: string) =>
 const vote = (date: string, result: string, phase = "Votação na generalidade"): VoteRecord => ({
   id: `${date}-${phase}`, date, phase, result, unanimous: false, favor: [], against: [], abstention: [], absent: [], named: [],
 });
+/** A plenary session `days` from now whose agenda names these initiatives. */
+const plenary = (id: string, days: number, numbers: number[]) =>
+  db.insert(agendaEvents).values({
+    id, source: "parliament", kind: "parliament", title: "Plenário", allDay: false,
+    summary: `Votações\n${numbers.map((n) => `Projeto de Lei n.º ${n}/XVII/2.ª (PS)`).join("\n")}`,
+    startsAt: new Date(Date.now() + days * 86_400_000), until: new Date(Date.now() + days * 86_400_000 + 3_600_000), startDay: "2030-01-01",
+    attend: { open: false, how: null, url: null },
+  } as typeof agendaEvents.$inferInsert);
 const initiative = (id: number, overrides: Partial<typeof initiatives.$inferInsert> = {}) =>
   db.insert(initiatives).values({
     id, legislature: "XVII", type: "Projeto de Lei", number: String(id), title: `Iniciativa ${id}`, status: "in_progress",
@@ -32,13 +41,14 @@ const initiative = (id: number, overrides: Partial<typeof initiatives.$inferInse
 
 describe("settling a prediction", () => {
   const at = new Date("2026-11-10T15:00:00Z");
-  it("uses the first deciding vote from the next day on", () => {
+  it("uses the first deciding vote from the day of the last change on", () => {
     expect(settle({ pick: "pass", updatedAt: at }, { open: true, votes: [] })).toBeNull();
     expect(settle({ pick: "pass", updatedAt: at }, { open: false, votes: [vote("2026-11-11", "Aprovado")] })).toMatchObject({ outcome: "hit", voteDate: "2026-11-11" });
     expect(settle({ pick: "fail", updatedAt: at }, { open: false, votes: [vote("2026-11-12", "Aprovado")] })).toMatchObject({ outcome: "miss" });
-    // A vote the same day doesn't count (it may already be in the news); procedural votes neither.
-    expect(settle({ pick: "pass", updatedAt: at }, { open: true, votes: [vote("2026-11-10", "Rejeitado"), vote("2026-11-11", "Aprovado", "Requerimento")] })).toBeNull();
-    expect(settle({ pick: "pass", updatedAt: at }, { open: false, votes: [vote("2026-11-10", "Rejeitado")] })).toMatchObject({ outcome: "void", voteDate: null });
+    expect(settle({ pick: "pass", updatedAt: at }, { open: false, votes: [vote("2026-11-10", "Rejeitado")] })).toMatchObject({ outcome: "miss" });
+    // Votes before the pick don't count; procedural votes neither.
+    expect(settle({ pick: "pass", updatedAt: at }, { open: true, votes: [vote("2026-11-09", "Rejeitado"), vote("2026-11-11", "Aprovado", "Requerimento")] })).toBeNull();
+    expect(settle({ pick: "pass", updatedAt: at }, { open: false, votes: [vote("2026-11-09", "Rejeitado")] })).toMatchObject({ outcome: "void", voteDate: null });
     expect(settle({ pick: "pass", updatedAt: at }, { open: false, votes: [vote("2026-11-13", "Prejudicado")] })).toMatchObject({ outcome: "void" });
   });
 
@@ -49,34 +59,57 @@ describe("settling a prediction", () => {
 });
 
 describe("Passa ou chumba?", () => {
-  it("lists open initiatives, agenda first, and shows the split only after picking", async () => {
-    await initiative(1, { phaseDate: "2026-11-10" });
-    await initiative(2, { phaseDate: "2026-11-01", phase: "Discussão generalidade" });
-    await initiative(3, { status: "approved", phase: "Votação final global" });
-    await db.insert(agendaEvents).values({
-      id: "plen-1", source: "parliament", kind: "parliament", title: "Plenário", summary: "Votações\nProjeto de Lei n.º 2/XVII/2.ª (PS)",
-      allDay: false, startsAt: new Date(Date.now() + 86_400_000), until: new Date(Date.now() + 90_000_000), startDay: "2030-01-01",
-      attend: { open: false, how: null, url: null },
-    } as typeof agendaEvents.$inferInsert);
+  it("opens only votes on the agenda within the week, each with a megathread where picks show", async () => {
+    await initiative(1);
+    await initiative(2);
+    await initiative(3);
+    await initiative(4, { status: "approved", phase: "Votação final global" });
+    await plenary("soon", 2, [2, 4]);
+    await plenary("later", 10, [3]);
+    expect((await call("GET", "/predictions/open")).json().items).toEqual([]);
 
+    expect(await openVoteRounds(db)).toEqual({ opened: 1, moved: 0, unpinned: 0 });
+    expect(await openVoteRounds(db)).toEqual({ opened: 0, moved: 0, unpinned: 0 });
     const open = (await call("GET", "/predictions/open")).json().items;
-    expect(open.map((i: { id: number }) => i.id)).toEqual([2, 1]);
-    expect(open[0]).toMatchObject({ onAgenda: true, myPick: null, split: null });
+    expect(open).toEqual([expect.objectContaining({ id: 2, myPick: null, split: null, threadId: expect.any(Number), closesAt: expect.any(String) })]);
+    const [thread] = await db.select().from(forumThreads);
+    expect(thread).toMatchObject({ board: "votacoes", pinned: true, initiativeId: 2, title: "Passa ou chumba? Projeto de Lei n.º 2: Iniciativa 2" });
 
-    expect((await call("PUT", "/predictions/1", undefined, { pick: "pass" })).statusCode).toBe(401);
+    // Not on the agenda yet (or too far off): closed.
     const ana = await register("ana");
     const rui = await register("rui");
-    await call("PUT", "/predictions/1", rui, { pick: "fail" });
-    expect((await call("PUT", "/predictions/1", ana, { pick: "pass" })).json()).toEqual({ pick: "pass", split: { pass: 1, fail: 1 } });
+    expect((await call("PUT", "/predictions/1", ana, { pick: "pass" })).statusCode).toBe(409);
     expect((await call("PUT", "/predictions/3", ana, { pick: "pass" })).statusCode).toBe(409);
     expect((await call("PUT", "/predictions/99", ana, { pick: "pass" })).statusCode).toBe(404);
-    const mine = (await call("GET", "/predictions/open", ana)).json().items.find((i: { id: number }) => i.id === 1);
-    expect(mine).toMatchObject({ myPick: "pass", split: { pass: 1, fail: 1 } });
+    expect((await call("PUT", "/predictions/2", undefined, { pick: "pass" })).statusCode).toBe(401);
+
+    await call("PUT", "/predictions/2", rui, { pick: "fail" });
+    expect((await call("PUT", "/predictions/2", ana, { pick: "pass" })).json()).toEqual({ pick: "pass", split: { pass: 1, fail: 1 } });
+    expect((await call("GET", "/predictions/open", ana)).json().items[0]).toMatchObject({ myPick: "pass", split: { pass: 1, fail: 1 } });
+    // Picking followed the megathread; replies there show each side.
+    expect((await call("GET", "/me/state", ana)).json().follows.threads).toEqual([thread!.id]);
+    await call("POST", `/forums/threads/${thread!.id}/posts`, ana, { body: "Passa, há maioria" });
+    await call("POST", `/forums/threads/${thread!.id}/posts`, rui, { body: "Chumba, o PS vota contra" });
+    const posts = (await call("GET", `/forums/threads/${thread!.id}`)).json().posts;
+    expect(posts.map((p: { pick: string }) => p.pick)).toEqual(["pass", "fail"]);
+    // Readers can't open threads in the votes board themselves.
+    expect((await call("POST", "/forums/votacoes/threads", ana, { title: "Outra", body: "Texto" })).statusCode).toBe(403);
+
+    // The session starts: picks lock. Postponed: it reopens for the new date, pinned again.
+    await db.update(voteRounds).set({ closesAt: new Date(Date.now() - 3 * 86_400_000) });
+    expect((await call("PUT", "/predictions/2", ana, { pick: "fail" })).statusCode).toBe(409);
+    expect(await openVoteRounds(db)).toEqual({ opened: 0, moved: 1, unpinned: 0 });
+    expect((await call("GET", "/predictions/open")).json().items).toHaveLength(1);
+    await db.update(voteRounds).set({ closesAt: new Date(Date.now() - 3 * 86_400_000) });
+    await db.delete(agendaEvents);
+    expect(await openVoteRounds(db)).toEqual({ opened: 0, moved: 0, unpinned: 1 });
   });
 
   it("settles after the parliament sync, tells the reader, and keeps their record", async () => {
     await initiative(1);
     await initiative(2);
+    await plenary("soon", 1, [1, 2]);
+    await openVoteRounds(db);
     const ana = await register("ana");
     await call("PUT", "/predictions/1", ana, { pick: "pass" });
     await call("PUT", "/predictions/2", ana, { pick: "pass" });

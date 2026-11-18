@@ -1386,3 +1386,19 @@ export const predictions = pgTable(
     check("predictions_pick_check", sql`${table.pick} in ('pass', 'fail')`),
   ],
 );
+
+/**
+ * A vote open for "Passa ou chumba?": an initiative named in a plenary agenda within the next
+ * week (src/predictions/rounds.ts). Predictions close when that session starts; its megathread
+ * (board "votacoes") is where readers defend their pick.
+ */
+export const voteRounds = pgTable("vote_rounds", {
+  initiativeId: integer("initiative_id")
+    .primaryKey()
+    .references(() => initiatives.id, { onDelete: "cascade" }),
+  /** The agenda event it's on; moves if the vote is postponed. */
+  agendaEventId: text("agenda_event_id").notNull(),
+  closesAt: timestamp("closes_at", { withTimezone: true }).notNull(),
+  threadId: integer("thread_id").references(() => forumThreads.id, { onDelete: "set null" }),
+  openedAt: timestamp("opened_at", { withTimezone: true }).notNull().defaultNow(),
+});

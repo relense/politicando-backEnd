@@ -1,5 +1,5 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
-import { lisbonDay, nextDay } from "../agenda/time.js";
+import { lisbonDay } from "../agenda/time.js";
 import type { Db } from "../db/client.js";
 import { type VoteRecord, predictions } from "../db/schema.js";
 import { notify } from "../notifications/index.js";
@@ -7,26 +7,29 @@ import { DECIDING_VOTES } from "../parliament/parse.js";
 import { STAGE_GROUP_SQL } from "../parliament/plain.js";
 
 /*
- * "Passa ou chumba?": readers guess whether an initiative passes its next deciding vote.
- * Open automatically for anything still waiting for one (submitted or in debate). Only votes
- * from the Lisbon day after the reader's last change count, so nobody "predicts" a result
- * already in the news while our daily sync catches up. Private: no leaderboard, no profile.
+ * "Passa ou chumba?": readers guess whether an initiative passes its next deciding vote. A vote
+ * opens only when it's on a plenary agenda within the week (src/predictions/rounds.ts) and
+ * closes when that session starts, so nobody "predicts" a result already known. Private: no
+ * leaderboard, no profile.
  */
 
-/** Initiatives that can still be predicted (the SQL works on the `initiatives` table, unaliased). */
+/** Initiatives still waiting for a deciding vote (the SQL works on the `initiatives` table, unaliased). */
 export const OPEN_FOR_PREDICTION = sql.raw(`${STAGE_GROUP_SQL} in ('submitted', 'debate')`);
+/** Open right now: waiting for a vote, and on the agenda with the session not started yet. */
+export const PREDICTABLE_NOW = sql`initiatives.status = 'in_progress' and ${OPEN_FOR_PREDICTION}
+  and exists (select 1 from vote_rounds r where r.initiative_id = initiatives.id and r.closes_at > now())`;
 
 export type Outcome = "hit" | "miss" | "void";
 
 /**
  * How one prediction ends, or null while it's still pending: the first deciding vote on or
- * after the day following the reader's last change settles it.
+ * after the day of the reader's last change settles it (picks lock when the session starts).
  */
 export const settle = (
   prediction: { pick: "pass" | "fail"; updatedAt: Date },
   initiative: { votes: VoteRecord[]; open: boolean },
 ): { outcome: Outcome; voteDate: string | null; voteResult: string | null } | null => {
-  const from = nextDay(lisbonDay(prediction.updatedAt));
+  const from = lisbonDay(prediction.updatedAt);
   const vote = initiative.votes
     .filter((v) => DECIDING_VOTES.has(v.phase) && v.date >= from)
     .sort((a, b) => a.date.localeCompare(b.date))[0];

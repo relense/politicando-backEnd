@@ -253,6 +253,13 @@
       "when": 1795035332459,
       "tag": "0035_engagement",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1795039325683,
+      "tag": "0036_vote_rounds",
+      "breakpoints": true
     }
   ]
 }

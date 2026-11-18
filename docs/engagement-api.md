@@ -69,23 +69,32 @@ doesn't mark anything by itself, so call this when the reader opens the inbox, o
 
 ## "Passa ou chumba?"
 
-Readers guess whether an initiative passes its **next deciding vote** in parliament.
-- **Open automatically:** anything still waiting for a deciding vote is open. Nobody has to curate it.
-- **Settled on its own:** the morning after the vote, by the 04:00 parliament sync. The reader gets a `prediction_result` notification.
+Readers guess whether an initiative passes its vote in parliament, **only while the vote is in
+the air**, and defend their pick in the vote's megathread. It's a position to argue, not just a
+click.
+
+- **Opens:** when the initiative shows up on a plenary agenda within the next **7 days** (agenda checked every 3 hours). Before that it can't be predicted. Most days there are only a few open votes, and sometimes none.
+- **Closes:** when that plenary session starts (`closesAt`). Show a countdown ("Vota-se quinta: faltam 2 dias").
+- **Postponed:** if the vote doesn't happen that day and the initiative comes back on a later agenda, it reopens (pinned again) and earlier picks still count.
+- **Settled:** the morning after the vote, by the 04:00 parliament sync. The reader gets a `prediction_result` notification.
 - **Private:** each reader's record is theirs alone. There's no leaderboard.
 
 ### `GET /predictions/open?limit=10`
+
+Soonest vote first. An empty list means nothing is coming up, so hide the block or say
+"Sem votações esta semana".
 
 ```json
 { "items": [
   { "id": 4123, "type": "Projeto de Lei", "number": "512", "title": "…",
     "phase": "Discussão generalidade", "phaseDate": "2026-11-12",
-    "onAgenda": true, "myPick": null, "split": null }
+    "closesAt": "2026-11-20T15:00:00.000Z", "threadId": 88,
+    "myPick": null, "split": null }
 ] }
 ```
 
-- **Order:** items named in an upcoming plenary agenda (`onAgenda`: likely voted soon) come first, then those in debate, then the newest.
 - **`split`** (`{pass, fail}`, how everyone picked) is **null until this reader has picked**, so the crowd can't steer them. Show it after they pick.
+- **`threadId`:** the vote's megathread. Link it from the card ("Defende a tua escolha").
 - `id` is the initiative (`GET /initiatives/:id`).
 - Anonymous readers see the list, so show "Entra para prever".
 
@@ -93,9 +102,18 @@ Readers guess whether an initiative passes its **next deciding vote** in parliam
 
 `{ "pick": "pass" | "fail" }` → `{ "pick": "pass", "split": { "pass": 12, "fail": 7 } }`.
 
-- **Changing it:** the reader can change it until the vote. Only votes from the **day after the last change** count, so a change on the vote day waits for the next vote. This stops anyone "predicting" a result already in the news.
-- **Errors:** 401 `login_required`; 404 unknown; 409 `closed` when it's already decided.
+- **Changing it:** the reader can change it until `closesAt`.
+- **Follows the megathread:** picking follows it, so the debate comes to the reader's inbox.
+- **Errors:** 401 `login_required`; 404 unknown; 409 `closed` when it isn't open (not on the agenda yet, the session already started, or decided).
 - `DELETE /predictions/:initiativeId` takes a pending prediction back.
+
+### The megathread (board `votacoes`, "Votações")
+
+- **Created automatically** when a vote opens: one thread per vote, pinned, opened by "Politicando" (`posterId` `redacao`), linked to the initiative (`link.initiative`).
+- **Readers reply, they don't open threads:** `POST /forums/votacoes/threads` returns 403 `board_closed`.
+- **Every reply shows its author's side:** in `GET /forums/threads/:id`, each post has `pick`: `"pass"`, `"fail"`, or null for no pick. Show it as a badge ("Passa" / "Chumba") next to the name, like a poll comment.
+- **After the vote:** the thread stays open for the aftermath and is unpinned two days later.
+- **Ordering:** like any thread, oldest reply first. Nobody's side gets buried by votes.
 
 ### `GET /me/predictions`
 
@@ -114,14 +132,14 @@ Readers guess whether an initiative passes its **next deciding vote** in parliam
 - **`void`:** no vote settled it (withdrawn, not admitted, "Prejudicado"). Don't count it either way.
 - **`streak`:** hits in a row, latest first. Show it only to the reader ("3 seguidas!").
 
-**Question wording:** "Passa na próxima votação?" The next deciding vote is often the one na generalidade, not the final one.
+**Question wording:** "Passa na votação?" The vote is often the one na generalidade, not the final one.
 
 ## The daily block ("Hoje")
 
 There's no single endpoint. Call these in parallel; each one is cacheable on its own:
 - `GET /today`: "Hoje em 5" stories
 - `GET /podcast/latest`: today's episode
-- `GET /predictions/open?limit=3`: today's "Passa ou chumba?" (anonymous, so it's cacheable)
+- `GET /predictions/open?limit=3`: this week's "Passa ou chumba?" (anonymous, so it's cacheable; may be empty)
 - `GET /agenda?limit=5`: what's on today
 
 For the reader's own bits, use `GET /me/notifications/unread`.

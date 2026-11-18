@@ -205,3 +205,9 @@ ideas (moderators):
 `PUT /admin/forum/threads/:id/status` with `{ "status": "planned", "answer": "Está nos planos para dezembro" }`.
 Both can be `null`. Returns `{ status, answer, answeredAt }`. Threads on other boards get
 400 `not_an_idea`.
+
+## Votes board (`votacoes`)
+
+One thread per parliament vote open for "Passa ou chumba?". Each is created automatically and
+pinned, and readers can't open threads there themselves (403 `board_closed`). Posts carry `pick`,
+the poster's prediction, to show as their side. See `engagement-api.md`.
