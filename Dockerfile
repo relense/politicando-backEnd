@@ -16,5 +16,7 @@ RUN npm ci --omit=dev
 COPY --from=build /app/dist ./dist
 COPY drizzle ./drizzle
 COPY data ./data
+# Blog posts published on deploy (src/db/seed.ts).
+COPY content ./content
 USER node
 CMD ["node", "dist/server.js"]

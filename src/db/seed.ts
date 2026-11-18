@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import { pathToFileURL } from "node:url";
 import { loadDatabaseConfig } from "../config.js";
+import { importContentPosts } from "../editorial/markdownFiles.js";
 import { PARTY_DEFINITIONS, SEATS_AS_OF } from "../matching/parties.js";
 import { syncLocalOfficials } from "../places/localOfficials.js";
 import { createDb, type Db } from "./client.js";
@@ -38,6 +39,9 @@ export const seed = async (db: Db) => {
   console.log(`Seeded ${PARTY_DEFINITIONS.length} parties`);
   // Cheap, and keeps local officials in step with the election data after each deploy.
   console.log(JSON.stringify(await syncLocalOfficials(db)));
+  // Blog posts written in content/editorial; only new or edited ones are touched.
+  const posts = await importContentPosts(db);
+  console.log(JSON.stringify({ editorial: posts.filter((p) => p.changed).map((p) => p.slug), unchanged: posts.filter((p) => !p.changed).length }));
 };
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
