@@ -55,6 +55,7 @@
     "government:sync": "tsx --env-file=.env src/jobs/syncGovernment.ts",
     "elections:import": "tsx --env-file=.env src/jobs/importElections.ts",
     "editorial:import": "tsx --env-file=.env src/jobs/importEditorial.ts",
+    "editorial:publish": "tsx --env-file=.env src/jobs/publishPost.ts",
     "contracts:import": "tsx --env-file=.env src/jobs/importContracts.ts",
     "moderation": "tsx --env-file=.env src/jobs/moderation.ts",
     "admin:create": "tsx --env-file=.env src/jobs/createAdmin.ts",

@@ -23,6 +23,7 @@ const app = await buildApp({
   verifyRecaptcha: createRecaptchaVerifier(config.RECAPTCHA_SECRET, fetch, config.RECAPTCHA_HOSTNAMES, (message) => console.warn(message)),
   secureCookies: config.COOKIE_SECURE,
   loginRequired: config.LOGIN_REQUIRED,
+  publishKeys: config.PUBLISH_API_KEYS,
   forumSecret: config.FORUM_SECRET,
   newsletter,
   logger: true,
