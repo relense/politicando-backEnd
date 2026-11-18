@@ -4,11 +4,14 @@ import { purgeFeedback } from "../feedback/purge.js";
 import { ingest, refreshGenericHeadlines } from "../ingestion/ingest.js";
 import { createPoliteClient } from "../ingestion/politeClient.js";
 import { NEWS_SOURCES } from "../ingestion/sources.js";
+import { changedPages, pingIndexNow } from "../seo/indexNow.js";
 import { assignStories } from "../stories/assign.js";
 
 const config = loadIngestConfig();
 const { db, pool } = createDb(config.DATABASE_URL);
 const client = createPoliteClient();
+// The previous run started an hour ago: from then on, everything new is worth announcing.
+const changedSince = new Date(Date.now() - 61 * 60 * 1000);
 
 try {
   const stats = await ingest({
@@ -24,6 +27,10 @@ try {
   console.log(JSON.stringify({ stories: await assignStories(db) }));
   // Not news, but this job runs every hour: old feedback screenshots go here too.
   await purgeFeedback(db);
+  if (config.INDEXNOW_KEY) {
+    const paths = await changedPages(db, changedSince);
+    console.log(JSON.stringify({ indexNow: await pingIndexNow({ key: config.INDEXNOW_KEY, siteUrl: config.SITE_URL, paths }) }));
+  }
 
   // A few sites failing is normal. Most failing means the scanner itself is broken.
   const unreadable = stats.filter((source) => source.listingError).length;

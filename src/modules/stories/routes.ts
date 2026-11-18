@@ -12,6 +12,7 @@ import {
   articleDeputySchema,
   articleGovernmentSchema,
   articleInitiativeSchema,
+  articlePersonSchema,
   articlePartySchema,
   articleSchema,
   commaList,
@@ -73,6 +74,7 @@ export const storySchema = z.object({
   deputies: z.array(articleDeputySchema),
   government: z.array(articleGovernmentSchema),
   president: z.object({ id: z.string(), name: z.string() }).nullable(),
+  people: z.array(articlePersonSchema).describe("Everyone with a page named across its versions, most often first (as on articles)"),
   initiatives: z.array(articleInitiativeSchema),
   importa: z.number().describe('Readers who marked it "Importa"'),
   importance: z
@@ -266,6 +268,7 @@ export const storyRoutes =
             deputies: byFrequency(list.map((a) => a.deputies), (d) => d.id),
             government: byFrequency(list.map((a) => a.government), (g) => g.id),
             president: presidents[0] ?? null,
+            people: byFrequency(list.map((a) => a.people), (p) => `${p.kind}:${p.id}`),
             initiatives: byFrequency(list.map((a) => a.initiatives), (i) => i.id),
             importa: r.importa,
             importance: importance(r.importa),

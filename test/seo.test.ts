@@ -25,7 +25,7 @@ describe("sitemap", () => {
     const { body } = await get("/sitemap");
     expect(body.pageSize).toBe(10_000);
     expect(body.kinds.map((k: { kind: string }) => k.kind)).toEqual([
-      "party", "deputy", "government-member", "president", "election", "place", "initiative", "editorial", "case",
+      "party", "deputy", "government-member", "president", "election", "place", "local-official", "initiative", "editorial", "case",
     ]);
     expect(body.kinds.find((k: { kind: string }) => k.kind === "president")).toEqual({ kind: "president", count: PRESIDENTS.length, pages: 1 });
   });
