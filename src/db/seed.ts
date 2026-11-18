@@ -32,13 +32,18 @@ export const seedParties = async (db: Db) => {
     });
 };
 
+/** Everything the seed sets: safe to run on every deploy (migrate.ts does). */
+export const seed = async (db: Db) => {
+  await seedParties(db);
+  console.log(`Seeded ${PARTY_DEFINITIONS.length} parties`);
+  // Cheap, and keeps local officials in step with the election data after each deploy.
+  console.log(JSON.stringify(await syncLocalOfficials(db)));
+};
+
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const { db, pool } = createDb(loadDatabaseConfig().DATABASE_URL);
   try {
-    await seedParties(db);
-    console.log(`Seeded ${PARTY_DEFINITIONS.length} parties`);
-    // Cheap, and keeps local officials in step with the election data after each deploy.
-    console.log(JSON.stringify(await syncLocalOfficials(db)));
+    await seed(db);
   } finally {
     await pool.end();
   }

@@ -12,8 +12,7 @@ Live at https://www.politicando.pt (API: https://api.politicando.pt). Contact: i
 cp .env.example .env
 docker compose up -d --wait   # Postgres on port 5433
 npm install
-npm run db:migrate
-npm run db:seed
+npm run db:migrate           # also seeds parties and local officials
 npm run dev                   # http://localhost:4000
 ```
 
@@ -36,7 +35,7 @@ The API docs are at `/docs` and the OpenAPI spec is at `/docs/json`.
 | `npm run parliament:link-news` | Link stored articles to deputies and initiatives. Add `-- --replace` after changing matching rules |
 | `npm run places:shapes -- <folder>` | Rebuild `data/municipalities.json` (for `/places/locate`) from the CAOP GeoPackages, only when CAOP changes |
 | `npm run db:generate` | Create a migration after changing `src/db/schema.ts` |
-| `npm run db:seed` | Create or update parties. Safe to re-run |
+| `npm run db:seed` | Create or update parties and local officials (mayors). Safe to re-run; `db:migrate` runs it too |
 
 ## API
 
@@ -289,7 +288,6 @@ Production checklist:
 - Schedule the jobs from the host's cron, with the same image: `node dist/jobs/ingest.js` hourly, `syncParliament.js` and `syncGovernment.js` daily, `importContracts.js` weekly.
 
 ```sh
-node dist/db/migrate.js   # on each release
-node dist/db/seed.js      # on each release
+node dist/db/migrate.js   # on each release: migrates, then seeds
 node dist/server.js       # the default command
 ```
