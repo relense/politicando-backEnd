@@ -17,7 +17,7 @@ import { STAGE_GROUP_SQL } from "../parliament/plain.js";
 export const OPEN_FOR_PREDICTION = sql.raw(`${STAGE_GROUP_SQL} in ('submitted', 'debate')`);
 /** Open right now: waiting for a vote, and on the agenda with the session not started yet. */
 export const PREDICTABLE_NOW = sql`initiatives.status = 'in_progress' and ${OPEN_FOR_PREDICTION}
-  and exists (select 1 from vote_rounds r where r.initiative_id = initiatives.id and r.closes_at > now())`;
+  and exists (select 1 from vote_rounds r where r.initiative_id = initiatives.id and r.opens_at <= now() and r.closes_at > now())`;
 
 export type Outcome = "hit" | "miss" | "void";
 
@@ -28,7 +28,7 @@ export type Outcome = "hit" | "miss" | "void";
 export const settle = (
   prediction: { pick: "pass" | "fail"; updatedAt: Date },
   initiative: { votes: VoteRecord[]; open: boolean },
-): { outcome: Outcome; voteDate: string | null; voteResult: string | null } | null => {
+): { outcome: Outcome; voteDate: string | null; voteResult: string | null; vote: VoteRecord | null } | null => {
   const from = lisbonDay(prediction.updatedAt);
   const vote = initiative.votes
     .filter((v) => DECIDING_VOTES.has(v.phase) && v.date >= from)
@@ -36,13 +36,24 @@ export const settle = (
   if (vote) {
     if (vote.result === "Aprovado" || vote.result === "Rejeitado") {
       const passed = vote.result === "Aprovado";
-      return { outcome: passed === (prediction.pick === "pass") ? "hit" : "miss", voteDate: vote.date, voteResult: vote.result };
+      return { outcome: passed === (prediction.pick === "pass") ? "hit" : "miss", voteDate: vote.date, voteResult: vote.result, vote };
     }
     // "Prejudicado": the vote fell through, nothing to score.
-    return { outcome: "void", voteDate: vote.date, voteResult: vote.result };
+    return { outcome: "void", voteDate: vote.date, voteResult: vote.result, vote };
   }
   // Decided some other way (withdrawn, not admitted, or by a vote before the prediction).
-  return initiative.open ? null : { outcome: "void", voteDate: null, voteResult: null };
+  return initiative.open ? null : { outcome: "void", voteDate: null, voteResult: null, vote: null };
+};
+
+/**
+ * Which vote comes next, by rule: the final one once approved na generalidade; na generalidade
+ * for bills; a single vote for everything else (resolutions, deliberations…). A best reading:
+ * parliament doesn't say in advance which vote a session holds.
+ */
+export const nextVoteLabel = (type: string, votes: VoteRecord[]) => {
+  if (votes.some((v) => v.phase === "Votação na generalidade" && v.result === "Aprovado")) return "votação final global";
+  if (/^(Projeto|Proposta) de Lei/i.test(type)) return "votação na generalidade";
+  return "votação";
 };
 
 /** Settles what the latest parliament sync decided and tells each reader. Run after the sync. */
