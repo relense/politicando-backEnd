@@ -4,10 +4,11 @@ import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
 import type { Reader } from "../../accounts/sessions.js";
 import type { Db } from "../../db/client.js";
-import { initiatives, predictions, voteRounds } from "../../db/schema.js";
+import { type VoteRecord, initiatives, predictions, voteRounds } from "../../db/schema.js";
 import { follow } from "../../notifications/index.js";
 import { ApiError, notFound } from "../../errors.js";
-import { PREDICTABLE_NOW, record } from "../../predictions/index.js";
+import { OPEN_FOR_PREDICTION, PREDICTABLE_NOW, record, settle } from "../../predictions/index.js";
+import { AGENDA_NAMES_INITIATIVE, OPEN_DAYS } from "../../predictions/rounds.js";
 import { errorSchema } from "../shared.js";
 
 /*
@@ -106,6 +107,88 @@ export const predictionRoutes =
             myPick: r.my_pick,
             split: r.my_pick ? { pass: r.pass ?? 0, fail: r.fail ?? 0 } : null,
           })),
+        };
+      },
+    );
+
+    const boxSchema = z.object({
+      id: z.number().describe("The initiative"),
+      title: z.string(),
+      state: z.enum(["upcoming", "open", "closed", "decided"]).describe(
+        "upcoming: on an agenda more than 7 days out (opens at opensAt); open: picks allowed until closesAt; closed: the session started, waiting for the result (settled by the 04:00 sync); decided: settled, void included",
+      ),
+      opensAt: z.string().nullable().describe("upcoming only: when predictions open"),
+      closesAt: z.string().nullable().describe("When the session starts and picks lock (for upcoming: the planned session)"),
+      threadId: z.number().nullable().describe("The vote's megathread (board votacoes); null while upcoming"),
+      myPick: pickSchema.nullable(),
+      split: splitSchema.describe("How everyone picked: while open only once this reader has picked; once closed, for everyone"),
+      voteDate: z.string().nullable(),
+      voteResult: z.string().nullable().describe('decided: "Aprovado", "Rejeitado" or "Prejudicado"; null when it was decided without a vote (withdrawn…)'),
+      outcome: z.enum(["hit", "miss", "void"]).nullable().describe("This reader's, once decided; null when anonymous or no pick"),
+    });
+
+    app.get(
+      "/predictions/:initiativeId",
+      {
+        schema: {
+          tags: ["predictions"],
+          summary: 'The initiative page\'s "Passa ou chumba?" box: its vote, in any state, kept forever as history',
+          description: "404 when the initiative never had a vote open for predictions and none is on the agenda. A postponed vote goes back to open with the new closesAt.",
+          params: idParams,
+          response: { 200: boxSchema, 400: errorSchema, 404: errorSchema },
+        },
+      },
+      async (request, reply) => {
+        const { initiativeId } = request.params;
+        const userId = request.reader?.id ?? null;
+        reply.header("Cache-Control", userId ? "private, no-store" : "public, max-age=60");
+        const [row] = (
+          await db.execute<{
+            id: number; title: string; votes: VoteRecord[]; open_now: boolean; waiting: boolean;
+            closes_at: Date | string | null; opened_at: Date | string | null; thread_id: number | null;
+            next_session: Date | string | null;
+          }>(sql`
+            select initiatives.id, initiatives.title, initiatives.votes,
+              ${PREDICTABLE_NOW} as open_now,
+              (initiatives.status = 'in_progress' and ${OPEN_FOR_PREDICTION}) as waiting,
+              r.closes_at, r.opened_at, r.thread_id,
+              (select min(e.starts_at) from agenda_events e where ${AGENDA_NAMES_INITIATIVE} and e.starts_at > now()) as next_session
+            from initiatives left join vote_rounds r on r.initiative_id = initiatives.id
+            where initiatives.id = ${initiativeId}`)
+        ).rows;
+        if (!row) throw notFound("Prediction");
+        const none = { myPick: null, split: null, voteDate: null, voteResult: null, outcome: null };
+
+        if (row.closes_at === null || row.opened_at === null) {
+          // Not open yet: only worth a box when a session is planned (and it's still waiting for a vote).
+          if (!row.waiting || row.next_session === null) throw notFound("Prediction");
+          const session = new Date(row.next_session);
+          return {
+            id: row.id, title: row.title, state: "upcoming" as const, threadId: null, ...none,
+            opensAt: new Date(session.getTime() - OPEN_DAYS * 24 * 3_600_000).toISOString(), closesAt: session.toISOString(),
+          };
+        }
+
+        const settled = settle({ pick: "pass", updatedAt: new Date(row.opened_at) }, { votes: row.votes, open: row.waiting });
+        const state = row.open_now ? ("open" as const) : settled ? ("decided" as const) : ("closed" as const);
+        const [mine] = userId
+          ? await db
+              .select({ pick: predictions.pick, outcome: predictions.outcome })
+              .from(predictions)
+              .where(and(eq(predictions.userId, userId), eq(predictions.initiativeId, initiativeId)))
+          : [];
+        return {
+          id: row.id,
+          title: row.title,
+          state,
+          opensAt: null,
+          closesAt: new Date(row.closes_at).toISOString(),
+          threadId: row.thread_id,
+          myPick: mine?.pick ?? null,
+          split: state !== "open" || mine ? await split(initiativeId) : null,
+          voteDate: state === "decided" ? (settled?.voteDate ?? null) : null,
+          voteResult: state === "decided" ? (settled?.voteResult ?? null) : null,
+          outcome: state === "decided" ? (mine?.outcome ?? null) : null,
         };
       },
     );

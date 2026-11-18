@@ -98,6 +98,31 @@ Soonest vote first. An empty list means nothing is coming up, so hide the block 
 - `id` is the initiative (`GET /initiatives/:id`).
 - Anonymous readers see the list, so show "Entra para prever".
 
+### `GET /predictions/:initiativeId`: the initiative page's box
+
+The vote of one initiative, in any state, kept forever as history. 404 when the initiative never
+had a vote open and none is on the agenda: then show no box.
+
+```json
+{ "id": 4123, "title": "…", "state": "decided",
+  "opensAt": null, "closesAt": "2026-11-20T15:00:00.000Z", "threadId": 88,
+  "myPick": "pass", "split": { "pass": 31, "fail": 18 },
+  "voteDate": "2026-11-20", "voteResult": "Rejeitado", "outcome": "miss" }
+```
+
+| `state` | When | Box |
+|---|---|---|
+| `upcoming` | On a plenary agenda more than 7 days out | "Previsões abrem a *opensAt*" (no split, no thread yet) |
+| `open` | Within the week, until `closesAt` | The card to pick, with a countdown |
+| `closed` | The session started; the result comes with the 04:00 sync | "As previsões fecharam", plus how readers picked |
+| `decided` | Settled | The result, how readers picked, the reader's hit or miss, and "Ver a discussão da votação →" |
+
+- **`split`:** while `open`, only once this reader has picked (the same rule as the open list). From `closed` on, for everyone, anonymous readers included.
+- **`myPick` and `outcome`:** the logged-in reader's own. Both are null when anonymous.
+- **`voteResult`:** null for a `decided` vote settled without a vote (withdrawn, not admitted). Say it was decided without a vote.
+- **Postponed:** a postponed vote goes back to `open` with the new `closesAt`, and earlier picks still count.
+- **One vote per initiative:** once its vote has happened, an initiative stays `decided`. If the same initiative comes back for another vote (e.g. the final vote after the one na generalidade), it isn't reopened.
+
 ### `PUT /predictions/:initiativeId`
 
 `{ "pick": "pass" | "fail" }` → `{ "pick": "pass", "split": { "pass": 12, "fail": 7 } }`.

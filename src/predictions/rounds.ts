@@ -1,7 +1,7 @@
 import { eq, sql } from "drizzle-orm";
 import type { Db } from "../db/client.js";
-import { forumThreads, voteRounds } from "../db/schema.js";
-import { OPEN_FOR_PREDICTION } from "./index.js";
+import { type VoteRecord, forumThreads, initiatives, voteRounds } from "../db/schema.js";
+import { OPEN_FOR_PREDICTION, settle } from "./index.js";
 
 /*
  * When "Passa ou chumba?" opens: only for initiatives named in a plenary agenda within the next
@@ -18,6 +18,16 @@ const PINNED_AFTER_DAYS = 2;
 /** The megathread's poster: the team, not a reader. */
 export const TEAM_POSTER = "redacao";
 
+/** True when this agenda event (aliased `e`) names the initiative ("Projeto de Lei n.º 512/XVII/2.ª"). */
+export const AGENDA_NAMES_INITIATIVE = sql`e.source = 'parliament' and e.kind = 'parliament' and not e.hidden and e.status = 'scheduled'
+  and strpos(coalesce(e.summary, '') || ' ' || e.title, initiatives.type || ' n.º ' || initiatives.number || '/' || initiatives.legislature) > 0`;
+
+/** The deciding vote that settled a round (the first one from the day it opened), if it happened. */
+export const roundVote = (openedAt: Date, votes: VoteRecord[]) => {
+  const result = settle({ pick: "pass", updatedAt: openedAt }, { votes, open: true });
+  return result?.voteDate ? { voteDate: result.voteDate, voteResult: result.voteResult } : null;
+};
+
 const lisbonDate = (instant: Date) =>
   instant.toLocaleDateString("pt-PT", { timeZone: "Europe/Lisbon", weekday: "long", day: "numeric", month: "long" });
 
@@ -28,9 +38,8 @@ export const openVoteRounds = async (db: Db, now = new Date()) => {
     await db.execute<{ id: number; type: string; number: string; title: string; event_id: string; starts_at: Date | string }>(sql`
       select distinct on (initiatives.id) initiatives.id, initiatives.type, initiatives.number, initiatives.title, e.id as event_id, e.starts_at
       from initiatives
-      join agenda_events e on e.source = 'parliament' and e.kind = 'parliament' and not e.hidden and e.status = 'scheduled'
+      join agenda_events e on ${AGENDA_NAMES_INITIATIVE}
         and e.starts_at > ${now.toISOString()}::timestamptz and e.starts_at <= ${until.toISOString()}::timestamptz
-        and strpos(coalesce(e.summary, '') || ' ' || e.title, initiatives.type || ' n.º ' || initiatives.number || '/' || initiatives.legislature) > 0
       where initiatives.status = 'in_progress' and ${OPEN_FOR_PREDICTION}
       order by initiatives.id, e.starts_at`)
   ).rows;
@@ -42,6 +51,10 @@ export const openVoteRounds = async (db: Db, now = new Date()) => {
     const [round] = await db.select().from(voteRounds).where(eq(voteRounds.initiativeId, c.id));
     if (round && round.closesAt > now) continue;
     if (round) {
+      // Already settled (its vote happened): it stays as history. Predictions are one per reader
+      // per initiative, so a later vote on the same initiative doesn't reopen it.
+      const [initiative] = await db.select({ votes: initiatives.votes }).from(initiatives).where(eq(initiatives.id, c.id));
+      if (roundVote(round.openedAt, initiative?.votes ?? [])) continue;
       // The vote didn't happen on the day (postponed): it reopens for the new date.
       await db.update(voteRounds).set({ agendaEventId: c.event_id, closesAt: startsAt }).where(eq(voteRounds.initiativeId, c.id));
       if (round.threadId) await db.update(forumThreads).set({ pinned: true }).where(eq(forumThreads.id, round.threadId));

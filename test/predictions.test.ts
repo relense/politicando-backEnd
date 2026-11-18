@@ -133,4 +133,52 @@ describe("Passa ou chumba?", () => {
     // Decided: can't be changed or taken back.
     expect((await call("PUT", "/predictions/1", ana, { pick: "fail" })).statusCode).toBe(409);
   });
+
+  it("answers the initiative page's box in every state, and keeps it as history", async () => {
+    await initiative(1);
+    await initiative(2);
+    expect((await call("GET", "/predictions/1")).statusCode).toBe(404);
+
+    // On an agenda 10 days out: upcoming, opening 7 days before.
+    await plenary("far", 10, [1]);
+    const upcoming = (await call("GET", "/predictions/1")).json();
+    expect(upcoming).toMatchObject({ state: "upcoming", threadId: null, split: null, myPick: null });
+    expect(new Date(upcoming.closesAt).getTime() - new Date(upcoming.opensAt).getTime()).toBe(7 * 86_400_000);
+
+    // Within the week: open. The split stays hidden until this reader picks.
+    await plenary("near", 2, [1]);
+    await openVoteRounds(db);
+    const ana = await register("ana");
+    const rui = await register("rui");
+    await call("PUT", "/predictions/1", rui, { pick: "fail" });
+    expect((await call("GET", "/predictions/1", ana)).json()).toMatchObject({ state: "open", myPick: null, split: null, threadId: expect.any(Number) });
+    await call("PUT", "/predictions/1", ana, { pick: "pass" });
+    expect((await call("GET", "/predictions/1", ana)).json()).toMatchObject({ state: "open", myPick: "pass", split: { pass: 1, fail: 1 } });
+    expect((await call("GET", "/predictions/1")).json()).toMatchObject({ split: null });
+
+    // The session started: closed, and everyone sees how readers picked.
+    await db.update(voteRounds).set({ openedAt: new Date(Date.now() - 4 * 86_400_000), closesAt: new Date(Date.now() - 3_600_000) });
+    expect((await call("GET", "/predictions/1")).json()).toMatchObject({ state: "closed", split: { pass: 1, fail: 1 }, voteResult: null });
+
+    // The vote comes in: decided, with this reader's outcome once settled.
+    const today = new Date().toISOString().slice(0, 10);
+    await db.update(initiatives).set({ status: "rejected", votes: [vote(today, "Rejeitado")] }).where(eq(initiatives.id, 1));
+    await db.update(predictions).set({ updatedAt: new Date(Date.now() - 2 * 86_400_000) });
+    await resolvePredictions(db);
+    expect((await call("GET", "/predictions/1", ana)).json()).toMatchObject({ state: "decided", voteDate: today, voteResult: "Rejeitado", myPick: "pass", outcome: "miss", split: { pass: 1, fail: 1 } });
+    expect((await call("GET", "/predictions/1", rui)).json()).toMatchObject({ outcome: "hit" });
+    expect((await call("GET", "/predictions/1")).json()).toMatchObject({ state: "decided", outcome: null, myPick: null });
+  });
+
+  it("doesn't reopen a vote that already happened when the initiative is back on the agenda", async () => {
+    await initiative(1);
+    await plenary("near", 2, [1]);
+    await openVoteRounds(db);
+    // Approved na generalidade (still waiting for the final vote), then on the agenda again.
+    await db.update(voteRounds).set({ openedAt: new Date(Date.now() - 5 * 86_400_000), closesAt: new Date(Date.now() - 86_400_000) });
+    await db.update(initiatives).set({ votes: [vote(new Date(Date.now() - 86_400_000).toISOString().slice(0, 10), "Aprovado")] }).where(eq(initiatives.id, 1));
+    expect(await openVoteRounds(db)).toMatchObject({ opened: 0, moved: 0 });
+    expect((await call("GET", "/predictions/1")).json()).toMatchObject({ state: "decided", voteResult: "Aprovado" });
+    expect((await call("GET", "/predictions/open")).json().items).toEqual([]);
+  });
 });
