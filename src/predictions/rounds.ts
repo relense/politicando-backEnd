@@ -88,7 +88,8 @@ export const openVoteRounds = async (db: Db, now = new Date()) => {
     const opensAt = new Date(startsAt.getTime() - OPEN_DAYS * DAY);
     const [round] = await db.select().from(voteRounds).where(eq(voteRounds.initiativeId, c.id));
     if (!round) {
-      await db.insert(voteRounds).values({ initiativeId: c.id, agendaEventId: c.event_id, opensAt, closesAt: startsAt }).onConflictDoNothing();
+      // A week before the session, or now when it reached the agenda later than that.
+      await db.insert(voteRounds).values({ initiativeId: c.id, agendaEventId: c.event_id, opensAt: opensAt < now ? now : opensAt, closesAt: startsAt }).onConflictDoNothing();
       scheduled++;
       continue;
     }

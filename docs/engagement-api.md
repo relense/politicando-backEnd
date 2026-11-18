@@ -90,6 +90,7 @@ nothing is coming up, so hide the block or say "Sem votações esta semana".
   { "id": 4123, "type": "Projeto de Lei", "number": "512", "title": "…",
     "plain": { "title": "…", "typeLabel": "Lei", "typeExplainer": "…" },
     "topics": [{ "slug": "habitacao", "label": "Habitação" }],
+    "voteLabel": "votação na generalidade", "author": "Governo", "replyCount": 48,
     "phase": "Discussão generalidade", "phaseDate": "2026-11-12",
     "state": "open", "opensAt": "2026-11-13T15:00:00.000Z", "closesAt": "2026-11-20T15:00:00.000Z",
     "count": 1842, "threadId": 88, "myPick": null, "split": null }
@@ -97,7 +98,15 @@ nothing is coming up, so hide the block or say "Sem votações esta semana".
 ```
 
 - **`state`:** `open`, or `upcoming` (only with `upcoming=true`).
-- **`opensAt` → `closesAt`:** the agenda bar ("entrou na agenda segunda → fecha quando a sessão começa"). Picks open exactly at `opensAt`.
+- **`opensAt` → `closesAt`:** the agenda bar ("entrou na agenda segunda → fecha quando a sessão começa"). Picks open exactly at `opensAt`: a week before the session, or the moment it reached the agenda when that was later (agendas often come out only days before).
+- **`voteLabel`:** what gets voted, for "O que se vota: …". It's our reading by rule (parliament doesn't say in advance):
+  - "votação final global" once approved na generalidade
+  - "votação na generalidade" for bills
+  - "votação" otherwise
+
+  `phase` is only the latest step (e.g. "Parecer da ALRAM", the Madeira assembly's opinion), which is **not** what gets voted.
+- **`author`:** for the subline: "Governo", a regional assembly, or the parties that signed it ("PS, Livre"). Null when only deputies signed it.
+- **`replyCount`:** replies in the megathread ("48 respostas"). 0 while upcoming.
 - **`count`:** how many readers picked so far ("1 842 previsões até agora"). It's the number only, with no split, so it can't steer anyone. 0 while upcoming.
 - **`split`** (`{pass, fail}`) is **null until this reader has picked**, so the crowd can't steer them. Show it after they pick.
 - **`threadId`:** the vote's megathread, created when picks open (null while upcoming). Link it from the card ("Defende a tua escolha").
@@ -124,7 +133,8 @@ had a vote open and none is on the agenda: then show no box.
 | `closed` | The session started; the result comes with the 04:00 sync | "As previsões fecharam", plus how readers picked |
 | `decided` | Settled | The result, how readers picked, the reader's hit or miss, and "Ver a discussão da votação →" |
 
-- **`opensAt`:** when picks open(ed), in every state. **`count`:** how many picked (0 while upcoming).
+- **`opensAt`:** when picks open(ed), in every state. **`count`:** how many picked (0 while upcoming). Also `voteLabel`, `author` and `replyCount`, as on the open list. Once decided, `voteLabel` is the vote that settled it.
+- **`tally`** (decided by a vote; null otherwise): `{ unanimous, favor, against, abstention }`, each a list of `{ party, count }` (`party` is the acronym; `count` is set when only part of a group voted that way). Parliament records votes **by group, not deputy totals**, so write "Aprovado com os votos a favor de PSD e CDS-PP, contra do PS", not "41 votos a favor".
 - **`split`:** while `open`, only once this reader has picked (the same rule as the open list). From `closed` on, for everyone, anonymous readers included.
 - **`myPick` and `outcome`:** the logged-in reader's own. Both are null when anonymous.
 - **`voteResult`:** null for a `decided` vote settled without a vote (withdrawn, not admitted). Say it was decided without a vote.
@@ -164,6 +174,7 @@ had a vote open and none is on the agenda: then show no box.
 - **`outcome`:** `hit`, `miss`, `void`, or null while waiting.
 - **`void`:** no vote settled it (withdrawn, not admitted, "Prejudicado"). Don't count it either way.
 - **`streak`:** hits in a row, latest first. Show it only to the reader ("3 seguidas!").
+- **`tally`** on each settled item, as on the box.
 - **`topics`** on each item (`[{slug, label}]`, possibly empty): group by topic for "Acertas mais em habitação (4 de 4) do que em economia (1 de 3)". An initiative can have several topics.
 
 **Question wording:** "Passa na votação?" The vote is often the one na generalidade, not the final one.

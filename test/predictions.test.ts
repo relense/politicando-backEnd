@@ -61,7 +61,7 @@ describe("settling a prediction", () => {
 describe("Passa ou chumba?", () => {
   it("opens only votes on the agenda within the week, each with a megathread where picks show", async () => {
     await initiative(1);
-    await initiative(2);
+    await initiative(2, { otherAuthor: "Governo" });
     await initiative(3);
     await initiative(4, { status: "approved", phase: "Votação final global" });
     await plenary("soon", 2, [2, 4]);
@@ -76,8 +76,11 @@ describe("Passa ou chumba?", () => {
       expect.objectContaining({
         id: 2, state: "open", count: 0, myPick: null, split: null, threadId: expect.any(Number), closesAt: expect.any(String), opensAt: expect.any(String),
         plain: expect.objectContaining({ typeLabel: expect.any(String), typeExplainer: expect.any(String) }), topics: [],
+        voteLabel: "votação na generalidade", author: "Governo", replyCount: 0,
       }),
     ]);
+    // On the agenda only 2 days ahead: it opened when we saw it, not "a week before".
+    expect(Math.abs(new Date(open[0].opensAt).getTime() - Date.now())).toBeLessThan(60_000);
     const week = (await call("GET", "/predictions/open?upcoming=true")).json().items;
     expect(week.map((i: { id: number; state: string }) => [i.id, i.state])).toEqual([[2, "open"], [3, "upcoming"]]);
     expect(week[1]).toMatchObject({ count: 0, threadId: null, split: null });
@@ -173,10 +176,15 @@ describe("Passa ou chumba?", () => {
 
     // The vote comes in: decided, with this reader's outcome once settled.
     const today = new Date().toISOString().slice(0, 10);
-    await db.update(initiatives).set({ status: "rejected", votes: [vote(today, "Rejeitado")] }).where(eq(initiatives.id, 1));
+    await db.update(initiatives).set({ status: "rejected", votes: [{ ...vote(today, "Rejeitado"), favor: [{ party: "ps", count: null }], against: [{ party: "XYZ", count: 3 }] }] }).where(eq(initiatives.id, 1));
     await db.update(predictions).set({ updatedAt: new Date(Date.now() - 2 * 86_400_000) });
     await resolvePredictions(db);
-    expect((await call("GET", "/predictions/1", ana)).json()).toMatchObject({ state: "decided", voteDate: today, voteResult: "Rejeitado", myPick: "pass", outcome: "miss", split: { pass: 1, fail: 1 } });
+    expect((await call("GET", "/predictions/1", ana)).json()).toMatchObject({
+      state: "decided", voteDate: today, voteResult: "Rejeitado", myPick: "pass", outcome: "miss", split: { pass: 1, fail: 1 },
+      voteLabel: "votação na generalidade",
+      tally: { unanimous: false, favor: [{ party: "PS", count: null }], against: [{ party: "XYZ", count: 3 }], abstention: [] },
+    });
+    expect((await call("GET", "/me/predictions", ana)).json().items[0].tally).toMatchObject({ favor: [{ party: "PS" }] });
     expect((await call("GET", "/predictions/1", rui)).json()).toMatchObject({ outcome: "hit" });
     expect((await call("GET", "/predictions/1")).json()).toMatchObject({ state: "decided", outcome: null, myPick: null });
   });
