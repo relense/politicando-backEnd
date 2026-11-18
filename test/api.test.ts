@@ -560,6 +560,8 @@ describe("platform", () => {
       "/api/v2/places",
       "/api/v2/places/locate",
       "/api/v2/places/{key}",
+      "/api/v2/podcast",
+      "/api/v2/podcast/latest",
       "/api/v2/president",
       "/api/v2/reports",
       "/api/v2/sitemap",

@@ -42,6 +42,7 @@ import { peopleRoutes } from "./modules/people/routes.js";
 import { electionRoutes } from "./modules/elections/routes.js";
 import { governmentRoutes } from "./modules/government/routes.js";
 import { parliamentRoutes } from "./modules/parliament/routes.js";
+import { podcastRoutes } from "./modules/podcast/routes.js";
 import { presidencyRoutes } from "./modules/presidency/routes.js";
 import { partyRoutes } from "./modules/parties/routes.js";
 
@@ -201,6 +202,7 @@ export const buildApp = async ({
       await api.register(seoRoutes(db));
       await api.register(placeRoutes(db));
       await api.register(localOfficialRoutes(db));
+      await api.register(podcastRoutes(db));
       await api.register(forumRoutes({ db, verifyRecaptcha, forumSecret, createLimitPerMinute: commentLimitPerMinute }));
       await api.register(caseRoutes(db));
       await api.register(

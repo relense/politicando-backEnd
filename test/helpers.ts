@@ -13,7 +13,7 @@ export const resetDb = async (db: Db) => {
       government_members, governments, article_presidents, presidents, election_results, election_turnout,
       election_lists, elections, contract_parties, contracts, contract_imports, places, deputies, audit_log,
       admin_sessions, admins, case_people, case_events, case_sources, cases, interests, reports, forum_posts,
-      forum_threads, editorial_posts, newsletter_subscribers, stories restart identity cascade`,
+      forum_threads, editorial_posts, newsletter_subscribers, stories, podcast_episodes restart identity cascade`,
   );
   await seedParties(db);
 };

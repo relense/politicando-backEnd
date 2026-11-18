@@ -1207,3 +1207,19 @@ export const corrections = pgTable(
   },
   (table) => [index("corrections_date_idx").on(table.date.desc(), table.id.desc())],
 );
+
+/** Our podcast's episodes on Spotify, as the hourly ingest finds them (newest first, from the first one seen). */
+export const podcastEpisodes = pgTable(
+  "podcast_episodes",
+  {
+    /** Spotify's episode id: open.spotify.com/episode/<id>. */
+    id: text().primaryKey(),
+    title: text().notNull(),
+    publishedAt: timestamp("published_at", { withTimezone: true }).notNull(),
+    durationSeconds: integer("duration_seconds"),
+    imageUrl: text("image_url"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("podcast_episodes_published_idx").on(table.publishedAt.desc())],
+);
