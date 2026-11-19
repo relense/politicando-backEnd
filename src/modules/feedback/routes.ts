@@ -76,7 +76,7 @@ const correctionInput = z.object({
     .max(1000)
     .nullable()
     .transform((value) => value || null)
-    .refine((value) => value === null || value.startsWith("/") || /^https?:\/\//.test(value), "A path on the site (/…) or an http(s) link"),
+    .refine((value) => value === null || /^\/(?![/\\])/.test(value) || /^https?:\/\//.test(value), "A path on the site (/…) or an http(s) link"),
 });
 
 const adminMessageSchema = z.object({

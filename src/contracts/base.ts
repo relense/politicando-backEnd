@@ -140,8 +140,14 @@ const str = (value: unknown) => {
   return trimmed === "" ? null : trimmed;
 };
 const num = (value: unknown) => {
-  const n = typeof value === "string" ? Number(value.replace(",", ".")) : value;
+  // "1234.56", "1234,56" and the Portuguese "1.234,56" (dots group thousands when a comma follows).
+  const n = typeof value === "string" ? Number((value.includes(",") ? value.replace(/\./g, "") : value).replace(",", ".")) : value;
   return typeof n === "number" && Number.isFinite(n) ? n : null;
+};
+/** Whole days for the integer column (a "30.5" would fail the whole batch). */
+const days = (value: unknown) => {
+  const n = num(value);
+  return n === null || n < 0 || n > 2_147_483_647 ? null : Math.round(n);
 };
 const isoDate = (value: unknown) => {
   const s = str(value);
@@ -201,7 +207,7 @@ export const parseContract = (value: unknown): ParsedContract | null => {
     signedAt: isoDate(r.dataCelebracaoContrato),
     cpv: mainCpv ? str(mainCpv.cpvID) : null,
     cpvDescription: mainCpv ? str(mainCpv.cpvdescricao) : null,
-    deadlineDays: num(r.prazoExecucao),
+    deadlineDays: days(r.prazoExecucao),
     places: [...new Set(array(r.localExecucao).flatMap((p) => str(p) ?? []))],
     legalBasis: str(r.fundamentacao),
     directAwardReason: str(r.fundamentAjusteDireto),

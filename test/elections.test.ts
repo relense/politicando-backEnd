@@ -307,6 +307,17 @@ describe("importElection on the newest platform", () => {
 
     const candidates = await get("/elections/autarquicas-2025/candidates?place=LOCAL-010100");
     expect(candidates.status).toBe(200);
+
+    // A district's file failing to download changes nothing, rather than deleting its mayors.
+    const broken = v3SiteFiles();
+    delete broken[v3Urls(AUTARQUICAS_2025).mayors(1, 2, 1)];
+    await expect(importMayors(db, sourceFor(broken).source, AUTARQUICAS_2025)).rejects.toThrow(/nothing was changed/);
+    expect((await get("/places/LOCAL-010100")).body.mayor).toEqual(mayor);
+  });
+
+  it("serves a second round by its id", async () => {
+    expect((await get("/elections/presidenciais-2026-2a-volta")).status).not.toBe(400);
+    expect((await get("/elections/presidenciais-2026-2a-volta/candidates")).status).not.toBe(400);
   });
 });
 

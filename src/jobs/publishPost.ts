@@ -23,6 +23,7 @@ const response = await fetch(`${api}/api/v2/publish`, {
   method: "POST",
   headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
   body: JSON.stringify({ markdown: await readFile(file, "utf8"), draft: args.includes("--draft") }),
+  signal: AbortSignal.timeout(60_000),
 });
 type Answer = { slug: string; status: string; created: boolean; changed: boolean; url: string; error?: { message: string } };
 const body = (await response.json().catch(() => null)) as Answer | null;

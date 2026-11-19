@@ -225,10 +225,10 @@ export const adminRoutes =
           summary: "Comments, newest first, to moderate",
           querystring: z.object({
             status: z.enum(["visible", "hidden", "all"]).default("visible"),
-            articleId: z.coerce.number().int().positive().optional(),
-            postId: z.coerce.number().int().positive().optional().describe("An editorial post's id"),
-            storyId: z.coerce.number().int().positive().optional().describe("Comments made on a story"),
-            before: z.coerce.number().int().positive().optional().describe("Comments with a smaller id (the last id of the previous page)"),
+            articleId: z.coerce.number().int().positive().max(2_147_483_647).optional(),
+            postId: z.coerce.number().int().positive().max(2_147_483_647).optional().describe("An editorial post's id"),
+            storyId: z.coerce.number().int().positive().max(2_147_483_647).optional().describe("Comments made on a story"),
+            before: z.coerce.number().int().positive().max(2_147_483_647).optional().describe("Comments with a smaller id (the last id of the previous page)"),
             limit: z.coerce.number().int().min(1).max(100).default(50),
           }),
           response: { 200: z.object({ items: z.array(moderatedComment) }), ...errors },
@@ -307,7 +307,7 @@ export const adminRoutes =
           querystring: z.object({
             entity: z.string().max(50).optional(),
             entityId: z.string().max(50).optional(),
-            before: z.coerce.number().int().positive().optional(),
+            before: z.coerce.number().int().positive().max(2_147_483_647).optional(),
             limit: z.coerce.number().int().min(1).max(100).default(50),
           }),
           response: {

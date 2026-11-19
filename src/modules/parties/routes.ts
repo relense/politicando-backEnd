@@ -242,7 +242,8 @@ export const partyRoutes =
           .where(gt(sql`jsonb_array_length(${initiatives.votes})`, 0));
         const votes = rows
           .flatMap((r) => r.votes.filter((v) => phase === "all" || DECIDING_VOTES.has(v.phase)).map((v) => ({ initiative: r.id, legislature: r.legislature, v })))
-          .sort((a, b) => b.v.date.localeCompare(a.v.date) || Number(b.v.id) - Number(a.v.id));
+          // A total order, so page N is the same page on every request.
+          .sort((a, b) => b.v.date.localeCompare(a.v.date) || String(b.v.id).localeCompare(String(a.v.id), "en", { numeric: true }) || b.initiative - a.initiative);
 
         const summary = { total: votes.length, favor: 0, against: 0, abstention: 0, absent: 0, unknown: 0, split: 0 };
         const others = (await db.select({ slug: parties.slug, acronym: parties.acronym }).from(parties).where(gt(parties.assemblySeats, 0)).orderBy(desc(parties.assemblySeats)))

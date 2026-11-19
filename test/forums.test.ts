@@ -115,6 +115,23 @@ describe("moderation", () => {
     expect((await call("POST", "/admin/forum/threads/999/hide", undefined, { cookie })).status).toBe(404);
   });
 
+  it("counts a reader once whether logged in or not, and keeps team names for the team", async () => {
+    const { body: thread } = await openThread();
+    const register = await app.inject({
+      method: "POST", url: "/api/v2/auth/register", payload: { username: "zeca", password: "palavra-passe", recaptchaToken: "t" }, remoteAddress: "3.3.3.3",
+    });
+    const cookie = `politicando_session=${register.cookies.find((c) => c.name === "politicando_session")!.value}`;
+    // Logged in, then logged out, from the same connection: one report, so nothing is hidden.
+    await call("POST", "/reports", { kind: "thread", id: thread.id, reason: "hate" }, { ...as("3.3.3.3"), cookie });
+    await call("POST", "/reports", { kind: "thread", id: thread.id, reason: "hate" }, as("3.3.3.3"));
+    expect((await call("GET", `/forums/threads/${thread.id}`)).status).toBe(200);
+
+    for (const nickname of ["Politicando", "Redação", "moderador", "Moderação", "A Equipa", "Admin1", "mod"]) {
+      expect((await openThread("ps", { nickname })).status).toBe(400);
+    }
+    for (const nickname of ["Zé Povinho", "Modesto"]) expect((await openThread("ps", { nickname })).status).toBe(201);
+  });
+
   it("queues reports per item, counts each reporter once, and resolves them", async () => {
     const { cookie } = await modCookie();
     const id = (await openThread()).body.id;

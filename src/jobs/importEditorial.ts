@@ -1,7 +1,9 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { loadDatabaseConfig } from "../config.js";
+import { eq } from "drizzle-orm";
 import { createDb } from "../db/client.js";
+import { editorialPosts } from "../db/schema.js";
 import { parseMarkdownPost, saveMarkdownPosts } from "../editorial/markdownFiles.js";
 
 /*
@@ -43,7 +45,16 @@ for (const file of files) {
 
 const { db, pool } = createDb(loadDatabaseConfig().DATABASE_URL);
 try {
+  const live = draft
+    ? new Set((await db.select({ slug: editorialPosts.slug }).from(editorialPosts).where(eq(editorialPosts.status, "published"))).map((r) => r.slug))
+    : new Set<string>();
   for (const post of await saveMarkdownPosts(db, posts, { authorName, publish: !draft })) {
+    if (live.has(post.slug)) {
+      // A draft never replaces a live post.
+      console.error(`${post.slug} is live: not changed. Unpublish it first, or publish the change.`);
+      process.exitCode = 1;
+      continue;
+    }
     console.log(JSON.stringify({ ...post, status: draft ? "draft" : "published" }));
   }
 } catch (error) {

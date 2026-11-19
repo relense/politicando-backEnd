@@ -319,16 +319,25 @@ export const predictionRoutes =
       {
         schema: {
           tags: ["predictions"],
-          summary: "Take a pending prediction back",
+          summary: "Take a prediction back, while the vote is still open",
           params: idParams,
-          response: { 204: z.null(), 401: errorSchema },
+          response: { 204: z.null(), 401: errorSchema, 409: errorSchema },
         },
       },
       async (request, reply) => {
         const reader = requireReader(request);
+        const { initiativeId } = request.params;
+        // Once the session starts the pick stands: otherwise a miss could be taken back before it's scored.
+        const [initiative] = await db.select({ open: sql<boolean>`${PREDICTABLE_NOW}` }).from(initiatives).where(eq(initiatives.id, initiativeId));
+        const [existing] = await db
+          .select({ outcome: predictions.outcome })
+          .from(predictions)
+          .where(and(eq(predictions.userId, reader.id), eq(predictions.initiativeId, initiativeId)));
+        if (!existing) return reply.status(204).send(null);
+        if (!initiative?.open || existing.outcome !== null) throw new ApiError(409, "closed", "The vote has started: the prediction stands");
         await db
           .delete(predictions)
-          .where(and(eq(predictions.userId, reader.id), eq(predictions.initiativeId, request.params.initiativeId), isNull(predictions.outcome)));
+          .where(and(eq(predictions.userId, reader.id), eq(predictions.initiativeId, initiativeId), isNull(predictions.outcome)));
         return reply.status(204).send(null);
       },
     );
@@ -372,8 +381,12 @@ export const predictionRoutes =
           .orderBy(desc(predictions.updatedAt))
           .limit(500);
         const names = await acronyms();
+        const all =
+          rows.length < 500
+            ? rows
+            : await db.select({ outcome: predictions.outcome, resolvedAt: predictions.resolvedAt }).from(predictions).where(eq(predictions.userId, reader.id));
         return {
-          record: record(rows),
+          record: record(all),
           items: rows.map((r) => ({
             initiativeId: r.initiativeId,
             title: r.title,

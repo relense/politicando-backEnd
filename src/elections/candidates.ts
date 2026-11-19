@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import { deputies, electionCandidates, parties, places } from "../db/schema.js";
 import { nameKey } from "../government/sync.js";
@@ -73,10 +73,12 @@ export const importCandidates = async (db: Db, source: ElectionSource, election:
   if (!hasCandidates(election)) return { circles: 0, candidates: 0, linked: 0, missing: 0 };
 
   // Legislativas: one file per círculo (districts, the islands, Europe, outside Europe).
+  const children = election.organs[0] === "AR" ? await json(source, maiUrls(election).children("LOCAL-500000")) : null;
+  if (election.organs[0] === "AR" && children === null) throw new Error(`${election.id}: could not download the list of círculos; nothing was changed`);
   const territories: (string | null)[] =
     election.organs[0] === "AR"
       ? [
-          ...parseChildren(await json(source, maiUrls(election).children("LOCAL-500000"))).map((c) => c.key),
+          ...parseChildren(children).map((c) => c.key),
           "FOREIGN-800000",
           "FOREIGN-900000",
         ].filter((key) => levelOf(key) === "district" || key.startsWith("FOREIGN-"))
@@ -85,20 +87,26 @@ export const importCandidates = async (db: Db, source: ElectionSource, election:
   const circles: ParsedCircle[] = [];
   let missing = 0;
   for (const territory of territories) {
+    // A círculo counts only when all its pages came through; a partial one keeps its old lists.
+    const own: ParsedCircle[] = [];
+    let complete = true;
     let pages = 1;
     for (let page = 1; page <= pages; page++) {
       const raw = await json(source, candidatesUrl(election, territory, page));
       if (raw === null) {
         missing++;
+        complete = false;
         break;
       }
       const parsed = parseCandidates(raw);
       pages = parsed.pages;
-      for (const circle of parsed.circles) {
-        const seen = circles.find((c) => c.territoryKey === circle.territoryKey);
-        if (seen) seen.lists.push(...circle.lists);
-        else circles.push(circle);
-      }
+      own.push(...parsed.circles);
+    }
+    if (!complete) continue;
+    for (const circle of own) {
+      const seen = circles.find((c) => c.territoryKey === circle.territoryKey);
+      if (seen) seen.lists.push(...circle.lists);
+      else circles.push(circle);
     }
   }
 
@@ -142,7 +150,10 @@ export const importCandidates = async (db: Db, source: ElectionSource, election:
         .values({ key: circle.territoryKey, name: circle.territoryName, level: levelOf(circle.territoryKey), parentKey: null })
         .onConflictDoNothing();
     }
-    await tx.delete(electionCandidates).where(eq(electionCandidates.electionId, election.id));
+    // A círculo whose file didn't come through keeps the lists it had.
+    const read = circles.map((c) => c.territoryKey);
+    if (missing === 0) await tx.delete(electionCandidates).where(eq(electionCandidates.electionId, election.id));
+    else if (read.length > 0) await tx.delete(electionCandidates).where(and(eq(electionCandidates.electionId, election.id), inArray(electionCandidates.placeKey, read)));
     for (let i = 0; i < rows.length; i += 1000) {
       await tx.insert(electionCandidates).values(rows.slice(i, i + 1000)).onConflictDoNothing();
     }

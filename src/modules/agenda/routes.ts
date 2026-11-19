@@ -18,7 +18,13 @@ export const DISTRICTS = [
 
 const kindSchema = z.enum(AGENDA_KINDS);
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
-const DAY_TIME = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})$/;
+const DAY_TIME = /^(\d{4}-\d{2}-\d{2})T((?:[01]\d|2[0-3]):[0-5]\d)$/;
+/** A day that exists ("2026-02-31" doesn't: Date.UTC would quietly make it 3 March). */
+const realDay = (value: string) => {
+  const date = new Date(`${value}T00:00:00Z`);
+  return DAY.test(value) && !Number.isNaN(date.getTime()) && date.toISOString().startsWith(value);
+};
+const daySchema = z.string().regex(DAY).refine(realDay, "Not a real day");
 
 const placeSchema = z.object({
   name: z.string(),
@@ -101,8 +107,8 @@ const inputSchema = z
   .superRefine((input, ctx) => {
     const shape = input.allDay ? DAY : DAY_TIME;
     const want = input.allDay ? '"2026-11-21"' : '"2026-11-17T15:00"';
-    if (!shape.test(input.start)) ctx.addIssue({ code: "custom", path: ["start"], message: `Use ${want}` });
-    if (input.end !== null && !shape.test(input.end)) ctx.addIssue({ code: "custom", path: ["end"], message: `Use ${want}` });
+    if (!shape.test(input.start) || !realDay(input.start.slice(0, 10))) ctx.addIssue({ code: "custom", path: ["start"], message: `Use ${want}` });
+    if (input.end !== null && (!shape.test(input.end) || !realDay(input.end.slice(0, 10)))) ctx.addIssue({ code: "custom", path: ["end"], message: `Use ${want}` });
     if (input.end !== null && input.end < input.start) ctx.addIssue({ code: "custom", path: ["end"], message: "Ends before it starts" });
   });
 
@@ -149,7 +155,7 @@ export const agendaRoutes =
           tags: ["agenda"],
           summary: "The political calendar: what hasn't ended yet, soonest first",
           querystring: z.object({
-            from: z.string().regex(DAY).optional().describe("A day; default today in Lisbon"),
+            from: daySchema.optional().describe("A day; default today in Lisbon"),
             kind: commaList(AGENDA_KINDS).optional().describe(`One or more, comma-separated: ${AGENDA_KINDS.join(", ")}`),
             district: z.enum(DISTRICTS).optional(),
             open: z.enum(["true", "false"]).optional().describe("true: only events the public can attend"),
@@ -246,7 +252,7 @@ export const agendaRoutes =
           tags: ["admin"],
           summary: "Events from a day on (default today), hidden ones included, soonest first",
           querystring: z.object({
-            from: z.string().regex(DAY).optional(),
+            from: daySchema.optional(),
             source: z.enum(["parliament", "president", "europarl", "editorial"]).optional(),
           }),
           response: { 200: z.object({ items: z.array(adminItemSchema) }), ...errors },

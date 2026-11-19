@@ -1,5 +1,6 @@
 import { and, eq, gt, isNull, lte, sql } from "drizzle-orm";
 import type { Db } from "../db/client.js";
+import { endOfLisbonDay, lisbonDay } from "../agenda/time.js";
 import { type VoteRecord, forumThreads, initiatives, voteRounds } from "../db/schema.js";
 import { OPEN_FOR_PREDICTION, settle } from "./index.js";
 
@@ -105,8 +106,12 @@ export const openVoteRounds = async (db: Db, now = new Date()) => {
     const [initiative] = await db.select({ votes: initiatives.votes }).from(initiatives).where(eq(initiatives.id, c.id));
     if (roundVote(round.openedAt, initiative?.votes ?? [])) continue;
     // The vote didn't happen on the day (postponed): it reopens for the new date (now, if that's within the week).
-    await db.update(voteRounds).set({ agendaEventId: c.event_id, opensAt: opensAt < now ? now : opensAt, closesAt: startsAt }).where(eq(voteRounds.initiativeId, c.id));
-    if (round.threadId) await db.update(forumThreads).set({ pinned: true }).where(eq(forumThreads.id, round.threadId));
+    // Never before the old session's day is over: its votes reach us only with the next parliament
+    // sync, and a pick made that day would be scored against a result already in the news.
+    const dayAfter = endOfLisbonDay(lisbonDay(round.closesAt));
+    const reopensAt = [opensAt, now, dayAfter].reduce((a, b) => (a > b ? a : b));
+    if (reopensAt >= startsAt) continue;
+    await db.update(voteRounds).set({ agendaEventId: c.event_id, opensAt: reopensAt, closesAt: startsAt }).where(eq(voteRounds.initiativeId, c.id));
     moved++;
   }
 
@@ -116,6 +121,10 @@ export const openVoteRounds = async (db: Db, now = new Date()) => {
     .from(voteRounds)
     .where(and(isNull(voteRounds.threadId), lte(voteRounds.opensAt, now), gt(voteRounds.closesAt, now)));
   for (const { id } of due) await ensureThread(db, id);
+  // An open vote's megathread is pinned (again, for a postponed vote, once picks reopen).
+  await db.execute(sql`
+    update forum_threads set pinned = true
+    where not pinned and id in (select thread_id from vote_rounds where opens_at <= ${now.toISOString()}::timestamptz and closes_at > ${now.toISOString()}::timestamptz)`);
 
   // A couple of days after the vote, its megathread steps down (it stays open for the aftermath).
   const unpinned = await db.execute(sql`

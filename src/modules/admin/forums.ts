@@ -134,7 +134,7 @@ export const adminForumRoutes =
         schema: {
           tags: ["admin"],
           summary: "Close every open report on one item: hide it, or dismiss the reports",
-          body: z.object({ kind: kindSchema, targetId: z.number().int().positive(), action: z.enum(["hide", "dismiss"]) }),
+          body: z.object({ kind: kindSchema, targetId: z.number().int().positive().max(2_147_483_647), action: z.enum(["hide", "dismiss"]) }),
           response: { 200: z.object({ resolved: z.number() }), ...errors },
         },
       },

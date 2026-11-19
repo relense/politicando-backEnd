@@ -1,3 +1,4 @@
+import { RESERVED } from "../../accounts/reserved.js";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
@@ -47,10 +48,6 @@ import { errorSchema } from "../shared.js";
 const MAX_INT = 2_147_483_647;
 /** The same caps the site keeps in the browser. */
 export const CAPS = { saved: 500, hidden: 500, muted: 50, read: 200 } as const;
-const RESERVED = new Set([
-  "admin", "administrador", "administrator", "moderador", "moderator", "mod", "politicando", "redacao", "equipa", "staff",
-  "suporte", "support", "root", "sistema", "system", "anonimo", "anonymous", "apagado", "deleted", "null", "undefined",
-]);
 /** Failed logins for one username before it's locked for a while. */
 const LOCK_AFTER = 10;
 const LOCK_MINUTES = 15;
@@ -240,7 +237,8 @@ export const accountRoutes =
         const ok = await verifyPassword(password, user?.passwordHash ?? DUMMY_HASH);
         if (!user || !ok || user.disabledAt) {
           const count = (lock && lock.until > Date.now() ? lock.count : 0) + 1;
-          if (failures.size > 10_000) failures.clear();
+          // Bounded: drop the oldest names, never everyone's lock at once.
+          if (failures.size > 10_000) for (const old of [...failures.keys()].slice(0, 1_000)) failures.delete(old);
           failures.set(name, { count, until: Date.now() + LOCK_MINUTES * 60_000 });
           throw new ApiError(401, "invalid_credentials", "Wrong username or password");
         }
@@ -421,7 +419,10 @@ export const accountRoutes =
             .from(userSaves)
             .innerJoin(comments, and(eq(comments.id, userSaves.targetId), sql`${comments.hiddenAt} is null`))
             .leftJoin(editorialPosts, eq(editorialPosts.id, comments.editorialPostId))
-            .where(saved("comment"))
+            // Only while what it's on is still up: a hidden article, an empty story, an unpublished post.
+            .where(and(saved("comment"), sql`(${comments.articleId} is null or exists (select 1 from articles a where a.id = ${comments.articleId} and a.hidden_at is null))
+              and (${comments.storyId} is null or exists (select 1 from articles a where a.story_id = ${comments.storyId} and a.hidden_at is null))
+              and (${comments.editorialPostId} is null or ${editorialPosts.status} = 'published')`))
             .orderBy(desc(userSaves.createdAt)),
           db
             .select({ savedAt: userSaves.createdAt, id: forumThreads.id, board: forumThreads.board, title: forumThreads.title, nickname: forumThreads.nickname, score: forumThreads.score, replyCount: forumThreads.replyCount, createdAt: forumThreads.createdAt })

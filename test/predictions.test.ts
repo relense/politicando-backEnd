@@ -4,6 +4,7 @@ import { buildApp } from "../src/app.js";
 import { agendaEvents, forumThreads, initiatives, notifications, predictions, voteRounds, type VoteRecord } from "../src/db/schema.js";
 import { record, resolvePredictions, settle } from "../src/predictions/index.js";
 import { openVoteRounds } from "../src/predictions/rounds.js";
+import { endOfLisbonDay, lisbonDay } from "../src/agenda/time.js";
 import { createTestDb, resetDb } from "./helpers.js";
 
 const { db, pool } = createTestDb();
@@ -187,6 +188,32 @@ describe("Passa ou chumba?", () => {
     expect((await call("GET", "/me/predictions", ana)).json().items[0].tally).toMatchObject({ favor: [{ party: "PS" }] });
     expect((await call("GET", "/predictions/1", rui)).json()).toMatchObject({ outcome: "hit" });
     expect((await call("GET", "/predictions/1")).json()).toMatchObject({ state: "decided", outcome: null, myPick: null });
+  });
+
+  it("lets a pick be taken back only while open, and reopens a postponed vote no earlier than the next day", async () => {
+    await initiative(1);
+    await plenary("near", 2, [1]);
+    await openVoteRounds(db);
+    const ana = await register("ana");
+    await call("PUT", "/predictions/1", ana, { pick: "pass" });
+    expect((await call("DELETE", "/predictions/1", ana)).statusCode).toBe(204);
+    await call("PUT", "/predictions/1", ana, { pick: "pass" });
+
+    // The session has started (its result may already be in the news): the pick stands.
+    const started = new Date(Date.now() - 60_000);
+    await db.update(voteRounds).set({ closesAt: started });
+    expect((await call("DELETE", "/predictions/1", ana)).statusCode).toBe(409);
+    expect(await db.select().from(predictions)).toHaveLength(1);
+
+    // Still on next week's agenda, with no vote recorded yet: it reopens, but only once that day is over.
+    expect(await openVoteRounds(db)).toMatchObject({ moved: 1 });
+    const [round] = await db.select().from(voteRounds);
+    const dayAfter = endOfLisbonDay(lisbonDay(started));
+    // (Right after midnight the old day is already over, so it reopens at once.)
+    if (dayAfter.getTime() > Date.now()) {
+      expect(round!.opensAt).toEqual(dayAfter);
+      expect((await call("PUT", "/predictions/1", ana, { pick: "fail" })).statusCode).toBe(409);
+    } else expect(Math.abs(round!.opensAt.getTime() - Date.now())).toBeLessThan(60_000);
   });
 
   it("doesn't reopen a vote that already happened when the initiative is back on the agenda", async () => {

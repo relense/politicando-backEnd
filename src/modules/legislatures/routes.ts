@@ -153,9 +153,11 @@ export const legislatureRoutes =
         const counts = new Map(
           (
             await db.execute<{ legislature: string; n: number }>(sql`
-              select legislature, count(*)::int as n from past_initiatives group by legislature
-              union all
-              select legislature, count(*)::int from initiatives group by legislature`)
+              select legislature, sum(n)::int as n from (
+                select legislature, count(*) as n from past_initiatives group by legislature
+                union all
+                select legislature, count(*) from initiatives group by legislature
+              ) both_tables group by legislature`)
           ).rows.map((r) => [r.legislature, r.n]),
         );
         const governments = await historicGovernments(db);

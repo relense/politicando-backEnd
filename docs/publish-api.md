@@ -26,7 +26,9 @@ Headers: `Authorization: Bearer <key>`, `Content-Type: application/json`.
 - `markdown`: the whole `article.md`, the front matter included. Required keys are `slug` and
   `title`; also `subtitle`, `kind` (`article`, `opinion`, `podcast`, `interview`, `video`),
   `tags`, `cover` (an https image URL), `media_url` (Spotify, YouTube…) and `featured`.
-- `draft` (default `false`): store without publishing.
+- `draft` (default `false`): store without publishing. A draft never touches a post that's
+  live: for a published slug it answers **409 `already_published`** (unpublish first, or
+  publish the change).
 - `author` (default "Redação Politicando"): the byline.
 
 The answer:

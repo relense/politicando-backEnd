@@ -1,3 +1,4 @@
+import { looksLikeTeam } from "../../accounts/reserved.js";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import type { FastifyBaseLogger } from "fastify";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
@@ -30,7 +31,8 @@ const nickname = z
   .trim()
   .max(40)
   .nullish()
-  .transform((value) => value || null);
+  .transform((value) => value || null)
+  .refine((value) => value === null || !looksLikeTeam(value), "That name is the team's");
 const recaptchaToken = z.string().min(1).max(4_096).optional().describe("Anonymous posts only (when login isn't required)");
 const idParams = z.object({ id: z.coerce.number().int().positive().max(MAX_INT) });
 
@@ -352,11 +354,12 @@ export const forumRoutes =
         let quotedUserId: number | null = null;
         if (replyTo) {
           const [quoted] = await db
-            .select({ id: forumPosts.id, userId: forumPosts.userId })
+            .select({ id: forumPosts.id, userId: forumPosts.userId, hidden: sql<boolean>`${forumPosts.hiddenAt} is not null` })
             .from(forumPosts)
             .where(and(eq(forumPosts.id, replyTo), eq(forumPosts.threadId, threadId)));
           if (!quoted) throw new ApiError(400, "invalid_reply", "That post is not in this thread");
-          quotedUserId = quoted.userId;
+          // A moderated post can still be quoted, but its author isn't called back to it.
+          quotedUserId = quoted.hidden ? null : quoted.userId;
         }
         const poster = posterId(forumSecret, who.key, threadId);
         const id = await db.transaction(async (tx) => {
@@ -442,6 +445,7 @@ export const forumRoutes =
         },
       },
       async (request, reply) => {
+        // One report per connection, logged in or not: a reader can't count twice by logging out.
         const who = app.participant(request, "reports");
         const { kind, id, reason, details } = request.body;
         const table = kind === "thread" ? forumThreads : kind === "post" ? forumPosts : kind === "article" ? articles : comments;
@@ -449,7 +453,7 @@ export const forumRoutes =
         if (!found) throw notFound(kind === "thread" ? "Thread" : kind === "post" ? "Post" : kind === "article" ? "Article" : "Comment");
         await db
           .insert(reports)
-          .values({ kind, targetId: id, reason, details: details || null, reporter: reporterKey(forumSecret, who.key), userId: who.userId })
+          .values({ kind, targetId: id, reason, details: details || null, reporter: reporterKey(forumSecret, request.ip), userId: who.userId })
           .onConflictDoNothing();
         await autoModerate(db, kind, id);
         return reply.status(202).send(null);
