@@ -42,6 +42,7 @@ const storySourceSchema = z.object({
   title: z.string().describe("How this outlet headlined it"),
   url: z.string(),
   publishedAt: z.string(),
+  imageUrl: z.string().nullable().describe("This outlet's own photo for its article, or null"),
 });
 
 const storyTagSchema = z.object({
@@ -264,6 +265,7 @@ export const storyRoutes =
               title: a.title,
               url: a.url,
               publishedAt: a.publishedAt.toISOString(),
+              imageUrl: a.imageUrl ?? null,
             })),
             parties: byFrequency(list.map((a) => a.parties), (p) => p.slug),
             deputies: byFrequency(list.map((a) => a.deputies), (d) => d.id),

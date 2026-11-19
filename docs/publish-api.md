@@ -56,6 +56,24 @@ curl -X POST https://api.politicando.pt/api/v2/publish \
 From this repo there's also `npm run editorial:publish -- article.md [--draft]` (it reads
 `PUBLISH_API_KEY` from `.env`).
 
+## `POST /api/v2/publish/image`: a cover image
+
+Same header. Send a PNG or JPG up to 2 MB, either as the request body (`Content-Type:
+image/png` or `image/jpeg`) or as one multipart file:
+
+```sh
+curl -X POST https://api.politicando.pt/api/v2/publish/image \
+  -H "Authorization: Bearer $PUBLISH_API_KEY" -H "Content-Type: image/png" --data-binary @capa.png
+```
+
+- 200 `{ "url": "https://api.politicando.pt/media/<sha256>.png", "created": true }`. Put the
+  `url` in the article's `cover:` field.
+- **The same file always gets the same URL** (it's named by its content), so uploading it again
+  just answers `created: false`.
+- The URL is permanent and public, served with a year-long cache.
+- Errors: 401 `invalid_key`; 400 `invalid_image` (not a PNG or JPG, judged by its bytes); 413
+  `too_large`; 429 past 30 a minute.
+
 ## `POST /api/v2/publish/:slug/unpublish`
 
 Same header. Takes the post off the site (back to draft, no longer featured). 204, or 404 for

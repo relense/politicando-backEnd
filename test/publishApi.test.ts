@@ -84,6 +84,47 @@ describe("publishing by API key", () => {
     expect((await app.inject({ method: "GET", url: "/api/v2/editorial/teste-api" })).statusCode).toBe(404);
   });
 
+  it("stores a cover image once per content and serves it at a permanent URL", async () => {
+    const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from("conteúdo da imagem")]);
+    const upload = (body: Buffer, type = "image/png", key: string | null = KEY) =>
+      app.inject({ method: "POST", url: "/api/v2/publish/image", payload: body, headers: { "content-type": type, ...(key && { authorization: `Bearer ${key}` }) } });
+
+    expect((await upload(png, "image/png", null)).statusCode).toBe(401);
+    const first = await upload(png);
+    expect(first.statusCode).toBe(200);
+    const { url, created } = first.json();
+    expect(url).toMatch(/^http:\/\/localhost:4000\/media\/[0-9a-f]{64}\.png$/);
+    expect(created).toBe(true);
+    // The same file again: the same URL, nothing new stored.
+    expect((await upload(png)).json()).toEqual({ url, created: false });
+
+    const served = await app.inject({ method: "GET", url: new URL(url).pathname });
+    expect(served.statusCode).toBe(200);
+    expect(served.headers["content-type"]).toBe("image/png");
+    expect(served.headers["cache-control"]).toBe("public, max-age=31536000, immutable");
+    expect(served.rawPayload.equals(png)).toBe(true);
+    expect((await app.inject({ method: "GET", url: new URL(url).pathname.replace(".png", ".jpg") })).statusCode).toBe(404);
+    expect((await app.inject({ method: "GET", url: "/media/nope.png" })).statusCode).toBe(404);
+
+    // As a multipart file too, and JPG.
+    const jpg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.from("jpeg")]);
+    const boundary = "----politicando";
+    const form = Buffer.concat([
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="capa.jpg"\r\nContent-Type: image/jpeg\r\n\r\n`),
+      jpg,
+      Buffer.from(`\r\n--${boundary}--\r\n`),
+    ]);
+    const multipart = await app.inject({
+      method: "POST", url: "/api/v2/publish/image", payload: form,
+      headers: { "content-type": `multipart/form-data; boundary=${boundary}`, authorization: `Bearer ${KEY}` },
+    });
+    expect(multipart.json().url).toMatch(/\.jpg$/);
+
+    // Not an image, or too big.
+    expect((await upload(Buffer.from("<svg></svg>"))).json().error.code).toBe("invalid_image");
+    expect((await upload(Buffer.concat([png, Buffer.alloc(2 * 1024 * 1024)]))).statusCode).toBe(413);
+  });
+
   it("doesn't exist without keys", async () => {
     const closed = await buildApp({ db, corsOrigins: [], verifyRecaptcha: async () => true, forumSecret: "test-secret" });
     expect((await closed.inject({ method: "POST", url: "/api/v2/publish", payload: { markdown: article() } })).statusCode).toBe(404);
