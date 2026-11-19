@@ -12,7 +12,7 @@ import { z } from "zod";
  */
 
 /** What the site can refresh on its own. Keep in step with docs/revalidate.md. */
-export const SITE_TAGS = ["news", "podcast", "agenda", "blog", "parliament", "government", "predictions"] as const;
+export const SITE_TAGS = ["news", "podcast", "agenda", "blog", "parliament", "government", "predictions", "budget"] as const;
 export type SiteTag = (typeof SITE_TAGS)[number];
 export type Revalidate = (tags: readonly SiteTag[]) => Promise<void>;
 

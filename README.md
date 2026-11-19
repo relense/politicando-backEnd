@@ -219,6 +219,13 @@ longer fits the seat map.
   deputy's mentions also count for their party, but an article still needs one direct
   party mention to be kept.
 
+## State Budget votes
+
+Every amendment proposal to the State Budget and how each party voted on it, from the
+parliament's open data (`docs/budget-api.md`). `npm run budget:sync` reads the current
+legislature's Budgets; `-- --all` loads every Budget since 2004. In production the
+`politicando-budget` cron runs hourly and skips an unchanged file.
+
 ## Party matching
 
 - Party data and terms are in `src/matching/parties.ts`.

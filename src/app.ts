@@ -32,6 +32,7 @@ import { forumRoutes } from "./modules/forums/routes.js";
 import { agendaRoutes } from "./modules/agenda/routes.js";
 import { editorialRoutes } from "./modules/editorial/routes.js";
 import { publishRoutes } from "./modules/editorial/publishApi.js";
+import { budgetRoutes } from "./modules/budget/routes.js";
 import { loadImage } from "./media/images.js";
 import type { Revalidate } from "./revalidate.js";
 import { feedbackRoutes } from "./modules/feedback/routes.js";
@@ -262,6 +263,7 @@ export const buildApp = async ({
       await api.register(placeRoutes(db));
       await api.register(localOfficialRoutes(db));
       await api.register(podcastRoutes(db));
+      await api.register(budgetRoutes(db));
       await api.register(forumRoutes({ db, verifyRecaptcha, forumSecret, createLimitPerMinute: commentLimitPerMinute }));
       await api.register(caseRoutes(db));
       await api.register(

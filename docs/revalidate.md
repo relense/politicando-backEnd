@@ -33,6 +33,7 @@ Content-Type: application/json
 | `predictions` | "Passa ou chumba?" open rounds and results | the agenda and parliament syncs |
 | `parliament` | initiatives, votes, deputies, parties' parliament data | the parliament sync |
 | `government` | government, President, people's links | the government sync |
+| `budget` | `/budget` and everything under it | the Budget sync (hourly, `:35`), only when the parliament's file changed |
 | `blog` | `/editorial` lists and posts | a post going live, changing or coming off through the publish API, the import script, and a deploy that changed a post in `content/editorial` |
 
 Tag the site's `fetch` calls with these names (`next: { tags: ["news"] }`). The site's own
@@ -43,6 +44,7 @@ timer can stay as a fallback.
 One secret, the same on both sides: `openssl rand -hex 32`.
 
 - **Backend** (Render: `politicando-api` and the crons `politicando-ingest`,
-  `politicando-parliament-sync`, `politicando-government-sync`, `politicando-agenda`):
+  `politicando-parliament-sync`, `politicando-government-sync`, `politicando-agenda`,
+  `politicando-budget`):
   `FRONTEND_REVALIDATE_URL` and `REVALIDATE_SECRET`. Either empty turns the pings off.
 - **Frontend:** `REVALIDATE_SECRET`.
