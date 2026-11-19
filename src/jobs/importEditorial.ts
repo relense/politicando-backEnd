@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import { createDb } from "../db/client.js";
 import { editorialPosts } from "../db/schema.js";
 import { parseMarkdownPost, saveMarkdownPosts } from "../editorial/markdownFiles.js";
+import { createRevalidator } from "../revalidate.js";
 
 /*
  * Publishes editorial posts written as Markdown files (see src/editorial/markdownFiles.ts).
@@ -57,6 +58,7 @@ try {
     }
     console.log(JSON.stringify({ ...post, status: draft ? "draft" : "published" }));
   }
+  if (!draft) await createRevalidator()(["blog"]);
 } catch (error) {
   console.error("Editorial import failed:", error);
   process.exitCode = 1;

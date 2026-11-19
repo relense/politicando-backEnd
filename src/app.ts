@@ -33,6 +33,7 @@ import { agendaRoutes } from "./modules/agenda/routes.js";
 import { editorialRoutes } from "./modules/editorial/routes.js";
 import { publishRoutes } from "./modules/editorial/publishApi.js";
 import { loadImage } from "./media/images.js";
+import type { Revalidate } from "./revalidate.js";
 import { feedbackRoutes } from "./modules/feedback/routes.js";
 import { seoRoutes } from "./modules/seo/routes.js";
 import { placeRoutes } from "./modules/places/routes.js";
@@ -93,6 +94,8 @@ export interface AppOptions {
   publishKeys?: readonly string[];
   /** This API's public address, for the URLs of uploaded images. */
   publicApiUrl?: string;
+  /** Tells the website a post went live or came off (see src/revalidate.ts). */
+  revalidate?: Revalidate;
 }
 
 const errorBody = (code: string, message: string) => ({ error: { code, message } });
@@ -117,6 +120,7 @@ export const buildApp = async ({
   registerLimitPerHour = 3,
   publishKeys = [],
   publicApiUrl,
+  revalidate,
 }: AppOptions) => {
   const proxied = trustProxy || clientIpHeader !== undefined;
   const app = Fastify({ logger, trustProxy: proxied || frontendKey !== undefined, bodyLimit: 64 * 1024 });
@@ -251,7 +255,7 @@ export const buildApp = async ({
       await api.register(adminForumRoutes(db));
       await api.register(adminUserRoutes(db));
       await api.register(editorialRoutes(db, { voteSecret: forumSecret }));
-      await api.register(publishRoutes(db, publishKeys, { apiUrl: publicApiUrl }));
+      await api.register(publishRoutes(db, publishKeys, { apiUrl: publicApiUrl, revalidate }));
       await api.register(agendaRoutes(db));
       await api.register(feedbackRoutes({ db, verifyRecaptcha, mailer, limitPerHour: feedbackLimitPerHour }));
       await api.register(seoRoutes(db));

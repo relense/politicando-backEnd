@@ -5,6 +5,7 @@ import { importContentPosts } from "../editorial/markdownFiles.js";
 import { PARTY_DEFINITIONS, SEATS_AS_OF } from "../matching/parties.js";
 import { syncLocalOfficials } from "../places/localOfficials.js";
 import { createDb, type Db } from "./client.js";
+import { createRevalidator } from "../revalidate.js";
 import { parties } from "./schema.js";
 
 /** Safe to re-run: updates parties by slug, so existing IDs never change. */
@@ -42,6 +43,7 @@ export const seed = async (db: Db) => {
   // Blog posts written in content/editorial; only new or edited ones are touched.
   const posts = await importContentPosts(db);
   console.log(JSON.stringify({ editorial: posts.filter((p) => p.changed).map((p) => p.slug), unchanged: posts.filter((p) => !p.changed).length }));
+  if (posts.some((p) => p.changed)) await createRevalidator()(["blog"]);
 };
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {

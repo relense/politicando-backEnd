@@ -5,6 +5,7 @@ import { createPoliteClient } from "../ingestion/politeClient.js";
 import { linkStoredArticles } from "../parliament/linkNews.js";
 import { syncWikidataLinks } from "../people/wikidata.js";
 import { syncPresidency } from "../presidency/sync.js";
+import { createRevalidator } from "../revalidate.js";
 
 /** How far back to look for news that new members of the Government now match. */
 const RELINK_DAYS = 30;
@@ -33,6 +34,7 @@ try {
   }
   const since = new Date(Date.now() - RELINK_DAYS * 24 * 60 * 60 * 1000);
   console.log(JSON.stringify({ relinked: await linkStoredArticles(db, { since }) }));
+  await createRevalidator()(["government", "news"]);
 } finally {
   await pool.end();
 }

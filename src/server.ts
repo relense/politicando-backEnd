@@ -2,6 +2,7 @@ import { buildApp } from "./app.js";
 import { loadApiConfig } from "./config.js";
 import { createDb } from "./db/client.js";
 import { createRecaptchaVerifier } from "./modules/comments/recaptcha.js";
+import { createRevalidator } from "./revalidate.js";
 import { createMailer } from "./newsletter/mailer.js";
 
 const config = loadApiConfig();
@@ -25,6 +26,7 @@ const app = await buildApp({
   loginRequired: config.LOGIN_REQUIRED,
   publishKeys: config.PUBLISH_API_KEYS,
   publicApiUrl: config.PUBLIC_API_URL,
+  revalidate: createRevalidator(),
   forumSecret: config.FORUM_SECRET,
   newsletter,
   logger: true,

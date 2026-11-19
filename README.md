@@ -242,6 +242,9 @@ health check on `/health`, migrations and party seed before each deploy), the da
 contracts weekly). In Render: New › Blueprint, pick this repo, and fill in the values it asks for
 (`CORS_ORIGINS`, `RECAPTCHA_SECRET`, `RECAPTCHA_HOSTNAMES`, `SMTP_URL`, `SITE_URL`,
 `PUBLIC_API_URL`). `FORUM_SECRET` and `NEWSLETTER_SECRET` are generated once; never regenerate them.
+`FRONTEND_REVALIDATE_URL` and `REVALIDATE_SECRET` (on the API and the news, parliament,
+government and agenda crons) let the jobs tell the website to refresh at once
+(`docs/revalidate.md`); leave them empty to keep the site on its own timer.
 
 1. **Custom domain.** Give the API a subdomain of the site (`api.politicando.pt`) under
    Settings › Custom Domains. The admin session cookie is `SameSite=strict`, so admin login only

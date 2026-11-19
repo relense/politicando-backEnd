@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildApp } from "../src/app.js";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -8,10 +8,12 @@ import { createTestDb, resetDb } from "./helpers.js";
 
 const { db, pool } = createTestDb();
 const KEY = "k".repeat(40);
-const app = await buildApp({ db, corsOrigins: [], verifyRecaptcha: async () => true, forumSecret: "test-secret", publishKeys: ["o".repeat(40), KEY] });
+const revalidate = vi.fn(async () => {});
+const app = await buildApp({ db, corsOrigins: [], verifyRecaptcha: async () => true, forumSecret: "test-secret", publishKeys: ["o".repeat(40), KEY], revalidate });
 
 beforeEach(async () => {
   await resetDb(db);
+  revalidate.mockClear();
 });
 afterAll(async () => {
   await app.close();
@@ -82,6 +84,19 @@ describe("publishing by API key", () => {
     await app.inject({ method: "POST", url: "/api/v2/publish/teste-api/unpublish", headers: { authorization: `Bearer ${KEY}` } });
     await importContentPosts(db, dir);
     expect((await app.inject({ method: "GET", url: "/api/v2/editorial/teste-api" })).statusCode).toBe(404);
+  });
+
+  it("tells the site to refresh the blog when a post goes live or comes off, not for drafts", async () => {
+    await publish({ markdown: article(), draft: true });
+    expect(revalidate).not.toHaveBeenCalled();
+    await publish({ markdown: article() });
+    expect(revalidate).toHaveBeenLastCalledWith(["blog"]);
+    revalidate.mockClear();
+    await publish({ markdown: article() }); // unchanged: nothing to refresh
+    expect(revalidate).not.toHaveBeenCalled();
+    const off = await app.inject({ method: "POST", url: "/api/v2/publish/teste-api/unpublish", headers: { authorization: `Bearer ${KEY}` } });
+    expect(off.statusCode).toBe(204);
+    expect(revalidate).toHaveBeenCalledWith(["blog"]);
   });
 
   it("stores a cover image once per content and serves it at a permanent URL", async () => {
