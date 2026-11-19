@@ -69,6 +69,8 @@ type Row = {
 };
 
 const cursorSchema = z.object({ v: z.union([z.string(), z.number()]), id: z.string() });
+/** A real calendar day, as Postgres will read it ("2026-02-31" isn't). */
+const isDay = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(value)) && new Date(value).toISOString().slice(0, 10) === value;
 const encodeCursor = (cursor: z.infer<typeof cursorSchema>) => Buffer.from(JSON.stringify(cursor)).toString("base64url");
 const decodeCursor = (value: string) => {
   try {
@@ -202,7 +204,7 @@ export const contractRoutes =
         let after = sql`true`;
         if (cursor) {
           const c = decodeCursor(cursor);
-          if (typeof c.v !== (sort === "price" ? "number" : "string")) throw new ApiError(400, "invalid_cursor", "The cursor is not valid");
+          if (typeof c.v !== (sort === "price" ? "number" : "string") || (typeof c.v === "string" && !isDay(c.v))) throw new ApiError(400, "invalid_cursor", "The cursor is not valid");
           after = sort === "price" ? sql`(c.price, c.id) < (${c.v}::float8, ${c.id})` : sql`(c.published_at, c.id) < (${c.v}::date, ${c.id})`;
         }
         const rows = await db.execute<Row>(sql`

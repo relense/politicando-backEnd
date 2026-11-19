@@ -1,3 +1,4 @@
+import { looksLikeTeam } from "../../accounts/reserved.js";
 import { and, asc, eq, isNull, or, sql, type SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import type { FastifyRequest } from "fastify";
@@ -43,7 +44,8 @@ const createCommentSchema = z.strictObject({
     .trim()
     .max(50)
     .nullish()
-    .transform((value) => value || null),
+    .transform((value) => value || null)
+    .refine((value) => value === null || !looksLikeTeam(value), "That name is the team's"),
   body: z.string().trim().min(1).max(500),
   parentId: z.number().int().positive().max(2_147_483_647).nullish(),
   stance: stanceSchema.nullish().describe("Optional: the commenter's side"),
@@ -116,7 +118,7 @@ export const commentRoutes =
     const list = async (target: Target) => {
       const parent = alias(comments, "parent");
       const rows = await db
-        .select({ ...publicCommentColumns, parentUsername: parent.username })
+        .select({ ...publicCommentColumns, parentUsername: sql<string | null>`case when ${parent.hiddenAt} is null then ${parent.username} end` })
         .from(comments)
         .leftJoin(parent, eq(comments.parentId, parent.id))
         .where(and(target.scope, isNull(comments.hiddenAt)))

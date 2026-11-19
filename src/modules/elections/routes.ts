@@ -300,7 +300,7 @@ export const electionRoutes =
         schema: {
           tags: ["elections"],
           summary: "Whole-country results of an election, with each district",
-          params: z.object({ id: z.string().regex(/^[a-z]+-\d{4}$/) }),
+          params: z.object({ id: z.string().regex(/^[a-z]+-\d{4}(-[a-z0-9-]{1,20})?$/) }),
           querystring: organQuery,
           response: { 200: placeResultSchema, 400: errorSchema, 404: errorSchema },
         },
@@ -314,7 +314,7 @@ export const electionRoutes =
         schema: {
           tags: ["elections"],
           summary: "Results in one place (district, municipality or parish), with the places inside it",
-          params: z.object({ id: z.string().regex(/^[a-z]+-\d{4}$/), key: placeKeySchema }),
+          params: z.object({ id: z.string().regex(/^[a-z]+-\d{4}(-[a-z0-9-]{1,20})?$/), key: placeKeySchema }),
           querystring: organQuery,
           response: { 200: placeResultSchema, 400: errorSchema, 404: errorSchema },
         },
@@ -328,7 +328,7 @@ export const electionRoutes =
         schema: {
           tags: ["elections"],
           summary: "Seats recomputed from the votes with the d'Hondt method, in one place that elects seats",
-          params: z.object({ id: z.string().regex(/^[a-z]+-\d{4}$/) }),
+          params: z.object({ id: z.string().regex(/^[a-z]+-\d{4}(-[a-z0-9-]{1,20})?$/) }),
           querystring: organQuery.extend({
             place: placeKeySchema
               .optional()
@@ -416,7 +416,7 @@ export const electionRoutes =
         schema: {
           tags: ["elections"],
           summary: "Candidate lists in one círculo: who was on each list, in order, and who got in",
-          params: z.object({ id: z.string().regex(/^[a-z]+-\d{4}$/) }),
+          params: z.object({ id: z.string().regex(/^[a-z]+-\d{4}(-[a-z0-9-]{1,20})?$/) }),
           querystring: z.object({
             place: placeKeySchema.optional().describe("The círculo; required for legislativas (a district, FOREIGN-800000 or FOREIGN-900000)"),
             list: z.string().max(60).optional().describe('One list, as on the ballot ("PS")'),

@@ -56,7 +56,7 @@ export const publishRoutes =
             draft: z.boolean().default(false).describe("Store it without publishing"),
             author: z.string().trim().min(1).max(100).default("Redação Politicando"),
           }),
-          response: { 200: result, 400: errorSchema, 401: errorSchema, 429: errorSchema },
+          response: { 200: result, 400: errorSchema, 401: errorSchema, 409: errorSchema, 429: errorSchema },
         },
       },
       async (request) => {
@@ -69,6 +69,10 @@ export const publishRoutes =
           throw new ApiError(400, "invalid_article", error instanceof Error ? error.message : String(error));
         }
         if (!post) throw new ApiError(400, "invalid_article", "The front matter needs a slug");
+        if (draft) {
+          const [live] = await db.select({ status: editorialPosts.status }).from(editorialPosts).where(eq(editorialPosts.slug, post.slug));
+          if (live?.status === "published") throw new ApiError(409, "already_published", "This post is live: a draft would replace it at once. Unpublish it first, or publish the change");
+        }
         const [saved] = await saveMarkdownPosts(db, [post], { authorName: author, publish: !draft });
         if (saved!.changed) await audit(db, null, draft ? "editorial.api_draft" : "editorial.api_publish", "editorial", post.slug);
         return { slug: post.slug, status: draft ? ("draft" as const) : ("published" as const), created: saved!.created, changed: saved!.changed, url: siteUrl(post.slug) };

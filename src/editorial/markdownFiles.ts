@@ -101,11 +101,15 @@ export const parseMarkdownPost = (text: string): MarkdownPost | null => {
 /**
  * Stores posts by slug: new ones are created, existing ones get the new text. Publishing keeps
  * the first publication date. Featured changes only when the file says so; drafts are never featured.
+ *
+ * A draft never touches a live post (its text would go live at once): unpublish first. With
+ * `fromRepo` (the deploy's import of content/editorial), a post someone took down stays down and
+ * keeps its byline; the file only updates posts that are live.
  */
 export const saveMarkdownPosts = async (
   db: Db,
   posts: MarkdownPost[],
-  { authorName, publish, now = new Date() }: { authorName: string; publish: boolean; now?: Date },
+  { authorName, publish, fromRepo = false, now = new Date() }: { authorName: string; publish: boolean; fromRepo?: boolean; now?: Date },
 ) => {
   const saved: { slug: string; created: boolean; changed: boolean }[] = [];
   for (const post of posts) {
@@ -119,17 +123,20 @@ export const saveMarkdownPosts = async (
         target: editorialPosts.slug,
         set: {
           kind: post.kind, title: post.title, subtitle: post.subtitle, body: post.body, tags: post.tags,
-          coverImageUrl: post.coverImageUrl, mediaUrl: post.mediaUrl, authorName, updatedAt: now,
+          coverImageUrl: post.coverImageUrl, mediaUrl: post.mediaUrl, ...(!fromRepo && { authorName }), updatedAt: now,
           ...(publish && { status: "published" as const, publishedAt: sql`coalesce(${editorialPosts.publishedAt}, ${now.toISOString()}::timestamptz)` }),
           ...(post.featured !== null && { featured: publish && post.featured }),
         },
         // Unchanged posts keep their dates, so re-importing (each deploy) doesn't look like an edit.
-        setWhere: sql`(${editorialPosts.kind}, ${editorialPosts.title}, ${editorialPosts.subtitle}, ${editorialPosts.body}, ${editorialPosts.tags},
-            ${editorialPosts.coverImageUrl}, ${editorialPosts.mediaUrl}, ${editorialPosts.authorName})
+        setWhere: sql`${
+          fromRepo ? sql`${editorialPosts.status} = 'published'` : publish ? sql`true` : sql`${editorialPosts.status} <> 'published'`
+        } and (
+          (${editorialPosts.kind}, ${editorialPosts.title}, ${editorialPosts.subtitle}, ${editorialPosts.body}, ${editorialPosts.tags},
+            ${editorialPosts.coverImageUrl}, ${editorialPosts.mediaUrl}${fromRepo ? sql`` : sql`, ${editorialPosts.authorName}`})
           is distinct from (excluded.kind, excluded.title, excluded.subtitle, excluded.body, excluded.tags,
-            excluded.cover_image_url, excluded.media_url, excluded.author_name)
-          ${publish ? sql`or ${editorialPosts.status} <> 'published'` : sql``}
-          ${post.featured !== null ? sql`or ${editorialPosts.featured} is distinct from ${publish && post.featured}` : sql``}`,
+            excluded.cover_image_url, excluded.media_url${fromRepo ? sql`` : sql`, excluded.author_name`})
+          ${publish && !fromRepo ? sql`or ${editorialPosts.status} <> 'published'` : sql``}
+          ${post.featured !== null ? sql`or ${editorialPosts.featured} is distinct from ${publish && post.featured}` : sql``})`,
       })
       .returning({ slug: editorialPosts.slug, created: sql<boolean>`${editorialPosts.createdAt} = ${now.toISOString()}::timestamptz` });
     saved.push(row ? { ...row, changed: true } : { slug: post.slug, created: false, changed: false });
@@ -156,5 +163,5 @@ export const importContentPosts = async (db: Db, dir = CONTENT_DIR) => {
       throw new Error(`${join(dir, name)}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
-  return saveMarkdownPosts(db, posts, { authorName: "Redação Politicando", publish: true });
+  return saveMarkdownPosts(db, posts, { authorName: "Redação Politicando", publish: true, fromRepo: true });
 };

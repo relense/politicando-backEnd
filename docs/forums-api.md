@@ -85,8 +85,10 @@ they open or reply in, and get told about new replies (see `engagement-api.md`).
 }
 ```
 
-- `nickname` is optional and not unique: anyone can type any name. Show it with the
-  `posterId`, e.g. "Zé (ID: Xk3_a9Qz)", or "Anónimo (ID: …)" when null.
+- `nickname` is optional and not unique: anyone can type any name, except ones that pass for
+  the team ("Politicando", "Redação", "moderador", "admin"…, accents and case ignored): those
+  get a 400 validation error. Show it with the `posterId`, e.g. "Zé (ID: Xk3_a9Qz)", or
+  "Anónimo (ID: …)" when null. The same applies to `username` on anonymous comments.
 - `link` is what the thread is about, when the poster linked it: an article
   (`/articles/:id`) or an initiative (`/initiatives/:id`).
 
@@ -177,7 +179,8 @@ Lets readers report threads, replies, comments and news articles:
 ```
 
 `reason`: `spam`, `insult`, `hate`, `personal_data`, `illegal`, `other`. Returns 202, also
-when the same person reports twice (counted once). There is no captcha; it's limited to 10 a
+when the same person reports twice (counted once: per connection, so reporting logged in and
+again logged out still counts once). There is no captcha; it's limited to 10 a
 minute per IP. Show a "Denunciar" link on every post and comment, with these reasons as
 options. 404 for unknown or already hidden items.
 

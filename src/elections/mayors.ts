@@ -32,12 +32,19 @@ export const importMayors = async (db: Db, source: ElectionSource, election: Ele
   const { topTerritory } = parseV3Election(await json(source, urls.election(electionId)));
   if (topTerritory === null) throw new Error(`${election.id}: the election file has changed shape`);
 
+  // Every file must come through: the import replaces the election's lists, so a failed download
+  // would otherwise delete that district's mayors.
+  const needed = async (url: string) => {
+    const raw = await json(source, url);
+    if (raw === null) throw new Error(`${election.id}: could not download ${url}; nothing was changed`);
+    return raw;
+  };
   const lists: MayoralList[] = [];
-  for (const district of parseV3Children(await json(source, urls.children(electionId, topTerritory)))) {
+  for (const district of parseV3Children(await needed(urls.children(electionId, topTerritory)))) {
     if (district.level !== "district") continue;
     let pages = 1;
     for (let page = 1; page <= pages; page++) {
-      const parsed = parseV3Mayors(await json(source, urls.mayors(electionId, district.id, page)));
+      const parsed = parseV3Mayors(await needed(urls.mayors(electionId, district.id, page)));
       pages = parsed.pages;
       lists.push(...parsed.lists);
     }

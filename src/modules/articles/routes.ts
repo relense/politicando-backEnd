@@ -11,7 +11,7 @@ import { articleParamsSchema, errorSchema } from "../shared.js";
 
 const cursorSchema = z.object({
   publishedAt: z.iso.datetime(),
-  id: z.number().int().positive(),
+  id: z.number().int().positive().max(2_147_483_647),
 });
 type Cursor = z.infer<typeof cursorSchema>;
 

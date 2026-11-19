@@ -268,7 +268,7 @@ export const peopleRoutes =
           .from(deputies)
           .leftJoin(parties, eq(parties.id, deputies.partyId))
           .where(and(eq(deputies.active, true), sql`(${deputies.parliamentRole} = 'Presidente' or ${inArray(deputies.id, ids)})`))
-          .orderBy(sql`${deputies.parliamentRole} = 'Presidente' desc nulls last`, desc(parties.assemblySeats), deputies.name);
+          .orderBy(sql`${deputies.parliamentRole} = 'Presidente' desc nulls last`, sql`${parties.assemblySeats} desc nulls last`, deputies.name);
         for (const row of rows) {
           items.push({
             kind: "deputy", id: String(row.id), name: row.name,

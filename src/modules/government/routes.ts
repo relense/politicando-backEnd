@@ -100,7 +100,7 @@ export const governmentRoutes =
         },
       },
       async () => {
-        const [government] = await db.select().from(governments).orderBy(desc(governments.startDate)).limit(1);
+        const [government] = await db.select().from(governments).orderBy(sql`${governments.startDate} desc nulls last`, desc(governments.updatedAt)).limit(1);
         if (!government) throw notFound("Government");
         const current = (await positionsOf(government.code, true)) as Row[];
         const ministries = new Map<string, z.infer<typeof ministrySchema>>();

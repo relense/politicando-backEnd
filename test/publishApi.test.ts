@@ -1,5 +1,9 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { buildApp } from "../src/app.js";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { importContentPosts } from "../src/editorial/markdownFiles.js";
 import { createTestDb, resetDb } from "./helpers.js";
 
 const { db, pool } = createTestDb();
@@ -55,6 +59,29 @@ describe("publishing by API key", () => {
     expect(off.statusCode).toBe(204);
     expect((await app.inject({ method: "GET", url: "/api/v2/editorial/teste-api" })).statusCode).toBe(404);
     expect((await publish({ markdown: "---\ntitle: Sem slug\n---\nTexto" })).json().error.code).toBe("invalid_article");
+  });
+
+  it("won't let a draft replace a live post", async () => {
+    await publish({ markdown: article() });
+    const draft = await publish({ markdown: article("Revisão por acabar."), draft: true });
+    expect(draft.statusCode).toBe(409);
+    expect(draft.json().error.code).toBe("already_published");
+    expect((await app.inject({ method: "GET", url: "/api/v2/editorial/teste-api" })).json().body).toMatch(/^Texto do artigo\./);
+  });
+
+  it("keeps a repo post down once it's taken down, and its byline, across deploys", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "politicando-content-"));
+    await writeFile(join(dir, "teste-api.md"), article());
+    await importContentPosts(db, dir);
+    expect((await app.inject({ method: "GET", url: "/api/v2/editorial/teste-api" })).statusCode).toBe(200);
+
+    await publish({ markdown: article(), author: "Ana" });
+    await importContentPosts(db, dir);
+    expect((await app.inject({ method: "GET", url: "/api/v2/editorial/teste-api" })).json().authorName).toBe("Ana");
+
+    await app.inject({ method: "POST", url: "/api/v2/publish/teste-api/unpublish", headers: { authorization: `Bearer ${KEY}` } });
+    await importContentPosts(db, dir);
+    expect((await app.inject({ method: "GET", url: "/api/v2/editorial/teste-api" })).statusCode).toBe(404);
   });
 
   it("doesn't exist without keys", async () => {

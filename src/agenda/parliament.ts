@@ -55,6 +55,14 @@ export const plenaryTitle = (text: string) => {
   return line ? truncate(line, 140) : "Reunião plenária";
 };
 
+const webLink = (value: string | null | undefined) => {
+  try {
+    return value && /^https?:$/.test(new URL(value).protocol) ? value : null;
+  } catch {
+    return null;
+  }
+};
+
 export const parseParliamentAgenda = (raw: unknown): AgendaInput[] => {
   const items = z.array(z.unknown()).parse(raw);
   const events: AgendaInput[] = [];
@@ -62,10 +70,17 @@ export const parseParliamentAgenda = (raw: unknown): AgendaInput[] => {
     const parsed = itemSchema.safeParse(entry);
     if (!parsed.success) continue;
     const item = parsed.data;
+    // One odd date skips that item, not the whole day's agenda.
+    let startDay: string;
+    let endDay: string | null;
+    try {
+      startDay = isoDay(item.EventStartDate);
+      endDay = item.EventEndDate ? isoDay(item.EventEndDate) : null;
+    } catch {
+      continue;
+    }
     const section = item.Section ?? "";
     const text = htmlToText(item.InternetText);
-    const startDay = isoDay(item.EventStartDate);
-    const endDay = item.EventEndDate ? isoDay(item.EventEndDate) : null;
     const startTime = item.AllDayEvent ? null : hhmm(item.EventStartTime);
     const base = {
       id: `ar-${item.Id}`,
@@ -78,7 +93,7 @@ export const parseParliamentAgenda = (raw: unknown): AgendaInput[] => {
       status: "scheduled" as const,
       organizer: "Assembleia da República",
       partySlugs: [] as string[],
-      sourceUrl: item.Link?.startsWith("http") ? item.Link : PARLIAMENT_AGENDA_URL,
+      sourceUrl: webLink(item.Link) ?? PARLIAMENT_AGENDA_URL,
       online: null,
     };
     const room = item.Local?.trim() && item.Local.trim() !== "Plenário" ? ` (${item.Local.trim()})` : "";

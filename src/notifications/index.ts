@@ -122,6 +122,7 @@ interface InboxRow extends Record<string, unknown> {
   pick: string | null;
   outcome: string | null;
   vote_result: string | null;
+  cursor_at: string;
 }
 
 /** One page of the inbox, newest first, with what the site needs to show and link each line. */
@@ -137,7 +138,8 @@ export const inbox = async (db: Runner, userId: number, cursor?: string) => {
         coalesce(fp.thread_id, ft.id) as thread_id, coalesce(fpt.title, ft.title) as thread_title, coalesce(fpt.board, ft.board) as board,
         (select a.title from articles a where n.kind = 'story_update' and a.story_id = n.target_id and a.hidden_at is null
           order by a.published_at desc limit 1) as headline,
-        i.title as initiative_title, pr.pick, pr.outcome, pr.vote_result
+        i.title as initiative_title, pr.pick, pr.outcome, pr.vote_result,
+        to_char(n.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as cursor_at
       from notifications n
       left join comments c on n.kind = 'comment_reply' and c.id = n.target_id
       left join editorial_posts ep on ep.id = c.editorial_post_id
@@ -178,7 +180,8 @@ export const inbox = async (db: Runner, userId: number, cursor?: string) => {
           ? { initiativeTitle: r.initiative_title ?? "", pick: r.pick as "pass" | "fail", outcome: r.outcome as "hit" | "miss" | "void" | null, result: r.vote_result }
           : null,
     })),
-    nextCursor: rows.length > PAGE_SIZE ? `${iso(page.at(-1)!.created_at)}_${page.at(-1)!.id}` : null,
+    // Microseconds, as stored: a millisecond cursor would skip rows within the same millisecond.
+    nextCursor: rows.length > PAGE_SIZE ? `${page.at(-1)!.cursor_at}_${page.at(-1)!.id}` : null,
   };
 };
 

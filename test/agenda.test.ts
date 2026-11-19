@@ -56,6 +56,12 @@ describe("parliament agenda", () => {
     expect(events[2]).toMatchObject({ allDay: true, partySlugs: ["pcp"], summary: "10h30 - Sindicato" });
   });
 
+  it("skips one item with an odd date or link, not the whole agenda", () => {
+    const events = parseParliamentAgenda([arItem({ Id: 1, EventStartDate: "2026-11-18" }), arItem({ Id: 2, Link: "httpfoo:x" })]);
+    expect(events.map((e) => e.id)).toEqual(["ar-2"]);
+    expect(events[0]!.sourceUrl).toMatch(/^https:\/\//);
+  });
+
   it("titles a sitting by its first item of business", () => {
     expect(plenaryTitle("Sessão Solene Evocativa do 25 de novembro de 1975\nTempos: 2m30s")).toBe("Sessão Solene Evocativa do 25 de novembro de 1975");
     expect(plenaryTitle("")).toBe("Reunião plenária");
@@ -214,6 +220,8 @@ describe("GET /agenda", () => {
     expect(second.body.items.map((i: { id: string }) => i.id)).toEqual(["ar-3"]);
     expect((await call("GET", "/agenda?cursor=bad")).status).toBe(400);
     expect((await call("GET", "/agenda?district=Narnia")).status).toBe(400);
+    expect((await call("GET", "/agenda?from=2026-02-31")).status).toBe(400);
+    expect((await call("GET", "/agenda?from=2026-13-01")).status).toBe(400);
   });
 
   it("leaves hidden events out", async () => {
@@ -248,6 +256,7 @@ describe("agenda admin", () => {
     const ana = await login("ana@example.pt");
     expect((await call("POST", "/admin/agenda", ana, { ...event, start: "2030-05-04" })).status).toBe(400);
     expect((await call("POST", "/admin/agenda", ana, { ...event, end: "2030-05-03T10:00" })).status).toBe(400);
+    expect((await call("POST", "/admin/agenda", ana, { ...event, start: "2030-05-04T25:90" })).status).toBe(400);
     expect((await call("POST", "/admin/agenda", ana, { ...event, allDay: true, start: "2030-05-04", end: "2030-05-06" })).status).toBe(201);
     expect(await call("POST", "/admin/agenda", ana, { ...event, partySlugs: ["xyz"] })).toMatchObject({ status: 400, body: { error: { code: "unknown_party" } } });
   });

@@ -47,6 +47,13 @@ try {
     console.error(`${unreadable} of ${stats.length} sources could not be read`);
     process.exitCode = 1;
   }
+  // Articles found but mostly not stored: the database side is broken (full disk, a bad migration).
+  const failed = stats.reduce((n, source) => n + source.failed, 0);
+  const handled = stats.reduce((n, source) => n + source.matched + source.rejected, 0);
+  if (failed >= 5 && failed > handled) {
+    console.error(`${failed} articles could not be stored (${handled} were)`);
+    process.exitCode = 1;
+  }
 } catch (error) {
   console.error("Ingest failed:", error);
   process.exitCode = 1;

@@ -38,14 +38,20 @@ const client = createPoliteClient({ defaultDelayMs: 1_000 });
 try {
   if (historic.length > 0) console.log(JSON.stringify({ historic: await importHistoricLegislativas(db, historic) }));
   for (const election of chosen) {
-    const stats = await importElection(db, client, election, {
-      parishes: args.includes("--parishes"),
-      refresh: args.includes("--refresh"),
-      onProgress: (message) => console.log(message),
-    });
-    const candidates = await importCandidates(db, client, election);
-    const mayors = await importMayors(db, client, election);
-    console.log(JSON.stringify({ election: election.id, ...stats, candidates, ...(mayors.candidates > 0 && { mayors }) }));
+    // One election failing (a download that didn't come through) doesn't stop the others.
+    try {
+      const stats = await importElection(db, client, election, {
+        parishes: args.includes("--parishes"),
+        refresh: args.includes("--refresh"),
+        onProgress: (message) => console.log(message),
+      });
+      const candidates = await importCandidates(db, client, election);
+      const mayors = await importMayors(db, client, election);
+      console.log(JSON.stringify({ election: election.id, ...stats, candidates, ...(mayors.candidates > 0 && { mayors }) }));
+    } catch (error) {
+      console.error(`${election.id} failed:`, error instanceof Error ? error.message : error);
+      process.exitCode = 1;
+    }
   }
 } catch (error) {
   console.error("Election import failed:", error);

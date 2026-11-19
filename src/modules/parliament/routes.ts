@@ -160,7 +160,7 @@ const voteSchema = z.object({
     .describe("Deputies named because they voted differently from their group"),
 });
 
-const cursorSchema = z.object({ phaseDate: z.iso.date(), id: z.number().int().positive() });
+const cursorSchema = z.object({ phaseDate: z.iso.date(), id: z.number().int().positive().max(2_147_483_647) });
 const encodeCursor = (cursor: z.infer<typeof cursorSchema>) =>
   Buffer.from(JSON.stringify(cursor)).toString("base64url");
 const decodeCursor = (value: string) => {
@@ -537,7 +537,8 @@ export const parliamentRoutes =
                 ...deputyVote(vote, who),
               })),
           )
-          .sort((a, b) => b.vote.date.localeCompare(a.vote.date) || Number(b.vote.id) - Number(a.vote.id));
+          // A total order (the same vote can be recorded under several initiatives), so pages never repeat.
+          .sort((a, b) => b.vote.date.localeCompare(a.vote.date) || String(b.vote.id).localeCompare(String(a.vote.id), "en", { numeric: true }) || b.initiative.id - a.initiative.id);
 
         const summary = { favor: 0, against: 0, abstention: 0, absent: 0, unknown: 0, brokeRanks: 0 };
         for (const item of all) {
@@ -548,7 +549,9 @@ export const parliamentRoutes =
 
         let start = 0;
         if (cursor !== undefined) {
-          const after = all.findIndex((item) => `${item.vote.date}:${item.vote.id}` === decodeVoteCursor(cursor));
+          // date:voteId:initiativeId; date:voteId from before is still read (the first match).
+          const key = decodeVoteCursor(cursor);
+          const after = all.findIndex((item) => `${item.vote.date}:${item.vote.id}:${item.initiative.id}` === key || `${item.vote.date}:${item.vote.id}` === key);
           if (after === -1) throw new ApiError(400, "invalid_cursor", "The cursor is not valid");
           start = after + 1;
         }
@@ -559,7 +562,7 @@ export const parliamentRoutes =
           items: page,
           nextCursor:
             start + limit < all.length && last
-              ? Buffer.from(`${last.vote.date}:${last.vote.id}`).toString("base64url")
+              ? Buffer.from(`${last.vote.date}:${last.vote.id}:${last.initiative.id}`).toString("base64url")
               : null,
         };
       },

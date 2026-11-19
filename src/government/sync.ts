@@ -1,4 +1,4 @@
-import { and, eq, notInArray } from "drizzle-orm";
+import { and, eq, isNull, ne, notInArray } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import { overwriteAll } from "../db/upsert.js";
 import { deputies, governmentMembers, governmentPositions, governments } from "../db/schema.js";
@@ -126,7 +126,9 @@ export const syncGovernment = async (db: Db, source: GovernmentSource) => {
   if (!GOVERNMENTS.some((gov) => gov.code === found.code && gov.end === null)) {
     warnings.push(`The portal shows government ${found.code}, which src/government/history.ts doesn't list as in office: add it there`);
   }
-  const positionRows = positions.map((position) => ({ ...position, government: found.code, updatedAt: now }));
+  // The same post can be listed on two pages (a secretary of state shared by ministries): once each,
+  // or the upsert would touch one row twice and fail.
+  const positionRows = [...new Map(positions.map((position) => [position.id, { ...position, government: found.code, updatedAt: now }])).values()];
 
   await db.transaction(async (tx) => {
     await tx
@@ -141,6 +143,11 @@ export const syncGovernment = async (db: Db, source: GovernmentSource) => {
       .insert(governmentPositions)
       .values(positionRows)
       .onConflictDoUpdate({ target: governmentPositions.id, set: overwriteAll(governmentPositions) });
+    // A new government: whoever still sits in an earlier one left when it took office.
+    await tx
+      .update(governmentPositions)
+      .set({ endDate: government.startDate ?? now.toISOString().slice(0, 10), updatedAt: now })
+      .where(and(ne(governmentPositions.government, found.code), isNull(governmentPositions.endDate)));
     // Posts the portal no longer lists were removed there. Only trust that when every page was read.
     if (failedPages === 0) {
       await tx.delete(governmentPositions).where(

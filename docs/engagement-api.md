@@ -148,7 +148,9 @@ had a vote open and none is on the agenda: then show no box.
 - **Changing it:** the reader can change it until `closesAt`.
 - **Follows the megathread:** picking follows it, so the debate comes to the reader's inbox.
 - **Errors:** 401 `login_required`; 404 unknown; 409 `closed` when it isn't open (not on the agenda yet, the session already started, or decided).
-- `DELETE /predictions/:initiativeId` takes a pending prediction back.
+- `DELETE /predictions/:initiativeId` takes a prediction back while the vote is open (204).
+  Once the session starts the pick stands: **409 `closed`** (so a miss can't be withdrawn
+  before it's scored). Hide the "remove" control when `state` isn't `open`.
 
 ### The megathread (board `votacoes`, "Votações")
 

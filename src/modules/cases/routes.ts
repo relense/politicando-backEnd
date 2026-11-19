@@ -125,7 +125,7 @@ export const caseRoutes =
           summary: "Published cases involving political officeholders, latest development first",
           querystring: z.object({
             party: z.string().max(50).optional().describe("Party slug (at the time) of anyone involved"),
-            deputy: z.coerce.number().int().positive().optional(),
+            deputy: z.coerce.number().int().positive().max(2_147_483_647).optional(),
             member: z.string().max(64).optional().describe("Government member id"),
             status: caseStatusSchema.optional(),
             crime: crimeSchema.optional(),
@@ -222,7 +222,7 @@ export const caseRoutes =
           tags: ["cases"],
           summary: "Officeholders' declared interests, curated from their declarations, with public contracts the entities won",
           querystring: z.object({
-            deputy: z.coerce.number().int().positive().optional(),
+            deputy: z.coerce.number().int().positive().max(2_147_483_647).optional(),
             member: z.string().max(64).optional().describe("Government member id"),
             nif: z.string().regex(/^\d{9}$/).optional().describe("Entity NIF"),
           }),

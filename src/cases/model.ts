@@ -84,7 +84,7 @@ export const caseInputSchema = z.object({
         name: text(200),
         roleAtTime: text(200).nullable(),
         party: z.string().max(50).nullable().describe("Party slug at the time"),
-        deputyId: z.number().int().positive().nullable(),
+        deputyId: z.number().int().positive().max(2_147_483_647).nullable(),
         governmentMemberId: z.string().max(64).nullable(),
         status: personStatusSchema,
         outcome: text(1000).nullable(),
@@ -145,7 +145,7 @@ export const publishProblems = (c: CaseInput): string[] => {
 
 export const interestInputSchema = z.object({
   personName: text(200),
-  deputyId: z.number().int().positive().nullable(),
+  deputyId: z.number().int().positive().max(2_147_483_647).nullable(),
   governmentMemberId: z.string().max(64).nullable(),
   kind: interestKindSchema,
   entityName: text(300),
