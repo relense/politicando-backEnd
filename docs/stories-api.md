@@ -153,8 +153,19 @@ Importa on stories instead.
 ## GET /today ("Hoje em 5")
 
 `{ "items": [5 stories], "since": "…" }`: the stories with news in the last 24 hours that
-matter most. A story scores one point per outlet that told it, plus half a point per Importa
-mark (up to 5 points from marks). Ties go to the newest. `limit` 1–10, default 5.
+matter most, **favouring fresh news over yesterday's big story**. `limit` 1–10, default 5.
+
+- Only coverage in the window counts: each outlet with an article about the story since `since`
+  scores up to 1 point, **halving every 6 hours** since that outlet's latest article on it.
+- Importa adds half a point per mark (up to 5), halving every 6 hours since the story's latest
+  article.
+- So a follow-up at 01:30 refreshes only its own outlet: by 08:00, 4 outlets since 06:00 beat
+  13 outlets from yesterday afternoon. On a quiet night, yesterday evening's stories still fill
+  the box.
+- Every score fades at the same rate, so the order only changes when new articles arrive.
+- Ties go to the newest, then the id.
+- Each item also has `recentSourceCount`: the outlets in the window. `sourceCount`,
+  `firstPublishedAt` and `lastPublishedAt` are the story's whole life, as before.
 
 It's a rolling 24 hours, so the morning isn't empty. "Estás em dia" is yours to keep in the
 browser: once the reader has opened (or scrolled past) the 5 ids, show the marker. The set
