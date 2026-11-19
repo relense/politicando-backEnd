@@ -267,6 +267,13 @@
       "when": 1795042866857,
       "tag": "0037_vote_rounds_opens_at",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1795069192388,
+      "tag": "0038_account_email",
+      "breakpoints": true
     }
   ]
 }

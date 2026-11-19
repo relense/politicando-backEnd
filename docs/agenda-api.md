@@ -101,7 +101,9 @@ says whose politicians are on.
     public galleries), and they're broadcast on Canal Parlamento.
   - Committees: open to the public, though some meetings are behind closed doors.
     `sourceUrl` is the committee's page.
-  - Parliamentary groups' audiences: closed, all-day, with the party.
+  - Parliamentary groups' audiences: one item per hearing, at its time in `start` (parliament
+    lists a day's hearings as lines like "15h30 - Tabaqueira"). Title "Audiência do PS:
+    Tabaqueira", closed, with the party. A day listed without times stays one all-day item.
   - School visits and guided tours are left out.
 - **President**: what presidencia.pt shows (today and the next day or two), with the place.
   Not open to the public.

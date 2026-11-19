@@ -48,12 +48,29 @@ describe("parliament agenda", () => {
     expect(events.map((e) => [e.id, e.kind, e.title, e.startTime, e.endTime, e.attend.open])).toEqual([
       ["ar-1", "parliament", "Debate na especialidade do Orçamento", "10:00", null, true],
       ["ar-2", "committee", "Comissão de Saúde", "14:30", null, true],
-      ["ar-3", "party", "Audiências do Grupo Parlamentar do PCP", null, null, false],
+      ["ar-3-1", "party", "Audiência do PCP: Sindicato", "10:30", null, false],
       ["ar-5", "parliament", "Conferência de Líderes", "15:00", "16:00", false],
     ]);
     expect(events[0]).toMatchObject({ online: { label: "Canal Parlamento" }, place: { district: "Lisboa", address: "Palácio de São Bento, Lisboa" } });
     expect(events[1]).toMatchObject({ sourceUrl: "https://www.parlamento.pt/sites/com/x", place: { address: "Palácio de São Bento, Lisboa (Sala 1)" } });
-    expect(events[2]).toMatchObject({ allDay: true, partySlugs: ["pcp"], summary: "10h30 - Sindicato" });
+    expect(events[2]).toMatchObject({ allDay: false, partySlugs: ["pcp"], summary: "10h30 - Sindicato", organizer: "Grupo Parlamentar do PCP" });
+  });
+
+  it("makes each party hearing its own event, at its time", () => {
+    const events = parseParliamentAgenda([
+      arItem({
+        Id: 7, Section: "Grupos Parlamentares / Partidos / DURP / Ninsc", Title: "Audiências do Grupo Parlamentar do PS", EventStartTime: null,
+        InternetText: "14h30 - Comissão de Utentes do Litoral Alentejano<br>15h30 – Liga Portuguesa de Ambulâncias (LPA)<br>9h - ANEM",
+      }),
+      arItem({ Id: 8, Section: "Grupos Parlamentares / Partidos / DURP / Ninsc", Title: "Audiências do Grupo Parlamentar do CH", EventStartTime: null, InternetText: "Durante a tarde" }),
+    ]);
+    expect(events.map((e) => [e.id, e.title, e.startTime, e.allDay, e.partySlugs])).toEqual([
+      ["ar-7-1", "Audiência do PS: Comissão de Utentes do Litoral Alentejano", "14:30", false, ["ps"]],
+      ["ar-7-2", "Audiência do PS: Liga Portuguesa de Ambulâncias (LPA)", "15:30", false, ["ps"]],
+      ["ar-7-3", "Audiência do PS: ANEM", "09:00", false, ["ps"]],
+      // No times: the day stays one event.
+      ["ar-8", "Audiências do Grupo Parlamentar do CH", null, true, ["chega"]],
+    ]);
   });
 
   it("skips one item with an odd date or link, not the whole agenda", () => {

@@ -63,6 +63,20 @@ const webLink = (value: string | null | undefined) => {
   }
 };
 
+/** "15h30 - Tabaqueira", "9h – ANEM", "10:30 - X": one hearing per line with a time. */
+export const hearingsIn = (text: string) =>
+  text
+    .split("\n")
+    .map((line) => line.trim())
+    .flatMap((line) => {
+      const match = /^(\d{1,2})\s*[hH:.]\s*(\d{2})?\s*(?:m(?:in)?)?\s*[-–—:]\s*(.+)$/.exec(line);
+      if (!match) return [];
+      const hours = Number(match[1]);
+      const minutes = Number(match[2] ?? "0");
+      if (hours > 23 || minutes > 59 || !match[3]!.trim()) return [];
+      return [{ time: `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`, who: match[3]!.trim(), line }];
+    });
+
 export const parseParliamentAgenda = (raw: unknown): AgendaInput[] => {
   const items = z.array(z.unknown()).parse(raw);
   const events: AgendaInput[] = [];
@@ -123,15 +137,33 @@ export const parseParliamentAgenda = (raw: unknown): AgendaInput[] => {
     } else if (section.startsWith("Grupos Parlamentares")) {
       const group = /Grupo Parlamentar d[oa]s?\s+(.+)$/i.exec(item.Title ?? "")?.[1]?.trim();
       const slug = partySlugForGroup(group?.replace(/^B\.E\.$/, "BE"));
-      events.push({
+      const party = {
         ...base,
-        kind: "party",
-        title: item.Title?.trim() || "Audiências de grupo parlamentar",
+        kind: "party" as const,
         organizer: group ? `Grupo Parlamentar do ${group}` : "Assembleia da República",
         partySlugs: slug ? [slug] : [],
         place,
         attend: CLOSED,
-      });
+      };
+      // The day's hearings come as one item, a line each ("15h30 - Tabaqueira"): one event per
+      // hearing, at its time. Without times, the day stays one event.
+      const hearings = hearingsIn(text);
+      if (hearings.length === 0) {
+        events.push({ ...party, title: item.Title?.trim() || "Audiências de grupo parlamentar" });
+      } else {
+        hearings.forEach((hearing, i) => {
+          events.push({
+            ...party,
+            id: `${base.id}-${i + 1}`,
+            title: truncate(`Audiência do ${group ?? "grupo parlamentar"}: ${hearing.who}`, 140),
+            summary: hearing.line,
+            allDay: false,
+            startTime: hearing.time,
+            endDay: null,
+            endTime: null,
+          });
+        });
+      }
     }
   }
   return events;

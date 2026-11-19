@@ -28,27 +28,33 @@ to find out who is subscribed. An already-confirmed address gets no new email. A
 gets the confirmation email again, at most once every 10 minutes. So the 202 message should
 say "if this address isn't subscribed yet, you'll get an email", or just "check your email".
 
-## Where the links land
+## The links: pages with a button
 
-The links in the emails point to the API, which does the work and then redirects (302) to the
-website:
+Mail security scanners (Outlook, corporate filters) open every link in an email. So the links
+open pages on the website, and **nothing happens until the reader presses the button**. Never
+call these endpoints on page load.
 
-| link | redirects to |
-| --- | --- |
-| `GET /newsletter/confirm?token=…` | `<site>/newsletter?estado=confirmado`, or `?estado=invalido` if the link is broken, expired (7 days) or the address has since been removed |
-| `GET /newsletter/unsubscribe?token=…` | `<site>/newsletter?estado=cancelado`, or `?estado=invalido` if the link is broken |
+| page | shows | the button calls |
+| --- | --- | --- |
+| `/newsletter/confirmar?token=…` | "Confirma a tua inscrição na newsletter" + **Confirmar** | `POST /newsletter/confirm` `{ "token": "…" }` |
+| `/newsletter/cancelar?token=…` | "Queres deixar de receber a newsletter?" + **Cancelar inscrição** | `POST /newsletter/unsubscribe` `{ "token": "…" }` |
 
-`<site>` is the backend's `SITE_URL` (production: the real site address). So the frontend needs
-a `/newsletter` page that reads `estado`:
+- `POST /newsletter/confirm`: 200 `{ "status": "confirmed" }` ("Inscrição confirmada. Obrigado!");
+  400 `invalid_token` when the link is broken, expired (7 days) or the address was removed since
+  ("Esta ligação já não é válida", with the sign-up form).
+- `POST /newsletter/unsubscribe`: 200 `{ "status": "unsubscribed" }` ("Cancelaste a inscrição. Não
+  vais receber mais emails."); 400 `invalid_token`.
+- Links in emails sent before this change point at `GET /newsletter/confirm` and
+  `GET /newsletter/unsubscribe`: those now redirect to the pages above, without acting.
+- Keep the `/newsletter?estado=…` page working for a while (very old links landed there).
 
-- `confirmado`: "Inscrição confirmada. Obrigado!"
-- `cancelado`: "Cancelaste a inscrição. Não vais receber mais emails."
-- `invalido`: "Esta ligação já não é válida." Offer the sign-up form again.
-- no `estado`: the sign-up form itself.
+Every email also carries the `List-Unsubscribe` headers, so Gmail and others show their own
+"unsubscribe" button. That one is made for one click and posts to
+`POST /newsletter/unsubscribe?token=…` directly; the frontend never calls it.
 
-Every email carries an unsubscribe link, plus the `List-Unsubscribe` headers so Gmail and others
-show their own "unsubscribe" button (that one posts to `POST /newsletter/unsubscribe`; the
-frontend never calls it).
+**From an account:** registering with an email and the newsletter box ticked, or
+`PUT /me/email` with `newsletter: true`, subscribes that address, confirmed together with the
+account's email by one email (see `docs/accounts-api.md`).
 
 ## Not built yet
 

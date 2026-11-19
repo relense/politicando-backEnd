@@ -39,6 +39,12 @@ const visit = async (url: string) => {
   return { status: response.statusCode, location: response.headers.location };
 };
 const linkIn = (message: MailMessage, path: string) => message.text.match(new RegExp(`https://\\S+/newsletter/${path}\\?token=\\S+`))![0];
+const tokenOf = (link: string) => decodeURIComponent(new URL(link).searchParams.get("token")!);
+/** The button on the website's page. */
+const press = async (path: "confirm" | "unsubscribe", token: string) => {
+  const response = await app.inject({ method: "POST", url: `/api/v2/newsletter/${path}`, payload: { token } });
+  return { status: response.statusCode, body: response.json() };
+};
 const rows = () => db.select().from(newsletterSubscribers);
 
 describe("newsletter tokens", () => {
@@ -62,7 +68,12 @@ describe("POST /newsletter/subscribe", () => {
     expect(sent[0]!.to).toBe("ana@example.pt");
     expect(sent[0]!.headers?.["List-Unsubscribe"]).toMatch(/^<https:\/\/api\.politicando\.example\/api\/v2\/newsletter\/unsubscribe\?token=/);
 
-    expect(await visit(linkIn(sent[0]!, "confirm"))).toEqual({ status: 302, location: "https://politicando.example/newsletter?estado=confirmado" });
+    // The email links to the website's page; opening it (as mail scanners do) changes nothing.
+    const page = linkIn(sent[0]!, "confirmar");
+    expect(page).toMatch(/^https:\/\/politicando\.example\/newsletter\/confirmar\?token=/);
+    expect(sent[0]!.text).toContain("https://politicando.example/newsletter/cancelar?token=");
+    expect((await rows())[0]!.confirmedAt).toBeNull();
+    expect(await press("confirm", tokenOf(page))).toEqual({ status: 200, body: { status: "confirmed" } });
     expect((await rows())[0]!.confirmedAt).toBeInstanceOf(Date);
     // Already subscribed: the same answer, and no email.
     expect((await subscribe("ana@example.pt")).status).toBe(202);
@@ -120,31 +131,43 @@ describe("POST /newsletter/subscribe", () => {
   });
 });
 
-describe("confirm and unsubscribe links", () => {
-  it("unsubscribing deletes the address; the old confirmation link then lands on invalido", async () => {
+describe("confirm and unsubscribe pages", () => {
+  it("unsubscribing deletes the address only on the button; the confirmation then fails", async () => {
     await subscribe("ana@example.pt");
-    const confirm = linkIn(sent[0]!, "confirm");
-    expect(await visit(linkIn(sent[0]!, "unsubscribe"))).toEqual({ status: 302, location: "https://politicando.example/newsletter?estado=cancelado" });
+    const confirm = tokenOf(linkIn(sent[0]!, "confirmar"));
+    const unsubscribe = tokenOf(linkIn(sent[0]!, "cancelar"));
+    expect(await press("unsubscribe", unsubscribe)).toEqual({ status: 200, body: { status: "unsubscribed" } });
     expect(await rows()).toEqual([]);
-    expect((await visit(confirm)).location).toBe("https://politicando.example/newsletter?estado=invalido");
+    expect((await press("confirm", confirm)).body.error.code).toBe("invalid_token");
   });
 
-  it("lands forged links on invalido", async () => {
-    expect((await visit("/api/v2/newsletter/confirm?token=abc.def")).location).toBe("https://politicando.example/newsletter?estado=invalido");
-    expect((await visit("/api/v2/newsletter/unsubscribe?token=abc")).location).toBe("https://politicando.example/newsletter?estado=invalido");
+  it("refuses forged tokens, and tokens for the other purpose", async () => {
+    await subscribe("ana@example.pt");
+    expect((await press("confirm", "abc.def")).status).toBe(400);
+    expect((await press("unsubscribe", tokenOf(linkIn(sent[0]!, "confirmar")))).body.error.code).toBe("invalid_token");
+    expect((await press("confirm", tokenOf(linkIn(sent[0]!, "cancelar")))).body.error.code).toBe("invalid_token");
+  });
+
+  it("sends links from older emails to the pages, without acting", async () => {
+    await subscribe("ana@example.pt");
+    const token = createToken(secret, "unsubscribe", "ana@example.pt");
+    const old = await visit(`/api/v2/newsletter/unsubscribe?token=${encodeURIComponent(token)}`);
+    expect(old).toEqual({ status: 302, location: `https://politicando.example/newsletter/cancelar?token=${encodeURIComponent(token)}` });
+    expect(await rows()).toHaveLength(1);
+    expect((await visit("/api/v2/newsletter/confirm?token=x")).location).toBe("https://politicando.example/newsletter/confirmar?token=x");
   });
 
   it("supports one-click unsubscribe from mail clients", async () => {
     await subscribe("ana@example.pt");
     await db.update(newsletterSubscribers).set({ confirmedAt: new Date() }).where(eq(newsletterSubscribers.email, "ana@example.pt"));
-    const url = linkIn(sent[0]!, "unsubscribe").replace("https://api.politicando.example", "");
+    const url = sent[0]!.headers!["List-Unsubscribe"]!.slice(1, -1).replace("https://api.politicando.example", "");
     const response = await app.inject({
       method: "POST",
       url,
       headers: { "content-type": "application/x-www-form-urlencoded" },
       payload: "List-Unsubscribe=One-Click",
     });
-    expect(response.statusCode).toBe(204);
+    expect(response.statusCode).toBe(200);
     expect(await rows()).toEqual([]);
   });
 });

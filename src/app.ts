@@ -224,7 +224,7 @@ export const buildApp = async ({
       await api.register(legislatureRoutes(db));
       await api.register(contractRoutes(db, { warm: warmCaches, recheckMs: warmCaches ? 60_000 : 0 }));
       await api.register(adminRoutes({ db, secureCookies, loginLimitPerMinute }));
-      await api.register(accountRoutes({ db, verifyRecaptcha, secureCookies, loginLimitPerMinute, registerLimitPerHour }));
+      await api.register(accountRoutes({ db, verifyRecaptcha, secureCookies, loginLimitPerMinute, registerLimitPerHour, mail: newsletter }));
       await api.register(notificationRoutes(db));
       await api.register(predictionRoutes(db));
       await api.register(adminRecordRoutes(db));
