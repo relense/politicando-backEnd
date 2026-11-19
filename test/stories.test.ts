@@ -194,6 +194,53 @@ describe("GET /today", () => {
   });
 });
 
+describe("GET /today: fresh news over old big stories", () => {
+  /** A story with one article per [outlet, hoursAgo]. */
+  const storyWith = async (coverage: [string, number][], importa = 0) => {
+    const [story] = await db.insert(stories).values({ importa }).returning();
+    for (const [source, hoursAgo] of coverage) {
+      const a = await article(`Notícia ${n} de ${source}`, "Texto.", source, hoursAgo);
+      await db.update(articles).set({ storyId: story!.id }).where(eq(articles.id, a.id));
+    }
+    return story!.id;
+  };
+  const outlets = (count: number, hoursAgo: number) => Array.from({ length: count }, (_, i): [string, number] => [`o${hoursAgo}-${i}.pt`, hoursAgo + i * 0.1]);
+  const today = async () => (await call("GET", "/today")).body.items as { id: number; recentSourceCount: number; sourceCount: number }[];
+
+  it("at 08:00, 4 outlets since 06:00 beat yesterday afternoon's 13 outlets plus one at 01:30", async () => {
+    // Yesterday 13:00–19:00 (13 to 19 hours ago), then a follow-up at 01:30 (6.5 hours ago).
+    const big = await storyWith([...outlets(13, 13), ["noite.pt", 6.5]]);
+    const fresh = await storyWith(outlets(4, 0.5));
+    const items = await today();
+    expect(items.map((i) => i.id)).toEqual([fresh, big]);
+    expect(items[1]).toMatchObject({ recentSourceCount: 14, sourceCount: 14 });
+    expect(items[0]!.recentSourceCount).toBe(4);
+  });
+
+  it("counts only the window's outlets, and old coverage sinks below fresh", async () => {
+    const old = await storyWith([...outlets(8, 30), ...outlets(2, 20)]);
+    const fresh = await storyWith(outlets(3, 1));
+    const items = await today();
+    expect(items.map((i) => i.id)).toEqual([fresh, old]);
+    expect(items[1]).toMatchObject({ recentSourceCount: 2, sourceCount: 10 });
+  });
+
+  it("still fills the box with yesterday evening's stories on a quiet night, and Importa counts", async () => {
+    const a = await storyWith(outlets(6, 10));
+    const b = await storyWith(outlets(3, 9));
+    const c = await storyWith(outlets(2, 11), 10);
+    expect((await today()).map((i) => i.id)).toEqual([c, a, b]);
+  });
+
+  it("keeps the same order from one request to the next", async () => {
+    await storyWith(outlets(5, 12));
+    await storyWith(outlets(2, 2));
+    await storyWith(outlets(3, 6));
+    const first = (await today()).map((i) => i.id);
+    expect((await today()).map((i) => i.id)).toEqual(first);
+  });
+});
+
 describe("story comments, likes and the debate", () => {
   it("shows comments on the story and old ones on its articles, and takes new ones with a stance", async () => {
     const { ventura, v2 } = await twoStories();

@@ -172,7 +172,8 @@ const storyCommentsSql = sql`(select count(*)::int from comments c left join art
   where c.hidden_at is null and (c.story_id = st.id or (ca.story_id = st.id and ca.hidden_at is null)))`;
 
 /** "Hoje em 5": outlets that told it, plus half a point per Importa mark (up to 5 points). */
-const TODAY_SCORE = sql`(st.source_count + least(s.importa, 10) / 2.0)`;
+/** "Hoje em 5" favours fresh coverage: a story's score halves every this many hours without a new article. */
+const TODAY_HALF_LIFE_HOURS = 6;
 
 export const storyRoutes =
   (db: Db, { voteSecret }: { voteSecret: string }): FastifyPluginAsyncZod =>
@@ -552,18 +553,45 @@ export const storyRoutes =
         schema: {
           tags: ["stories"],
           summary: '"Hoje em 5": the 5 stories that matter most in the last 24 hours',
+          description: `Stories with an article in the last 24 hours. Each outlet that covered it in those 24 hours counts 0.5^(hours since that outlet's latest article on it / ${TODAY_HALF_LIFE_HOURS}), and Importa adds min(0.5 × importa, 5) faded by the story's latest article: fresh coverage beats yesterday's big story, and one follow-up in the night refreshes only its own outlet. Ties: the newest, then the id.`,
           querystring: z.object({ limit: z.coerce.number().int().min(1).max(10).default(5) }),
-          response: { 200: z.object({ items: z.array(storySchema), since: z.string() }) },
+          response: {
+            200: z.object({
+              items: z.array(storySchema.extend({ recentSourceCount: z.number().describe("Outlets with an article about it in the window (since)") })),
+              since: z.string(),
+            }),
+          },
         },
       },
       async (request) => {
-        const since = new Date(Date.now() - 24 * 3_600_000);
-        const rows = await db.execute<StatsRow>(sql`
-          select st.*, s.importa, s.tags from ${storyStats} st join stories s on s.id = st.id
+        const now = new Date();
+        const since = new Date(now.getTime() - 24 * 3_600_000);
+        // Only the window's coverage counts, and each outlet's fades with its own latest article: one
+        // follow-up in the night refreshes that one outlet, not yesterday's whole story. Everything
+        // fades at the same rate, so the order only changes when new articles arrive.
+        const rows = await db.execute<StatsRow & { recent_sources: number }>(sql`
+          select st.*, s.importa, s.tags, recent.sources as recent_sources
+          from ${storyStats} st
+          join stories s on s.id = st.id
+          join lateral (
+            select count(*)::int as sources,
+              coalesce(sum(power(0.5, extract(epoch from (${now.toISOString()}::timestamptz - outlet.latest)) / 3600.0 / ${TODAY_HALF_LIFE_HOURS})), 0) as fresh
+            from (
+              select a.source, max(a.published_at) as latest from articles a
+              where a.story_id = st.id and a.hidden_at is null and a.published_at >= ${since.toISOString()}::timestamptz
+              group by a.source
+            ) outlet
+          ) recent on true
           where st.last_at >= ${since.toISOString()}::timestamptz
-          order by ${TODAY_SCORE} desc, st.last_at desc, st.id desc
+          order by recent.fresh
+              + least(s.importa * 0.5, 5) * power(0.5, extract(epoch from (${now.toISOString()}::timestamptz - st.last_at)) / 3600.0 / ${TODAY_HALF_LIFE_HOURS}) desc,
+            st.last_at desc, st.id desc
           limit ${request.query.limit}`);
-        return { items: (await hydrate(rows.rows)).map((s) => s.card), since: since.toISOString() };
+        const recent = new Map(rows.rows.map((r) => [r.id, r.recent_sources]));
+        return {
+          items: (await hydrate(rows.rows)).map((s) => ({ ...s.card, recentSourceCount: recent.get(s.card.id) ?? 0 })),
+          since: since.toISOString(),
+        };
       },
     );
   };
