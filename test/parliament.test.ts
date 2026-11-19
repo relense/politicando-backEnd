@@ -377,7 +377,13 @@ describe("news and initiatives", () => {
 
     expect(await linkStoredArticles(db)).toMatchObject({ initiativeLinks: 2 });
     const detail = await get("/initiatives/377352");
-    expect(detail.body.coverage).toEqual({ articles: 2, sources: 2, lastAt: "2026-11-12T10:00:00.000Z" });
+    expect(detail.body.coverage).toEqual({
+      articles: 2, sources: 2, lastAt: "2026-11-12T10:00:00.000Z",
+      latest: [
+        { id: expect.any(Number), title: "PS viabiliza Orçamento do Estado", source: "expresso.pt", publishedAt: "2026-11-12T10:00:00.000Z" },
+        { id: a.id, title: "OE2027: Chega apresenta 22 propostas", source: "publico.pt", publishedAt: "2026-11-10T10:00:00.000Z" },
+      ],
+    });
     expect(detail.body.articles).toHaveLength(2);
 
     const { body } = await get("/articles?initiative=377352");
@@ -395,6 +401,7 @@ describe("news and initiatives", () => {
     expect(await ids("coverage=some")).toEqual([2]);
     expect(await ids("coverage=none")).toEqual([5, 1, 3, 4]);
     const [item] = (await get("/initiatives?coverage=some")).body.items;
-    expect(item.coverage).toEqual({ articles: 1, sources: 1, lastAt: "2026-10-01T10:00:00.000Z" });
+    expect(item.coverage).toMatchObject({ articles: 1, sources: 1, lastAt: "2026-10-01T10:00:00.000Z", latest: [{ id: a.id }] });
+    expect((await get("/initiatives?coverage=none")).body.items[0].coverage).toMatchObject({ articles: 0, latest: [] });
   });
 });

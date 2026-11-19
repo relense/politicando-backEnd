@@ -90,6 +90,9 @@ export const initiativeSummarySchema = z.object({
       articles: z.number(),
       sources: z.number().describe("Distinct news outlets"),
       lastAt: z.string().nullable().describe("Latest article about it"),
+      latest: z
+        .array(z.object({ id: z.number(), title: z.string(), source: z.string().describe("The outlet's domain, as on articles"), publishedAt: z.string() }))
+        .describe("Up to 3 visible articles about it, newest first (for the headline and the outlets' logos)"),
     })
     .describe("News about it, found by keywords among the outlets we scan. Approximate"),
   topics: z
@@ -220,7 +223,17 @@ const coverageSql = sql<z.infer<typeof initiativeSummarySchema>["coverage"]>`(
   select json_build_object(
     'articles', count(*)::int,
     'sources', count(distinct a.source)::int,
-    'lastAt', to_char(max(a.published_at) at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+    'lastAt', to_char(max(a.published_at) at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+    'latest', (
+      select coalesce(json_agg(json_build_object('id', l.id, 'title', l.title, 'source', l.source,
+        'publishedAt', to_char(l.published_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')) order by l.published_at desc, l.id desc), '[]'::json)
+      from (
+        select a2.id, a2.title, a2.source, a2.published_at
+        from article_initiatives ai2 join articles a2 on a2.id = ai2.article_id
+        where ai2.initiative_id = initiatives.id and a2.hidden_at is null
+        order by a2.published_at desc, a2.id desc limit 3
+      ) l
+    )
   )
   from article_initiatives ai join articles a on a.id = ai.article_id
   where ai.initiative_id = initiatives.id and a.hidden_at is null
