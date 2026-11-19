@@ -25,6 +25,13 @@ services:
     envVars:
       - key: DATABASE_URL
         fromDatabase: { name: politicando-db, property: connectionString }
+      # Tells the website to refresh its cached pages after a change (src/revalidate.ts, docs/revalidate.md).
+      # e.g. https://www.politicando.pt/api/revalidate, and the same secret as the frontend's REVALIDATE_SECRET
+      # (`openssl rand -hex 32`). Leave both empty to turn the pings off.
+      - key: FRONTEND_REVALIDATE_URL
+        sync: false
+      - key: REVALIDATE_SECRET
+        sync: false
       # Render passes on a client-sent X-Forwarded-For; Cloudflare's True-Client-IP can't be forged.
       - key: CLIENT_IP_HEADER
         value: true-client-ip
@@ -70,6 +77,13 @@ services:
     envVars:
       - key: DATABASE_URL
         fromDatabase: { name: politicando-db, property: connectionString }
+      # Tells the website to refresh its cached pages after a change (src/revalidate.ts, docs/revalidate.md).
+      # e.g. https://www.politicando.pt/api/revalidate, and the same secret as the frontend's REVALIDATE_SECRET
+      # (`openssl rand -hex 32`). Leave both empty to turn the pings off.
+      - key: FRONTEND_REVALIDATE_URL
+        sync: false
+      - key: REVALIDATE_SECRET
+        sync: false
       # IndexNow (Bing and others): the same key the frontend serves at /<key>.txt (public by design).
       - key: INDEXNOW_KEY
         value: 5b5bc5c4-6bd8-482f-97b8-3fabbef46451
@@ -86,6 +100,13 @@ services:
     envVars:
       - key: DATABASE_URL
         fromDatabase: { name: politicando-db, property: connectionString }
+      # Tells the website to refresh its cached pages after a change (src/revalidate.ts, docs/revalidate.md).
+      # e.g. https://www.politicando.pt/api/revalidate, and the same secret as the frontend's REVALIDATE_SECRET
+      # (`openssl rand -hex 32`). Leave both empty to turn the pings off.
+      - key: FRONTEND_REVALIDATE_URL
+        sync: false
+      - key: REVALIDATE_SECRET
+        sync: false
       # Change when a new legislature starts (see src/parliament/legislatures.ts).
       - key: PARLIAMENT_LEGISLATURE
         value: XVII
@@ -101,6 +122,13 @@ services:
     envVars:
       - key: DATABASE_URL
         fromDatabase: { name: politicando-db, property: connectionString }
+      # Tells the website to refresh its cached pages after a change (src/revalidate.ts, docs/revalidate.md).
+      # e.g. https://www.politicando.pt/api/revalidate, and the same secret as the frontend's REVALIDATE_SECRET
+      # (`openssl rand -hex 32`). Leave both empty to turn the pings off.
+      - key: FRONTEND_REVALIDATE_URL
+        sync: false
+      - key: REVALIDATE_SECRET
+        sync: false
 
   # The political calendar: parliament, President, European Parliament. Every 3 hours,
   # since the parliament's and the President's agendas change during the day.
@@ -114,6 +142,13 @@ services:
     envVars:
       - key: DATABASE_URL
         fromDatabase: { name: politicando-db, property: connectionString }
+      # Tells the website to refresh its cached pages after a change (src/revalidate.ts, docs/revalidate.md).
+      # e.g. https://www.politicando.pt/api/revalidate, and the same secret as the frontend's REVALIDATE_SECRET
+      # (`openssl rand -hex 32`). Leave both empty to turn the pings off.
+      - key: FRONTEND_REVALIDATE_URL
+        sync: false
+      - key: REVALIDATE_SECRET
+        sync: false
       - key: PARLIAMENT_LEGISLATURE
         value: XVII
 

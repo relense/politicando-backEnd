@@ -5,6 +5,7 @@ import { createOpenDataClient } from "../parliament/openData.js";
 import { syncParliament } from "../parliament/sync.js";
 import { resolvePredictions } from "../predictions/index.js";
 import { openVoteRounds } from "../predictions/rounds.js";
+import { createRevalidator } from "../revalidate.js";
 
 /** How far back to look for news that new initiatives or deputies now match. */
 const RELINK_DAYS = 30;
@@ -22,6 +23,7 @@ try {
   // "Passa ou chumba?": settle what the new votes decided, and tell the readers.
   console.log(JSON.stringify({ predictions: await resolvePredictions(db) }));
   console.log(JSON.stringify({ voteRounds: await openVoteRounds(db) }));
+  await createRevalidator()(["parliament", "predictions", "news"]);
 } catch (error) {
   console.error("Parliament sync failed:", error);
   process.exitCode = 1;

@@ -7,11 +7,13 @@ import { createPoliteClient } from "../ingestion/politeClient.js";
 import { NEWS_SOURCES } from "../ingestion/sources.js";
 import { syncPodcast } from "../podcast/spotify.js";
 import { changedPages, pingIndexNow } from "../seo/indexNow.js";
+import { createRevalidator } from "../revalidate.js";
 import { assignStories } from "../stories/assign.js";
 
 const config = loadIngestConfig();
 const { db, pool } = createDb(config.DATABASE_URL);
 const client = createPoliteClient();
+const revalidate = createRevalidator();
 // The previous run started an hour ago: from then on, everything new is worth announcing.
 const changedSince = new Date(Date.now() - 61 * 60 * 1000);
 
@@ -31,11 +33,16 @@ try {
   await purgeFeedback(db);
   console.log(JSON.stringify({ prunedNotifications: await pruneNotifications(db) }));
   // And the podcast's newest episode, for the home page. Spotify being down only means it shows a bit later.
+  let podcastChanged = false;
   try {
-    console.log(JSON.stringify({ podcast: await syncPodcast(db) }));
+    const podcast = await syncPodcast(db);
+    podcastChanged = podcast.changed;
+    console.log(JSON.stringify({ podcast }));
   } catch (error) {
     console.error("Podcast:", error instanceof Error ? error.message : error);
   }
+  // The site shows the new news (and episode) now, not when its cached copy expires.
+  await revalidate(podcastChanged ? ["news", "podcast"] : ["news"]);
   if (config.INDEXNOW_KEY) {
     const paths = await changedPages(db, changedSince);
     console.log(JSON.stringify({ indexNow: await pingIndexNow({ key: config.INDEXNOW_KEY, siteUrl: config.SITE_URL, paths }) }));

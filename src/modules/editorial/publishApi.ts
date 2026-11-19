@@ -10,6 +10,7 @@ import { parseMarkdownPost, saveMarkdownPosts } from "../../editorial/markdownFi
 import { ApiError, notFound } from "../../errors.js";
 import multipart from "@fastify/multipart";
 import { MAX_IMAGE_BYTES, imageType, storeImage } from "../../media/images.js";
+import type { Revalidate } from "../../revalidate.js";
 import { errorSchema } from "../shared.js";
 
 /*
@@ -22,7 +23,7 @@ import { errorSchema } from "../shared.js";
 const digest = (value: string) => createHash("sha256").update(value).digest();
 
 export const publishRoutes =
-  (db: Db, keys: readonly string[], { apiUrl = "http://localhost:4000" }: { apiUrl?: string } = {}): FastifyPluginAsyncZod =>
+  (db: Db, keys: readonly string[], { apiUrl = "http://localhost:4000", revalidate = async () => {} }: { apiUrl?: string; revalidate?: Revalidate } = {}): FastifyPluginAsyncZod =>
   async (app) => {
     if (keys.length === 0) return;
     // A cover image as the request body (image/png or image/jpeg), or as a multipart file.
@@ -80,6 +81,8 @@ export const publishRoutes =
         }
         const [saved] = await saveMarkdownPosts(db, [post], { authorName: author, publish: !draft });
         if (saved!.changed) await audit(db, null, draft ? "editorial.api_draft" : "editorial.api_publish", "editorial", post.slug);
+        // Not awaited: the site refreshing never slows or fails the publish.
+        if (saved!.changed && !draft) void revalidate(["blog"]);
         return { slug: post.slug, status: draft ? ("draft" as const) : ("published" as const), created: saved!.created, changed: saved!.changed, url: siteUrl(post.slug) };
       },
     );
@@ -140,6 +143,7 @@ export const publishRoutes =
           .returning({ slug: editorialPosts.slug });
         if (!row) throw notFound("Post");
         await audit(db, null, "editorial.api_unpublish", "editorial", row.slug);
+        void revalidate(["blog"]);
         return reply.status(204).send(null);
       },
     );
