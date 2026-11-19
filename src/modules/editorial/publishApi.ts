@@ -8,6 +8,8 @@ import type { Db } from "../../db/client.js";
 import { editorialPosts } from "../../db/schema.js";
 import { parseMarkdownPost, saveMarkdownPosts } from "../../editorial/markdownFiles.js";
 import { ApiError, notFound } from "../../errors.js";
+import multipart from "@fastify/multipart";
+import { MAX_IMAGE_BYTES, imageType, storeImage } from "../../media/images.js";
 import { errorSchema } from "../shared.js";
 
 /*
@@ -20,9 +22,12 @@ import { errorSchema } from "../shared.js";
 const digest = (value: string) => createHash("sha256").update(value).digest();
 
 export const publishRoutes =
-  (db: Db, keys: readonly string[]): FastifyPluginAsyncZod =>
+  (db: Db, keys: readonly string[], { apiUrl = "http://localhost:4000" }: { apiUrl?: string } = {}): FastifyPluginAsyncZod =>
   async (app) => {
     if (keys.length === 0) return;
+    // A cover image as the request body (image/png or image/jpeg), or as a multipart file.
+    app.addContentTypeParser(["image/png", "image/jpeg"], { parseAs: "buffer", bodyLimit: MAX_IMAGE_BYTES }, (_request, body, done) => done(null, body));
+    await app.register(multipart, { limits: { fileSize: MAX_IMAGE_BYTES, files: 1, fields: 0 } });
     const expected = keys.map(digest);
 
     const requireKey = (request: FastifyRequest) => {
@@ -76,6 +81,41 @@ export const publishRoutes =
         const [saved] = await saveMarkdownPosts(db, [post], { authorName: author, publish: !draft });
         if (saved!.changed) await audit(db, null, draft ? "editorial.api_draft" : "editorial.api_publish", "editorial", post.slug);
         return { slug: post.slug, status: draft ? ("draft" as const) : ("published" as const), created: saved!.created, changed: saved!.changed, url: siteUrl(post.slug) };
+      },
+    );
+
+    app.post(
+      "/publish/image",
+      {
+        config: { rateLimit: { max: 30, timeWindow: "1 minute" } },
+        bodyLimit: MAX_IMAGE_BYTES + 64 * 1024,
+        schema: {
+          tags: ["publish"],
+          summary: "Upload a cover image (PNG or JPG, up to 2 MB): returns a permanent public URL for the cover: field",
+          description:
+            "Send the file as the body (Content-Type image/png or image/jpeg) or as one multipart file. The same file always gets the same URL, so sending it again doesn't duplicate.",
+          response: { 200: z.object({ url: z.string(), created: z.boolean().describe("False when this exact image was already stored") }), 400: errorSchema, 401: errorSchema, 413: errorSchema, 429: errorSchema },
+        },
+      },
+      async (request) => {
+        requireKey(request);
+        let bytes: Buffer | undefined;
+        if (request.isMultipart()) {
+          const file = await request.file();
+          if (file) {
+            bytes = await file.toBuffer().catch((error: unknown) => {
+              if ((error as { code?: string }).code === "FST_REQ_FILE_TOO_LARGE") throw new ApiError(413, "too_large", "Images can be up to 2 MB");
+              throw error;
+            });
+          }
+        } else if (Buffer.isBuffer(request.body)) bytes = request.body;
+        if (!bytes || bytes.length === 0) throw new ApiError(400, "invalid_image", "Send a PNG or JPG, as the body or a multipart file");
+        if (bytes.length > MAX_IMAGE_BYTES) throw new ApiError(413, "too_large", "Images can be up to 2 MB");
+        const type = imageType(bytes);
+        if (!type) throw new ApiError(400, "invalid_image", "Only PNG and JPG images");
+        const { file, created } = await storeImage(db, bytes, type);
+        if (created) await audit(db, null, "media.api_upload", "media", file);
+        return { url: `${apiUrl.replace(/\/$/, "")}/media/${file}`, created };
       },
     );
 

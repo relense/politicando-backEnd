@@ -34,7 +34,7 @@ The feed as stories. Returns `{ items, nextCursor, total }`, paged like `/articl
   "articleCount": 11,
   "sourceCount": 9,
   "sources": [
-    { "name": "rtp.pt", "articleId": 101, "title": "Ventura vai a votos como candidato único…", "url": "https://…", "publishedAt": "…" }
+    { "name": "rtp.pt", "articleId": 101, "title": "Ventura vai a votos como candidato único…", "url": "https://…", "publishedAt": "…", "imageUrl": "https://…jpg" }
   ],
   "parties": [{ "slug": "chega", "acronym": "CH", "name": "Chega" }],
   "deputies": [{ "id": 123, "name": "André Ventura", "party": "chega" }],
@@ -53,8 +53,9 @@ The feed as stories. Returns `{ items, nextCursor, total }`, paged like `/articl
 - `excerpt`: the excerpt of the version whose headline is the `title`.
 - `tags`: see [Tags and "Em debate"](#tags-and-em-debate).
 - `sourceCount`: "N jornais contaram isto". `sources`: one per outlet, first to publish
-  first, each with **its own headline**. Use them for the stack of logos, and for "how each
-  one headlined it" when opened.
+  first, each with **its own headline** and **its own photo** (`imageUrl`, null when that
+  article has none). Use them for the stack of logos, and for "how each one headlined it" when
+  opened. The same on `/stories/:id` and `/today`.
 - `parties`, `deputies`, `government`, `president`, `initiatives`: named across the
   versions, most often first. `people`: everyone with a page named across the versions, most
   often first, same shape as on articles (`{ kind, id, name }`); link the names. Use them for the context strip (below).

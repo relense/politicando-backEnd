@@ -1,4 +1,5 @@
 import multipart from "@fastify/multipart";
+import { imageType } from "../../media/images.js";
 import { and, count, desc, eq, getTableColumns, gte, sql } from "drizzle-orm";
 import type { FastifyRequest } from "fastify";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
@@ -25,12 +26,6 @@ const FEEDBACK_KINDS = ["error", "idea", "broken", "other"] as const;
 const CORRECTION_STATUSES = ["fixed", "checking", "rejected"] as const;
 const MAX_INT = 2_147_483_647;
 
-/** PNG or JPEG by its first bytes, whatever the browser claimed. */
-const imageType = (bytes: Buffer) => {
-  if (bytes.length > 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "image/png";
-  if (bytes.length > 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
-  return null;
-};
 
 const optionalText = (max: number) =>
   z

@@ -24,6 +24,7 @@ const app = await buildApp({
   secureCookies: config.COOKIE_SECURE,
   loginRequired: config.LOGIN_REQUIRED,
   publishKeys: config.PUBLISH_API_KEYS,
+  publicApiUrl: config.PUBLIC_API_URL,
   forumSecret: config.FORUM_SECRET,
   newsletter,
   logger: true,

@@ -624,6 +624,7 @@ describe("platform", () => {
       "/api/v2/stories/{id}/vote",
       "/api/v2/timeline",
       "/api/v2/today",
+      "/media/{file}",
     ]);
   });
 });

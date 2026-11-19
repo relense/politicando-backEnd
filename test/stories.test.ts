@@ -124,7 +124,7 @@ describe("GET /stories", () => {
       commentCount: 0,
     });
     expect(body.items[0].sources.map((s: { name: string }) => s.name)).toEqual(["rtp.pt", "dn.pt", "expresso.pt"]);
-    expect(body.items[0].sources[0]).toMatchObject({ articleId: v1.id, title: v1.title });
+    expect(body.items[0].sources[0]).toMatchObject({ articleId: v1.id, title: v1.title, imageUrl: v1.imageUrl ?? null });
     expect(body.items[1].sourceCount).toBe(1);
 
     const newest = await call("GET", "/stories?limit=1");
@@ -191,6 +191,20 @@ describe("GET /today", () => {
     const { body } = await call("GET", "/today");
     expect(body.items).toHaveLength(2);
     expect(Date.parse(body.since)).toBeLessThan(Date.now() - 23 * HOUR);
+  });
+});
+
+describe("each outlet's photo", () => {
+  it("comes with its source on /stories, /stories/:id and /today, null when it has none", async () => {
+    const { ventura, v2, v3 } = await twoStories();
+    await db.update(articles).set({ imageUrl: "https://dn.pt/foto.jpg" }).where(eq(articles.id, v2.id));
+    await db.update(articles).set({ imageUrl: null }).where(eq(articles.id, v3.id));
+    const photos = (sources: { name: string; imageUrl: string | null }[]) => Object.fromEntries(sources.map((s) => [s.name, s.imageUrl]));
+    const card = (await call("GET", `/stories?ids=${ventura}`)).body.items[0];
+    expect(photos(card.sources)).toMatchObject({ "dn.pt": "https://dn.pt/foto.jpg", "expresso.pt": null });
+    expect(photos((await call("GET", `/stories/${ventura}`)).body.sources)).toMatchObject({ "dn.pt": "https://dn.pt/foto.jpg" });
+    const today = (await call("GET", "/today")).body.items.find((s: { id: number }) => s.id === ventura);
+    expect(photos(today.sources)).toMatchObject({ "dn.pt": "https://dn.pt/foto.jpg", "expresso.pt": null });
   });
 });
 

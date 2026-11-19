@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { isIP } from "node:net";
 import cookie from "@fastify/cookie";
@@ -31,6 +32,7 @@ import { forumRoutes } from "./modules/forums/routes.js";
 import { agendaRoutes } from "./modules/agenda/routes.js";
 import { editorialRoutes } from "./modules/editorial/routes.js";
 import { publishRoutes } from "./modules/editorial/publishApi.js";
+import { loadImage } from "./media/images.js";
 import { feedbackRoutes } from "./modules/feedback/routes.js";
 import { seoRoutes } from "./modules/seo/routes.js";
 import { placeRoutes } from "./modules/places/routes.js";
@@ -89,6 +91,8 @@ export interface AppOptions {
   registerLimitPerHour?: number;
   /** Keys that may publish blog posts through POST /publish. None: the route doesn't exist. */
   publishKeys?: readonly string[];
+  /** This API's public address, for the URLs of uploaded images. */
+  publicApiUrl?: string;
 }
 
 const errorBody = (code: string, message: string) => ({ error: { code, message } });
@@ -112,6 +116,7 @@ export const buildApp = async ({
   loginRequired = [],
   registerLimitPerHour = 3,
   publishKeys = [],
+  publicApiUrl,
 }: AppOptions) => {
   const proxied = trustProxy || clientIpHeader !== undefined;
   const app = Fastify({ logger, trustProxy: proxied || frontendKey !== undefined, bodyLimit: 64 * 1024 });
@@ -199,6 +204,21 @@ export const buildApp = async ({
 
   const typed = app.withTypeProvider<ZodTypeProvider>();
 
+  // Uploaded images (blog covers): permanent, so cached for a year by browsers and CDNs.
+  typed.get(
+    "/media/:file",
+    { schema: { tags: ["publish"], summary: "An uploaded image, by the URL POST /publish/image returned", params: z.object({ file: z.string().max(80) }) } },
+    async (request, reply) => {
+      const image = await loadImage(db, request.params.file);
+      if (!image) throw new ApiError(404, "not_found", "Image not found");
+      return reply
+        .header("Content-Type", image.contentType)
+        .header("Cache-Control", "public, max-age=31536000, immutable")
+        .header("Content-Disposition", "inline")
+        .send(image.bytes);
+    },
+  );
+
   typed.get("/health", { schema: { hide: true } }, async (request, reply) => {
     try {
       await db.execute(sql`select 1`);
@@ -231,7 +251,7 @@ export const buildApp = async ({
       await api.register(adminForumRoutes(db));
       await api.register(adminUserRoutes(db));
       await api.register(editorialRoutes(db, { voteSecret: forumSecret }));
-      await api.register(publishRoutes(db, publishKeys));
+      await api.register(publishRoutes(db, publishKeys, { apiUrl: publicApiUrl }));
       await api.register(agendaRoutes(db));
       await api.register(feedbackRoutes({ db, verifyRecaptcha, mailer, limitPerHour: feedbackLimitPerHour }));
       await api.register(seoRoutes(db));

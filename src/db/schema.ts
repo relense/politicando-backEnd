@@ -1415,3 +1415,16 @@ export const voteRounds = pgTable("vote_rounds", {
   /** When we first saw it on the agenda. */
   openedAt: timestamp("opened_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * Images uploaded with the publish key (blog covers), served at /media/<hash>.<ext>. Keyed by the
+ * SHA-256 of their content: the same file always gets the same URL, so republishing doesn't
+ * duplicate. Never changed once stored, so they're cached for a year.
+ */
+export const media = pgTable("media", {
+  hash: text().primaryKey(),
+  contentType: text("content_type").notNull(),
+  bytes: bytea().notNull(),
+  size: integer().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
