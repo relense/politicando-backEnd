@@ -13,8 +13,11 @@ import {
   endReaderSessions,
   readerCookieOptions,
 } from "../../accounts/sessions.js";
+import { readResetToken, readVerifyToken, passwordFingerprint, resetToken, verifyToken, RESET_TTL_HOURS, VERIFY_TTL_HOURS } from "../../accounts/emailTokens.js";
 import type { Db } from "../../db/client.js";
+import { type NewsletterSettings, normalEmail } from "../../newsletter/subscribe.js";
 import {
+  newsletterSubscribers,
   SAVE_KINDS,
   type SaveKind,
   articleVotes,
@@ -57,7 +60,23 @@ const usernameSchema = z
   .trim()
   .regex(/^[A-Za-z0-9_]{3,20}$/, "3 to 20 letters, digits or _");
 const passwordSchema = z.string().min(8).max(200);
-const userSchema = z.object({ id: z.number(), username: z.string(), createdAt: z.string() });
+const userSchema = z.object({
+  id: z.number(),
+  username: z.string(),
+  createdAt: z.string(),
+  email: z.string().nullable().describe("Private: only ever shown to the reader themselves"),
+  emailConfirmed: z.boolean().describe("Confirmed by the link we emailed; only then does it recover the password"),
+  newsletter: z
+    .enum(["none", "pending", "confirmed"])
+    .describe("The weekly newsletter for this email: pending until the email (or the newsletter's own link) is confirmed"),
+  askForEmail: z
+    .boolean()
+    .describe("Show the \"add an email so you don't lose the account\" prompt: no confirmed email, and not dismissed in the last 30 days"),
+});
+/** How long "Agora não" quiets the add-an-email prompt. */
+const REMIND_AFTER_DAYS = 30;
+/** One reset email per account this often, so the form can't flood an inbox. */
+const RESET_EVERY_MINUTES = 10;
 const idSchema = z.coerce.number().int().positive().max(MAX_INT);
 const muteValue = { source: /^[a-z0-9.-]{1,100}$/, party: /^[a-z0-9-]{1,40}$/ } as const;
 
@@ -111,12 +130,18 @@ export interface AccountRouteOptions {
   secureCookies: boolean;
   loginLimitPerMinute?: number;
   registerLimitPerHour?: number;
+  /** Mail and the signing secret (the newsletter's): without it, account emails answer 503. */
+  mail?: NewsletterSettings | null;
 }
 
 export const accountRoutes =
-  ({ db, verifyRecaptcha, secureCookies, loginLimitPerMinute = 5, registerLimitPerHour = 3 }: AccountRouteOptions): FastifyPluginAsyncZod =>
+  ({ db, verifyRecaptcha, secureCookies, loginLimitPerMinute = 5, registerLimitPerHour = 3, mail = null }: AccountRouteOptions): FastifyPluginAsyncZod =>
   async (app) => {
     const cookie = readerCookieOptions(secureCookies);
+    // Everything here is about the reader (and now their email): never cached by anyone else.
+    app.addHook("onSend", async (_request, reply) => {
+      reply.header("Cache-Control", "private, no-store");
+    });
     const failures = new Map<string, { count: number; until: number }>();
 
     const requireReader = (request: FastifyRequest): Reader => {
@@ -140,7 +165,64 @@ export const accountRoutes =
       if (!human) throw new ApiError(403, "recaptcha_failed", "reCAPTCHA verification failed");
     };
 
-    const publicUser = (u: { id: number; username: string; createdAt: Date }) => ({ id: u.id, username: u.username, createdAt: u.createdAt.toISOString() });
+    /** The newsletter for the account's email: subscribed, waiting for the email's confirmation, or not. */
+    const newsletterOf = async (email: string | null): Promise<"none" | "pending" | "confirmed"> => {
+      if (!email) return "none";
+      const [row] = await db.select({ confirmedAt: newsletterSubscribers.confirmedAt }).from(newsletterSubscribers).where(eq(newsletterSubscribers.email, email));
+      return !row ? "none" : row.confirmedAt ? "confirmed" : "pending";
+    };
+
+    const publicUser = async (u: typeof users.$inferSelect) => ({
+      id: u.id,
+      username: u.username,
+      createdAt: u.createdAt.toISOString(),
+      email: u.email,
+      emailConfirmed: u.emailConfirmedAt !== null,
+      askForEmail: u.emailConfirmedAt === null && (u.emailRemindedAt === null || Date.now() - u.emailRemindedAt.getTime() > REMIND_AFTER_DAYS * 86_400_000),
+      newsletter: await newsletterOf(u.email),
+    });
+
+    // --- Account emails ---------------------------------------------------------------
+    // Links open pages on the website, where a button does the work: mail scanners open every link.
+
+    const sitePage = (path: string, token: string) => `${mail!.siteUrl.replace(/\/$/, "")}${path}?token=${encodeURIComponent(token)}`;
+    const requireMail = () => {
+      if (!mail) throw new ApiError(503, "mail_unavailable", "Email isn't available right now");
+      return mail;
+    };
+
+    /** Emails the link that confirms the address (and, when asked, the newsletter with it). False when it couldn't be sent. */
+    const sendVerification = async (request: FastifyRequest, user: { id: number; username: string }, email: string, newsletter: boolean) => {
+      const settings = requireMail();
+      try {
+        await settings.mailer({
+          to: email,
+          subject: "Confirma o teu email no Politicando",
+          text: [
+            "Olá,",
+            "",
+            `Este endereço foi indicado para a conta «${user.username}» no Politicando.`,
+            newsletter ? "Ao confirmares, ficas também inscrito na newsletter semanal." : "",
+            "Para confirmar, abre esta ligação e carrega em «Confirmar»:",
+            "",
+            sitePage("/conta/confirmar-email", verifyToken(settings.secret, user.id, email)),
+            "",
+            `A ligação é válida durante ${VERIFY_TTL_HOURS / 24} dias. Com o email confirmado, podes recuperar a conta se te esqueceres da palavra-passe.`,
+            "Se não foste tu, ignora este email: sem confirmação, não acontece nada.",
+          ]
+            .filter((line, i, all) => line !== "" || all[i - 1] !== "")
+            .join("\n"),
+        });
+        return true;
+      } catch (error) {
+        request.log.error(error, "Account email confirmation failed");
+        return false;
+      }
+    };
+
+    /** Pending until the account's email is confirmed, which confirms it too (one email for both). */
+    const wantNewsletter = (email: string) => db.insert(newsletterSubscribers).values({ email }).onConflictDoNothing();
+    const lastReset = new Map<number, number>();
 
     /** Keeps the newest `cap` rows of one list. */
     const trim = async (table: "user_saves" | "user_hidden" | "user_mutes" | "user_reads", userId: number, cap: number, kind?: string) => {
@@ -192,24 +274,49 @@ export const accountRoutes =
         schema: {
           tags: ["accounts"],
           summary: "Create an account and log in (sets an httpOnly session cookie scoped to /api/v2)",
-          body: z.strictObject({ username: usernameSchema, password: passwordSchema, recaptchaToken: z.string().min(1).max(4_096) }),
-          response: { 201: z.object({ user: userSchema }), 400: errorSchema, 403: errorSchema, 409: errorSchema, 429: errorSchema, 503: errorSchema },
+          description:
+            "`email` is optional (private; confirmed by a link, then it recovers the password). `newsletter: true` needs it and subscribes the same address once confirmed.",
+          body: z.strictObject({
+            username: usernameSchema,
+            password: passwordSchema,
+            recaptchaToken: z.string().min(1).max(4_096),
+            email: z.string().max(320).nullish(),
+            newsletter: z.boolean().default(false),
+          }),
+          response: {
+            201: z.object({
+              user: userSchema,
+              emailSent: z.boolean().optional().describe("Present when an email was given: whether the confirmation went out"),
+              newsletter: z.literal("pending").optional().describe("Subscribed, pending the email's confirmation"),
+            }),
+            400: errorSchema,
+            403: errorSchema,
+            409: errorSchema,
+            429: errorSchema,
+            503: errorSchema,
+          },
         },
       },
       async (request, reply) => {
-        const { username, password, recaptchaToken } = request.body;
+        const { username, password, recaptchaToken, newsletter } = request.body;
         if (RESERVED.has(username.toLowerCase())) throw new ApiError(409, "username_taken", "That username is taken");
         assertPublishable(username);
+        const given = request.body.email?.trim() ? normalEmail(request.body.email) : null;
+        if ((request.body.email?.trim() && !given) || (newsletter && !given)) throw new ApiError(400, "invalid_email", "That is not a valid email address");
+        if (given) requireMail();
         await checkHuman(recaptchaToken, request);
         let created;
         try {
-          [created] = await db.insert(users).values({ username, passwordHash: await hashPassword(password), lastLoginAt: new Date() }).returning();
+          [created] = await db.insert(users).values({ username, passwordHash: await hashPassword(password), lastLoginAt: new Date(), email: given }).returning();
         } catch (error) {
           if (pgCode(error) === "23505") throw new ApiError(409, "username_taken", "That username is taken");
           throw error;
         }
         await startSession(reply, created!.id);
-        return reply.status(201).send({ user: publicUser(created!) });
+        if (!given) return reply.status(201).send({ user: (await publicUser(created!)) });
+        if (newsletter) await wantNewsletter(given);
+        const emailSent = await sendVerification(request, created!, given, newsletter);
+        return reply.status(201).send({ user: (await publicUser(created!)), emailSent, ...(newsletter && { newsletter: "pending" as const }) });
       },
     );
 
@@ -245,7 +352,7 @@ export const accountRoutes =
         failures.delete(name);
         await db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, user.id));
         await startSession(reply, user.id);
-        return { user: publicUser(user) };
+        return { user: (await publicUser(user)) };
       },
     );
 
@@ -260,6 +367,123 @@ export const accountRoutes =
       },
     );
 
+    app.post(
+      "/auth/email/confirm",
+      {
+        config: { rateLimit: { max: 20, timeWindow: "1 minute" } },
+        schema: {
+          tags: ["accounts"],
+          summary: "The «Confirmar» button on /conta/confirmar-email: confirms the account's email (and the newsletter, if asked for)",
+          description: "Works logged out too (the link may be opened on another device). Call it on the button press, never on page load.",
+          body: z.strictObject({ token: z.string().max(1_000) }),
+          response: { 200: z.object({ status: z.literal("confirmed"), newsletter: z.boolean() }), 400: errorSchema, 409: errorSchema },
+        },
+      },
+      async (request) => {
+        const read = mail ? readVerifyToken(mail.secret, request.body.token) : null;
+        if (!read) throw new ApiError(400, "invalid_token", "The link is not valid or has expired");
+        let confirmed;
+        try {
+          [confirmed] = await db
+            .update(users)
+            .set({ emailConfirmedAt: sql`coalesce(${users.emailConfirmedAt}, now())` })
+            .where(and(eq(users.id, read.userId), eq(users.email, read.email), sql`${users.disabledAt} is null`))
+            .returning({ id: users.id });
+        } catch (error) {
+          if (pgCode(error) === "23505") throw new ApiError(409, "email_taken", "Another account already uses this email");
+          throw error;
+        }
+        // No row: the account changed its email since, or is gone.
+        if (!confirmed) throw new ApiError(400, "invalid_token", "The link is no longer valid");
+        const [subscribed] = await db
+          .update(newsletterSubscribers)
+          .set({ confirmedAt: sql`coalesce(${newsletterSubscribers.confirmedAt}, now())` })
+          .where(eq(newsletterSubscribers.email, read.email))
+          .returning({ email: newsletterSubscribers.email });
+        return { status: "confirmed" as const, newsletter: subscribed !== undefined };
+      },
+    );
+
+    app.post(
+      "/auth/password/forgot",
+      {
+        config: { rateLimit: { max: loginLimitPerMinute, timeWindow: "1 minute" } },
+        schema: {
+          tags: ["accounts"],
+          summary: "\"Esqueci-me da palavra-passe\": emails a reset link to the account with this confirmed email",
+          description: `Always 202, so it never tells whether an address has an account. The link (with the username, in case that's what was forgotten) is valid for ${RESET_TTL_HOURS} hour and works once.`,
+          body: z.strictObject({ email: z.string().max(320), recaptchaToken: z.string().min(1).max(4_096) }),
+          response: { 202: z.object({ status: z.literal("sent") }), 400: errorSchema, 403: errorSchema, 429: errorSchema, 503: errorSchema },
+        },
+      },
+      async (request, reply) => {
+        const email = normalEmail(request.body.email);
+        if (!email) throw new ApiError(400, "invalid_email", "That is not a valid email address");
+        const settings = requireMail();
+        await checkHuman(request.body.recaptchaToken, request);
+        const [user] = await db
+          .select()
+          .from(users)
+          .where(and(eq(users.email, email), sql`${users.emailConfirmedAt} is not null and ${users.disabledAt} is null`));
+        const last = user ? lastReset.get(user.id) : undefined;
+        if (user && (last === undefined || Date.now() - last > RESET_EVERY_MINUTES * 60_000)) {
+          if (lastReset.size > 10_000) lastReset.clear();
+          lastReset.set(user.id, Date.now());
+          try {
+            await settings.mailer({
+              to: email,
+              subject: "Recuperar a tua conta no Politicando",
+              text: [
+                "Olá,",
+                "",
+                `Pediram para mudar a palavra-passe da conta «${user.username}» no Politicando.`,
+                "Para escolheres uma nova, abre esta ligação:",
+                "",
+                sitePage("/conta/nova-palavra-passe", resetToken(settings.secret, user.id, user.passwordHash)),
+                "",
+                `A ligação é válida durante ${RESET_TTL_HOURS} hora e só funciona uma vez. Se não foste tu, ignora este email: a palavra-passe fica igual.`,
+              ].join("\n"),
+            });
+          } catch (error) {
+            // Same answer either way: a failure here mustn't tell that the address has an account.
+            request.log.error(error, "Password reset email failed");
+          }
+        }
+        return reply.status(202).send({ status: "sent" as const });
+      },
+    );
+
+    app.post(
+      "/auth/password/reset",
+      {
+        config: { rateLimit: { max: loginLimitPerMinute, timeWindow: "1 minute" } },
+        schema: {
+          tags: ["accounts"],
+          summary: "Sets a new password from the reset link (/conta/nova-palavra-passe), logs out everywhere else and logs in here",
+          body: z.strictObject({ token: z.string().max(1_000), password: passwordSchema }),
+          response: { 200: z.object({ user: userSchema }), 400: errorSchema, 429: errorSchema },
+        },
+      },
+      async (request, reply) => {
+        const read = mail ? readResetToken(mail.secret, request.body.token) : null;
+        const [user] = read ? await db.select().from(users).where(eq(users.id, read.userId)) : [];
+        if (!read || !user || user.disabledAt || passwordFingerprint(user.passwordHash) !== read.fingerprint) {
+          throw new ApiError(400, "invalid_token", "The link is not valid, has expired or was already used");
+        }
+        const [updated] = await db
+          .update(users)
+          .set({ passwordHash: await hashPassword(request.body.password), lastLoginAt: new Date() })
+          .where(and(eq(users.id, user.id), eq(users.passwordHash, user.passwordHash)))
+          .returning();
+        if (!updated) throw new ApiError(400, "invalid_token", "The link was already used");
+        await endReaderSessions(db, user.id);
+        failures.delete(user.username.toLowerCase());
+        lastReset.delete(user.id);
+        await startSession(reply, user.id);
+        return { user: (await publicUser(updated)) };
+      },
+    );
+
     // --- The account -------------------------------------------------------------------
 
     app.get(
@@ -268,7 +492,120 @@ export const accountRoutes =
       async (request) => {
         const reader = requireReader(request);
         const [user] = await db.select().from(users).where(eq(users.id, reader.id));
-        return publicUser(user!);
+        return (await publicUser(user!));
+      },
+    );
+
+    app.put(
+      "/me/email",
+      {
+        config: { rateLimit: { max: 5, timeWindow: "1 hour" } },
+        schema: {
+          tags: ["accounts"],
+          summary: "Add or change the account's email: stored unconfirmed and a confirmation link is emailed",
+          description: "The same confirmed address again changes nothing. `newsletter: true` also subscribes it, once confirmed.",
+          body: z.strictObject({ email: z.string().max(320), newsletter: z.boolean().default(false) }),
+          response: { 200: z.object({ user: userSchema, emailSent: z.boolean() }), ...errors, 429: errorSchema, 503: errorSchema },
+        },
+      },
+      async (request, reply) => {
+        const reader = requireReader(request);
+        const email = normalEmail(request.body.email);
+        if (!email) throw new ApiError(400, "invalid_email", "That is not a valid email address");
+        requireMail();
+        reply.header("Cache-Control", "private, no-store");
+        const [current] = await db.select().from(users).where(eq(users.id, reader.id));
+        if (current!.email === email && current!.emailConfirmedAt) {
+          if (request.body.newsletter) {
+            await wantNewsletter(email);
+            await db.update(newsletterSubscribers).set({ confirmedAt: sql`coalesce(${newsletterSubscribers.confirmedAt}, now())` }).where(eq(newsletterSubscribers.email, email));
+          }
+          return { user: (await publicUser(current!)), emailSent: false };
+        }
+        const [updated] = await db.update(users).set({ email, emailConfirmedAt: null }).where(eq(users.id, reader.id)).returning();
+        if (request.body.newsletter) await wantNewsletter(email);
+        return { user: (await publicUser(updated!)), emailSent: await sendVerification(request, updated!, email, request.body.newsletter) };
+      },
+    );
+
+    app.delete(
+      "/me/email",
+      {
+        schema: {
+          tags: ["accounts"],
+          summary: "Remove the account's email (the newsletter, if subscribed, is separate: its emails carry their own unsubscribe link)",
+          response: { 204: z.null(), 401: errorSchema },
+        },
+      },
+      async (request, reply) => {
+        const reader = requireReader(request);
+        await db.update(users).set({ email: null, emailConfirmedAt: null }).where(eq(users.id, reader.id));
+        return reply.status(204).send(null);
+      },
+    );
+
+    app.post(
+      "/me/email/remind-later",
+      {
+        schema: {
+          tags: ["accounts"],
+          summary: `"Agora não" on the add-an-email prompt: askForEmail stays false for ${REMIND_AFTER_DAYS} days`,
+          response: { 204: z.null(), 401: errorSchema },
+        },
+      },
+      async (request, reply) => {
+        const reader = requireReader(request);
+        await db.update(users).set({ emailRemindedAt: new Date() }).where(eq(users.id, reader.id));
+        return reply.status(204).send(null);
+      },
+    );
+
+    app.put(
+      "/me/newsletter",
+      {
+        config: { rateLimit: { max: 10, timeWindow: "1 hour" } },
+        schema: {
+          tags: ["accounts"],
+          summary: "The profile's newsletter switch, on: subscribes the account's email",
+          description:
+            "With a confirmed email it's subscribed at once (confirmed). With an unconfirmed one it's pending, and the confirmation email is sent again: confirming the email confirms both. 409 no_email without an email (ask for one first).",
+          response: { 200: z.object({ newsletter: z.enum(["pending", "confirmed"]), emailSent: z.boolean() }), ...errors, 409: errorSchema, 429: errorSchema, 503: errorSchema },
+        },
+      },
+      async (request) => {
+        const reader = requireReader(request);
+        const [user] = await db.select().from(users).where(eq(users.id, reader.id));
+        if (!user!.email) throw new ApiError(409, "no_email", "Add an email to the account first");
+        if (user!.emailConfirmedAt) {
+          await db
+            .insert(newsletterSubscribers)
+            .values({ email: user!.email, confirmedAt: new Date() })
+            .onConflictDoUpdate({ target: newsletterSubscribers.email, set: { confirmedAt: sql`coalesce(${newsletterSubscribers.confirmedAt}, now())` } });
+          return { newsletter: "confirmed" as const, emailSent: false };
+        }
+        if ((await newsletterOf(user!.email)) === "confirmed") return { newsletter: "confirmed" as const, emailSent: false };
+        requireMail();
+        const added = await wantNewsletter(user!.email).returning({ email: newsletterSubscribers.email });
+        // Newly asked: the confirmation goes again (it now says it confirms the newsletter too).
+        const emailSent = added.length > 0 ? await sendVerification(request, user!, user!.email, true) : false;
+        return { newsletter: "pending" as const, emailSent };
+      },
+    );
+
+    app.delete(
+      "/me/newsletter",
+      {
+        schema: {
+          tags: ["accounts"],
+          summary: "The profile's newsletter switch, off: unsubscribes the account's email",
+          response: { 204: z.null(), 401: errorSchema },
+        },
+      },
+      async (request, reply) => {
+        const reader = requireReader(request);
+        const [user] = await db.select({ email: users.email }).from(users).where(eq(users.id, reader.id));
+        if (user?.email) await db.delete(newsletterSubscribers).where(eq(newsletterSubscribers.email, user.email));
+        return reply.status(204).send(null);
       },
     );
 
@@ -578,7 +915,7 @@ export const accountRoutes =
           .where(eq(reports.userId, userId));
         reply.header("Content-Disposition", 'attachment; filename="politicando-conta.json"').header("Cache-Control", "private, no-store");
         return {
-          user: { ...publicUser(user!), lastLoginAt: user!.lastLoginAt?.toISOString() ?? null },
+          user: { ...(await publicUser(user!)), lastLoginAt: user!.lastLoginAt?.toISOString() ?? null },
           state: await state(userId),
           activity: await activity(userId, true),
           reports: own.map((r) => ({ ...r, createdAt: r.createdAt.toISOString() })),

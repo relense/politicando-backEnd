@@ -1255,8 +1255,17 @@ export const users = pgTable(
     lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
     /** Set by a moderator: the account can't log in or take part. */
     disabledAt: timestamp("disabled_at", { withTimezone: true }),
+    /** Optional, private (never shown to anyone else), stored lowercase. Only once confirmed does it reset the password. */
+    email: text(),
+    emailConfirmedAt: timestamp("email_confirmed_at", { withTimezone: true }),
+    /** When they last said "not now" to adding an email (the reminder comes back after a while). */
+    emailRemindedAt: timestamp("email_reminded_at", { withTimezone: true }),
   },
-  (table) => [uniqueIndex("users_username_idx").on(sql`lower(${table.username})`)],
+  (table) => [
+    uniqueIndex("users_username_idx").on(sql`lower(${table.username})`),
+    // Unique once confirmed: typing someone else's address can't block it, confirming it can't steal it.
+    uniqueIndex("users_confirmed_email_idx").on(table.email).where(sql`${table.emailConfirmedAt} is not null`),
+  ],
 );
 
 export const userSessions = pgTable(

@@ -1,7 +1,8 @@
 # Reader accounts API
 
-Readers have accounts made of a **public username and a password**, with no email. There's no
-mail provider yet, so there's no email verification and no "forgot password". Once the backend
+Readers have accounts made of a **public username and a password**, plus an **optional,
+private email**. Once confirmed, the email recovers the account ("esqueci-me da palavra-passe")
+and can subscribe the newsletter. It's never shown to anyone else. Once the backend
 setting is on, an account is needed to **comment, post in the forum, vote, like, mark "Importa"
 and report**. Reading never needs one.
 
@@ -36,15 +37,22 @@ account and their comments carry their username.
 ### `POST /auth/register`
 
 ```json
-{ "username": "ana_silva", "password": "…", "recaptchaToken": "…" }
+{ "username": "ana_silva", "password": "…", "recaptchaToken": "…", "email": "ana@example.pt", "newsletter": true }
 ```
 
+- `email` and `newsletter` are optional. Show the email as "Email (opcional): para recuperares a
+  conta se te esqueceres da palavra-passe", and the box **unticked**: "Quero receber a newsletter
+  semanal". `newsletter: true` needs an email.
 - Username: 3–20 letters, digits or `_`. Shown as typed, unique ignoring case, and screened like
   comments (no personal data or hate). Names such as `admin`, `politicando` and `moderador` are
   reserved.
 - Password: 8–200 characters.
-- 201 `{ "user": { "id", "username", "createdAt" } }`, sets the cookie (they're logged in).
-- 409 `username_taken`; 400 for a malformed name or a short password; 403 `recaptcha_failed`.
+- 201 `{ "user": { "id", "username", "createdAt", "email", "emailConfirmed", "askForEmail", "newsletter" } }`,
+  sets the cookie (they're logged in). With an email, also `emailSent` (whether the confirmation
+  went out) and, with the box ticked, `"newsletter": "pending"`. Show "Enviámos-te um email para
+  confirmares o endereço" (and the newsletter).
+- 409 `username_taken`; 400 for a malformed name or a short password, or `invalid_email`;
+  403 `recaptcha_failed`; 503 `mail_unavailable` when an email was given but mail is off.
 - 3 sign-ups an hour per IP.
 
 ### `POST /auth/login`
@@ -61,11 +69,47 @@ account and their comments carry their username.
 
 ### `POST /auth/logout` → 204, ends this session and clears the cookie.
 
+## The email
+
+**Confirming.** The email links to `/conta/confirmar-email?token=…` on the site. That page shows
+"Confirma o teu email" and a **Confirmar** button, which calls `POST /auth/email/confirm`
+`{ token }`. **Only on the button, never on page load**: mail scanners open every link.
+- 200 `{ "status": "confirmed", "newsletter": true|false }` ("Email confirmado", plus "e estás
+  inscrito na newsletter" when `newsletter`).
+- 400 `invalid_token`: expired (7 days), changed since, or broken. Offer to send it again from
+  the profile (`PUT /me/email`).
+- 409 `email_taken`: another account confirmed it first.
+- Works logged out (the link may be opened on another device).
+
+**The prompt.** When `askForEmail` is true (no confirmed email, not dismissed in the last 30
+days), show a gentle prompt, in the profile and once in a while after logging in: "Junta um email
+para não perderes a conta se te esqueceres da palavra-passe", with **Adicionar** (`PUT /me/email`)
+and **Agora não** (`POST /me/email/remind-later`). An unconfirmed email still asks, so it can be
+confirmed or corrected.
+
+**Forgot password.** On the login screen, "Esqueci-me da palavra-passe" asks for the email:
+`POST /auth/password/forgot` `{ email, recaptchaToken }` always answers 202 `{ "status": "sent" }`.
+Show "Se este email estiver confirmado numa conta, enviámos uma ligação." Only confirmed emails
+get it, at most once every 10 minutes. The email includes the username, in case that was what
+they forgot.
+- The link opens `/conta/nova-palavra-passe?token=…`: a new-password form calling
+  `POST /auth/password/reset` `{ token, password }`.
+- 200 `{ user }`: the password changed, every other session is logged out and this one is logged
+  in (cookie set).
+- 400 `invalid_token`: expired (1 hour), already used, or broken. Offer to ask again.
+- Without a confirmed email, a forgotten password still means a lost account: that's what the
+  prompt is for.
+
 ## The account
 
 | Call | What |
 |---|---|
-| `GET /me` | `{ id, username, createdAt }`, or 401 |
+| `GET /me` | `{ id, username, createdAt, email, emailConfirmed, askForEmail, newsletter }`, or 401. `newsletter`: `"none"`, `"pending"` or `"confirmed"` |
+| `PUT /me/newsletter` | The profile's newsletter switch, on: 200 `{ newsletter, emailSent }`. A confirmed email is `"confirmed"` at once; an unconfirmed one is `"pending"` and the confirmation email goes again (confirming the email confirms both). 409 `no_email` without an email: offer to add one |
+| `DELETE /me/newsletter` | Switch off: 204, unsubscribes the account's email |
+| `PUT /me/email` `{ email, newsletter? }` | Add or change the email: 200 `{ user, emailSent }`; a confirmation link is emailed. 5 an hour |
+| `DELETE /me/email` | 204, removes it (a newsletter subscription stays, with its own unsubscribe link) |
+| `POST /me/email/remind-later` | 204, "Agora não": `askForEmail` is false for 30 days |
 | `PUT /me/password` `{ current, new }` | 204; logs out every other session. 401 if `current` is wrong |
 | `GET /me/activity` | Their own visible comments and forum threads and replies, newest first (100 of each) |
 | `GET /me/export` | Everything stored about them, as a JSON download (GDPR access) |
