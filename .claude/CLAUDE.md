@@ -11,8 +11,8 @@ in `README.md`.
 - **Backend only.** Another agent builds the frontend (`../politicando-frontEnd`): read it to understand what it calls, never edit it. For every feature, deliver the API, its doc in `docs/`, and a short paste-ready note for the frontend agent.
 - **Admin screens are only for moderation and feedback.** Content (blog posts, newsletter issues) comes from repo files or from automation through the publish API key, not admin editors.
 - **Product principles:**
-  - No karma, no public profile pages, no leaderboards, no upvotes on forum replies.
-  - Discussion is ordered by activity, never by popularity.
+  - No karma, no public profile pages, no leaderboards, no upvotes on forum replies. The one exception is the ideas board (`ideias`): there, replies take votes, because it's feedback for the team rather than discussion.
+  - Discussion is ordered by activity, never by popularity. On the ideas board too, replies default to oldest first; sorting by votes is something the reader picks.
   - Moderation is 4chan-style: rudeness is allowed, illegal content isn't.
   - Inboxes, follows and prediction records are private to the account.
 - **Deferred:** the X/Twitter feed (cost). Don't scrape the Entidade para a Transparência without asking.

@@ -117,6 +117,10 @@ All return 204 (404 if unknown):
 - `POST /admin/forum/threads/:id/pin` and `/unpin`: pinned threads come first on their board.
 - `POST /admin/forum/posts/:id/hide` and `/unhide`: hidden replies show as removed.
 
+Replying as the team: `POST /admin/forum/threads/:id/posts` with `{ "body": "…", "replyTo": 31 }`
+(`replyTo` optional). Returns 201 `{ id }`. The post is signed "Politicando" with `team: true`,
+works in locked threads, and notifies like any reply. Ideas' statuses: see `docs/forums-api.md`.
+
 ## Audit log (role moderator)
 
 `GET /admin/audit?entity=&entityId=&before=&limit=` returns every change, newest first:

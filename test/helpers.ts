@@ -8,7 +8,7 @@ export const createTestDb = () => createDb(testDatabaseUrl());
 
 export const resetDb = async (db: Db) => {
   await db.execute(
-    sql`truncate budget_summaries, budget_bills, budget_votes, budget_proposals, budget_sources, media, article_views, editorial_votes, comment_likes, story_votes, article_votes, editorial_views, corrections, feedback_messages, forum_votes, agenda_events, past_initiatives, comments, article_parties, article_deputies, article_initiatives, articles, seen_source_uris,
+    sql`truncate budget_summaries, budget_bills, budget_votes, budget_proposals, budget_sources, media, article_views, editorial_votes, comment_likes, story_votes, article_votes, editorial_views, corrections, feedback_messages, forum_votes, forum_post_votes, forum_status_changes, agenda_events, past_initiatives, comments, article_parties, article_deputies, article_initiatives, articles, seen_source_uris,
       initiative_parties, initiative_deputies, initiatives, article_government_members, government_positions,
       government_members, governments, article_presidents, presidents, election_results, election_turnout,
       election_lists, elections, contract_parties, contracts, contract_imports, places, deputies, audit_log,

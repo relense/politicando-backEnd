@@ -141,13 +141,15 @@ they forgot.
     "editorial": { "metodo-de-hondt-explicado": 1 },
     "stories": [41],
     "comments": [1203],
-    "forum": [17]
+    "forum": [17],
+    "forumPosts": [880]
   }
 }
 ```
 
 Lists are newest first. It replaces `reader-prefs`, `article-votes`, `story-importa`,
-`comment-likes`, `ideas-voted` and `stories-read` for a logged-in reader. `votes.editorial` lists
+`comment-likes`, `ideas-voted` and `stories-read` for a logged-in reader. `votes.forum` is the
+threads the reader upvoted; `votes.forumPosts` the replies they voted for (ideas board). `votes.editorial` lists
 the blog posts the reader marked "Importa" (always `1`; blog posts no longer have downvotes).
 
 ### Changes: one call per change, all return 204, all idempotent

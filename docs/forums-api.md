@@ -2,8 +2,8 @@
 
 Anonymous forums, like 4chan or Reddit without accounts. There is one board per party, a
 general one (`geral`), and an ideas board (`ideias`) for suggestions about the site, which
-the team answers with a status. Nobody signs in. Each poster gets an **ID per thread**, derived from
-their IP and a server secret:
+the team answers with a status. No account is needed, except to open or vote on an idea.
+Each poster gets an **ID per thread**, derived from their IP and a server secret:
 
 - It is the same for all their posts in that thread, so you can follow who says what.
 - It differs across threads, so nobody can be tracked from thread to thread.
@@ -53,8 +53,8 @@ Boards: `geral` first, then `ideias`, then parties by seats.
 
 Query: `sort=active|new|top` (default `active`: last reply first; `new`: newest; `top`: most
 upvoted, then most replies), `status` (only threads the team gave that status; see the
-ideas board), `page`, `limit` (1-50, default 25). Pinned threads come first. 404 for an
-unknown board.
+ideas board), `q` (search, below), `page`, `limit` (1-50, default 25). Pinned threads come
+first. 404 for an unknown board.
 Keep `active` as the default view: discussion goes by activity, not popularity, so upvotes
 never bury anyone (`top` is something the reader picks). Logged-in readers follow the threads
 they open or reply in, and get told about new replies (see `engagement-api.md`).
@@ -78,12 +78,20 @@ they open or reply in, and get told about new replies (see `engagement-api.md`).
       "score": 42,
       "status": null,
       "answer": null,
-      "answeredAt": null
+      "answeredAt": null,
+      "expectedOn": null,
+      "duplicateOf": null,
+      "area": null,
+      "followers": 3
     }
   ],
   "total": 1
 }
 ```
+
+- `followers`: logged-in readers following the thread (they opened it, replied, voted on an
+  idea, or pressed "Seguir"). A count only: who follows is private.
+- `expectedOn`, `duplicateOf`, `area`: ideas board, see below. `null` elsewhere.
 
 - `nickname` is optional and not unique: anyone can type any name, except ones that pass for
   the team ("Politicando", "Redação", "moderador", "admin"…, accents and case ignored): those
@@ -94,14 +102,18 @@ they open or reply in, and get told about new replies (see `engagement-api.md`).
 
 ## GET /forums/threads/:id
 
-Query: `after` (a post id; only newer replies, for polling) and `limit` (1-500, default 200).
+Query: `after` (a post id; only newer replies, for polling), `limit` (1-500, default 200) and
+`sort`: `old` (default, oldest first), `new` (newest first) or `top` (most voted, then
+oldest). `top` only means something on the ideas board, the only place replies take votes;
+elsewhere it's the same as `old`. Poll with `after` in the default order.
 
 ```json
 {
   "thread": { "id": 7, "title": "Orçamento", "body": "O que acham?", "posterId": "Xk3_a9Qz", "locked": false, "…": "…" },
   "posts": [
-    { "id": 31, "body": "Concordo", "nickname": null, "posterId": "pQ8-m2Lr", "isOp": false, "replyTo": null, "createdAt": "…", "hidden": false },
-    { "id": 32, "body": null, "nickname": null, "posterId": null, "isOp": false, "replyTo": 31, "createdAt": "…", "hidden": true }
+    { "id": 31, "body": "Concordo", "nickname": null, "posterId": "pQ8-m2Lr", "isOp": false, "replyTo": null, "createdAt": "…", "hidden": false, "team": false, "score": 0 },
+    { "id": 32, "body": null, "nickname": null, "posterId": null, "isOp": false, "replyTo": 31, "createdAt": "…", "hidden": true, "team": false, "score": 0 },
+    { "id": 33, "body": "Está nos planos", "nickname": "Politicando", "posterId": "equipa", "isOp": false, "replyTo": 31, "createdAt": "…", "hidden": false, "team": true, "score": 4 }
   ],
   "hasMore": false
 }
@@ -110,6 +122,10 @@ Query: `after` (a post id; only newer replies, for polling) and `limit` (1-500, 
 - `isOp`: the reply is by whoever opened the thread. Show an "OP" badge.
 - Hidden replies keep their place with `body: null`, so quotes still make sense. Show
   "Removido pela moderação".
+- `team`: written by the team (signed "Politicando"). Show a team badge; no reader can take
+  that name.
+- `score`: votes for the reply, ideas board only (0 elsewhere).
+- `thread.statusHistory`: the idea's timeline, see the ideas board.
 - 404 if the thread doesn't exist or was hidden.
 
 ## POST /forums/:board/threads
@@ -119,6 +135,8 @@ Query: `after` (a post id; only newer replies, for polling) and `limit` (1-500, 
 ```
 
 - `title`: 3-150 characters. `body`: 1-5000. `nickname`: up to 40, optional.
+- `area`: optional, up to 100 characters, for ideas: which part of the site it's about. Use the
+  same values as the feedback form's `page`.
 - `articleId` and `initiativeId` are optional. Offer "Discutir no fórum" buttons on articles
   and initiatives that open this form prefilled.
 - Returns 201 `{ id, posterId }`, the poster's own ID in the new thread. Keep it in the page
@@ -143,15 +161,34 @@ Upvotes a thread, on any board. No body, no captcha. Returns 200 `{ "score": 42 
   Voting again returns the same score, without an error. There's no downvote or undo.
 - 30 votes a minute per IP; past that, 429 `rate_limited`.
 - 404 for a missing or hidden thread. Locked threads can still be voted on.
+- On the ideas board it needs an account (401 `login_required`), and voting follows the idea.
 - `score` is on every thread in the list and in `GET /forums/threads/:id`. Remember the vote
   on the device to show the arrow as pressed.
 
 ## The ideas board (`ideias`)
 
-A board like the others (same posting, replies, captcha, limits and reports) where readers
-suggest things for the site. The page at `/feedback/ideias` lists it with `sort=top`.
+A board where readers suggest things for the site and the team answers. The page at
+`/feedback/ideias` lists it with `sort=top`. It differs from the other boards in these ways.
 
-The team gives each idea a `status` and, optionally, a public `answer`:
+**Accounts.** Opening an idea and voting on one need a logged-in reader, whatever
+`LOGIN_REQUIRED` says: 401 `login_required`. Replies follow the usual forum rules, and so does
+voting on other boards. `POST /feedback` stays anonymous.
+
+**Search before posting.** `GET /forums/ideias/threads?q=modo%20escuro&limit=3` matches the
+title and body, ignoring accents and case, and ranks by relevance (a word in the title counts
+twice as much as one in the body), then by votes. `q` needs at least 3 characters (400
+otherwise). Very common words ("que", "para", "mais"…) are ignored unless that's all there is.
+Same item shape and `total` as the list. Pinned ideas get no special place in a search. Good for
+"Já alguém sugeriu isto?" while typing the title.
+
+**Similar ideas.** `GET /forums/threads/:id/similar?limit=3` (1-10): ideas on the same board
+that share words with this one's title, most alike first, then most voted. Never the idea
+itself. Same item shape: `{ items }`. Empty when nothing is alike enough.
+
+**Followers.** `followers` on each idea. Voting on an idea follows it, as do opening and
+replying.
+
+**Status.** The team gives each idea a `status` and, optionally, a public `answer`:
 
 | `status` | Meaning |
 |---|---|
@@ -161,11 +198,37 @@ The team gives each idea a `status` and, optionally, a public `answer`:
 | `in_progress` | We're doing it |
 | `done` | Done |
 | `declined` | We won't do it (the answer usually says why) |
+| `duplicate` | Someone suggested it before: see `duplicateOf` |
 
 `answer` is plain text, e.g. "Feito em novembro: já podes filtrar por distrito", and
-`answeredAt` is when it was written (it only changes when the text changes). Both are on the
-thread in the list and in `GET /forums/threads/:id`. Filter with
-`GET /forums/ideias/threads?status=planned`.
+`answeredAt` is when it was written (it only changes when the text changes). `expectedOn`
+(`"2026-12-15"` or null) is when the team expects it done, if they said. All are on the idea in
+the list and in `GET /forums/threads/:id`. Filter with `GET /forums/ideias/threads?status=planned`.
+
+**Timeline.** `GET /forums/threads/:id` has `thread.statusHistory`, oldest first, starting
+with the idea being opened:
+
+```json
+[{ "status": null, "at": "2026-11-02T10:00:00.000Z" }, { "status": "planned", "at": "…" }, { "status": "in_progress", "at": "…" }]
+```
+
+A new step only when the status changes, not when the answer does. Followers get an
+`idea_status` notification (`docs/engagement-api.md`) each time, except when it's cleared to null.
+
+**Team replies.** The team replies as the team: posts with `team: true`, signed "Politicando"
+(see `GET /forums/threads/:id`).
+
+**Votes on replies.** Only here: discussion elsewhere goes by activity, never popularity.
+`POST /forums/posts/:id/vote`, no body. Needs an account (401 `login_required`); one vote per
+reader, voting again returns the same score, no undo. Returns `{ "score": 4 }`. 400
+`not_an_idea` for replies on other boards, 404 for a missing or hidden one. 30 a minute.
+Order replies by votes with `GET /forums/threads/:id?sort=top`, but keep oldest first as the
+default. The reader's voted reply ids are in `GET /me/state` › `votes.forumPosts`.
+
+**Duplicates.** A `duplicate` idea has `duplicateOf: { id, title }`: link to the original
+("Já foi sugerida: *title*"). The original's `score` includes the duplicate's votes, each
+reader counted once, and a vote on the duplicate counts on the original too. If the team
+unmarks it, those votes go back.
 
 For the feedback page's "most voted ideas" box, use
 `GET /forums/ideias/threads?sort=top&limit=5`.
@@ -205,9 +268,17 @@ never for `wrong_tags` (that's ours to fix).
 In the admin, see `docs/admin-api.md`: the reports queue, hiding, locking and pinning. For
 ideas (moderators):
 
-`PUT /admin/forum/threads/:id/status` with `{ "status": "planned", "answer": "Está nos planos para dezembro" }`.
-Both can be `null`. Returns `{ status, answer, answeredAt }`. Threads on other boards get
-400 `not_an_idea`.
+`PUT /admin/forum/threads/:id/status` with
+`{ "status": "planned", "answer": "Está nos planos para dezembro", "expectedOn": "2026-12-15" }`.
+`status` and `answer` can be `null`. `expectedOn` can be null (clears it) or left out (keeps
+it). `{ "status": "duplicate", "duplicateOf": 12 }` marks a duplicate of idea 12. Returns
+`{ status, answer, answeredAt, expectedOn, duplicateOf }`. Errors, all 400:
+
+- `not_an_idea`: a thread on another board.
+- `duplicate_of_required`: `duplicate` without `duplicateOf`.
+- `invalid_duplicate`: `duplicateOf` isn't another visible idea, or is a duplicate itself.
+
+Reply as the team with `POST /admin/forum/threads/:id/posts` (`docs/admin-api.md`).
 
 ## Votes board (`votacoes`)
 

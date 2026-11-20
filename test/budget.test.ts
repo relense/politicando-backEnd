@@ -1,4 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { eq } from "drizzle-orm";
 import { buildApp } from "../src/app.js";
 import { budgetBillYear, syncCurrentBudgetBills } from "../src/budget/bills.js";
 import { parseProposals, partyVotes, proposalResult } from "../src/budget/parse.js";
@@ -180,6 +181,14 @@ describe("the Budget API", () => {
     const response = await get("/budget");
     expect(response.headers["cache-control"]).toBe("public, max-age=300");
     expect(response.json().items).toEqual([expect.objectContaining({ year: 2027, proposals: 6, voted: 3, pending: 3, lastVotedOn: "2026-11-19" })]);
+  });
+
+  it("counts a proposal the source gives a result for but no vote as voted, so voted matches the results", async () => {
+    // As 111C-2 in 2027: "Rejeitado(a) em Comissão" with no vote recorded.
+    await db.update(budgetProposals).set({ result: "rejected", status: "Rejeitado(a) em Comissão" }).where(eq(budgetProposals.number, "4C"));
+    const [year] = (await get("/budget")).json().items;
+    const { results } = (await get("/budget/2027/summary")).json();
+    expect(year.voted).toBe(results.approved + results.partially_approved + results.rejected);
   });
 
   it("lists proposals with their votes, latest vote first, with filters and paging", async () => {

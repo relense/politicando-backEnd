@@ -56,6 +56,9 @@ The Budgets we have, newest first: every year with amendment proposals or a bill
 ```
 
 - `pending` counts proposals still waiting for a vote, including those sent to the plenary.
+- `voted` counts proposals with a vote, or with a result (approved, partially approved, rejected):
+  the source sometimes gives the result without the vote itself (one proposal in 2027). So
+  `voted` is at least `approved + partially_approved + rejected` in the summary's `results`.
 - `bills`: the Budget's own bill. Usually one; **2022 has two**: the one rejected in October 2021
   (which led to early elections) and the one approved in 2022. Its votes have the same shape as
   on `/initiatives` (party slugs; `count` when only part of a group voted that way). Current
