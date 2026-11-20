@@ -74,6 +74,22 @@ curl -X POST https://api.politicando.pt/api/v2/publish/image \
 - Errors: 401 `invalid_key`; 400 `invalid_image` (not a PNG or JPG, judged by its bytes); 413
   `too_large`; 429 past 30 a minute.
 
+## State Budget summaries ("O que muda")
+
+Same header. Plain summaries of the Budget's amendment proposals (`docs/budget-api.md`), written
+from each proposal's official PDF.
+
+- `GET /api/v2/publish/budget/missing?year=2027&voted=true&limit=50`: proposals without a
+  summary, latest votes first: `{ items: [{ id, year, number, title, article, topics, result,
+  lastVotedOn, documentUrl }], total }`. `voted=false` gives those still waiting.
+- `PUT /api/v2/publish/budget/:id/summary` with `{ "summary": "…", "automatic": true }`: one or
+  two neutral sentences (10–600 characters) saying what the proposal changes. No judgement, no
+  "wins" or "losses"; when the PDF is unclear, say less. `automatic: false` when a person wrote it.
+  Answers `{ id, summary, automatic, changed }`; 404 for an unknown proposal; 120 a minute.
+- `DELETE /api/v2/publish/budget/:id/summary`: removes it (204).
+
+Summaries survive the hourly sync. The site is told to refresh (tag `budget`) on each change.
+
 ## `POST /api/v2/publish/:slug/unpublish`
 
 Same header. Takes the post off the site (back to draft, no longer featured). 204, or 404 for

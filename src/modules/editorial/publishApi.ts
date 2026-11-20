@@ -1,11 +1,11 @@
 import { createHash, timingSafeEqual } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import type { FastifyRequest } from "fastify";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { audit } from "../../admin/sessions.js";
 import type { Db } from "../../db/client.js";
-import { editorialPosts } from "../../db/schema.js";
+import { budgetProposals, budgetSummaries, editorialPosts } from "../../db/schema.js";
 import { parseMarkdownPost, saveMarkdownPosts } from "../../editorial/markdownFiles.js";
 import { ApiError, notFound } from "../../errors.js";
 import multipart from "@fastify/multipart";
@@ -119,6 +119,115 @@ export const publishRoutes =
         const { file, created } = await storeImage(db, bytes, type);
         if (created) await audit(db, null, "media.api_upload", "media", file);
         return { url: `${apiUrl.replace(/\/$/, "")}/media/${file}`, created };
+      },
+    );
+
+    // "O que muda" for State Budget proposals, written from each official PDF by the studio.
+    const proposalId = z.object({ id: z.coerce.number().int().min(1).max(2_147_483_647) });
+    const proposalExists = async (id: number) =>
+      (await db.select({ id: budgetProposals.id }).from(budgetProposals).where(eq(budgetProposals.id, id))).length > 0;
+
+    app.get(
+      "/publish/budget/missing",
+      {
+        schema: {
+          tags: ["publish"],
+          summary: "Budget proposals without a plain summary yet, latest votes first: the studio's to-do list",
+          headers: z.object({ authorization: z.string().optional() }),
+          querystring: z.object({
+            year: z.coerce.number().int().min(2000).max(2100).optional(),
+            voted: z.enum(["true", "false"]).optional().describe("true: only proposals already voted; false: only those still waiting"),
+            limit: z.coerce.number().int().min(1).max(200).default(50),
+          }),
+          response: {
+            200: z.object({
+              items: z.array(
+                z.object({
+                  id: z.number(), year: z.number(), number: z.string(), title: z.string(), article: z.string().nullable(),
+                  topics: z.array(z.string()), result: z.string(), lastVotedOn: z.string().nullable(), documentUrl: z.string().nullable(),
+                }),
+              ),
+              total: z.number(),
+            }),
+            401: errorSchema,
+          },
+        },
+      },
+      async (request) => {
+        requireKey(request);
+        const { year, voted, limit } = request.query;
+        const where = and(
+          isNull(budgetSummaries.proposalId),
+          year ? eq(budgetProposals.year, year) : undefined,
+          voted === "true" ? sql`${budgetProposals.lastVotedOn} is not null` : voted === "false" ? isNull(budgetProposals.lastVotedOn) : undefined,
+        );
+        const from = () => db.select().from(budgetProposals).leftJoin(budgetSummaries, eq(budgetSummaries.proposalId, budgetProposals.id));
+        const [rows, [{ total } = { total: 0 }]] = await Promise.all([
+          from().where(where).orderBy(sql`${budgetProposals.year} desc, ${budgetProposals.lastVotedOn} desc nulls last, ${budgetProposals.id}`).limit(limit),
+          db.select({ total: sql<number>`count(*)::int` }).from(budgetProposals).leftJoin(budgetSummaries, eq(budgetSummaries.proposalId, budgetProposals.id)).where(where),
+        ]);
+        return {
+          items: rows.map(({ budget_proposals: p }) => ({
+            id: p.id, year: p.year, number: p.number, title: p.title, article: p.article, topics: p.topics,
+            result: p.result, lastVotedOn: p.lastVotedOn, documentUrl: p.documentUrl,
+          })),
+          total,
+        };
+      },
+    );
+
+    app.put(
+      "/publish/budget/:id/summary",
+      {
+        config: { rateLimit: { max: 120, timeWindow: "1 minute" } },
+        schema: {
+          tags: ["publish"],
+          summary: "Set a Budget proposal's plain summary (\"O que muda\"), written from its official PDF",
+          headers: z.object({ authorization: z.string().optional() }),
+          params: proposalId,
+          body: z.strictObject({
+            summary: z.string().trim().min(10).max(600).describe("One or two neutral sentences: what the proposal changes"),
+            automatic: z.boolean().default(true).describe("True when a model wrote it; the site labels it as an automatic summary"),
+          }),
+          response: { 200: z.object({ id: z.number(), summary: z.string(), automatic: z.boolean(), changed: z.boolean() }), 400: errorSchema, 401: errorSchema, 404: errorSchema },
+        },
+      },
+      async (request) => {
+        requireKey(request);
+        const { id } = request.params;
+        const { summary, automatic } = request.body;
+        if (!(await proposalExists(id))) throw notFound("Proposal");
+        const changed = await db
+          .insert(budgetSummaries)
+          .values({ proposalId: id, summary, automatic, updatedAt: new Date() })
+          .onConflictDoUpdate({
+            target: budgetSummaries.proposalId,
+            set: { summary, automatic, updatedAt: new Date() },
+            setWhere: sql`(${budgetSummaries.summary}, ${budgetSummaries.automatic}) is distinct from (${summary}, ${automatic})`,
+          })
+          .returning({ id: budgetSummaries.proposalId });
+        if (changed.length > 0) void revalidate(["budget"]);
+        return { id, summary, automatic, changed: changed.length > 0 };
+      },
+    );
+
+    app.delete(
+      "/publish/budget/:id/summary",
+      {
+        schema: {
+          tags: ["publish"],
+          summary: "Remove a Budget proposal's plain summary",
+          headers: z.object({ authorization: z.string().optional() }),
+          params: proposalId,
+          response: { 204: z.null(), 401: errorSchema, 404: errorSchema },
+        },
+      },
+      async (request, reply) => {
+        requireKey(request);
+        const removed = await db.delete(budgetSummaries).where(eq(budgetSummaries.proposalId, request.params.id)).returning({ id: budgetSummaries.proposalId });
+        if (removed.length === 0) throw notFound("Summary");
+        void revalidate(["budget"]);
+        return reply.status(204).send(null);
       },
     );
 
