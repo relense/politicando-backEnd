@@ -16,7 +16,7 @@ import { rarity, sameStory, similarity, termsOf, titlePartiesOf, type Rarity, ty
  *    nothing is joined: word scores alone can't tell a roundup ("tudo o que foi votado") from
  *    each vote it lists.
  * 3. A merge moves everything into the older story: articles, Importa marks, comments,
- *    follows, saves, reads and notifications. The newer id keeps answering as the older one
+ *    follows, saves, reads and notifications. Stories split apart (split.ts) are never joined. The newer id keeps answering as the older one
  *    (story_merges), since the Studio keeps ids in its alerts.
  *
  * As in similarity.ts, a missed merge beats a wrong one.
@@ -225,6 +225,13 @@ export const moveStory = async (tx: Tx, fromId: number, intoId: number, reason: 
     and exists (select 1 from notifications o where o.user_id = n.user_id and o.kind = 'story_update' and o.target_id = ${intoId} and o.read_at is null)`);
   await tx.execute(sql`update notifications set target_id = ${intoId} where kind = 'story_update' and target_id = ${fromId}`);
   await tx.execute(sql`update story_merges set into_id = ${intoId} where into_id = ${fromId}`);
+  // Kept-apart pairs follow the story that remains (the old ones go with the deleted story).
+  await tx.execute(sql`insert into story_apart (low_id, high_id, reason, created_at)
+    select least(other, ${intoId}), greatest(other, ${intoId}), reason, created_at
+    from (select case when low_id = ${fromId} then high_id else low_id end as other, reason, created_at
+      from story_apart where ${fromId} in (low_id, high_id)) p
+    where other <> ${intoId}
+    on conflict do nothing`);
   await tx.execute(sql`delete from stories where id = ${fromId}`);
   await tx.execute(sql`insert into story_merges (from_id, into_id, reason, article_ids)
     values (${fromId}, ${intoId}, ${reason}, ${`{${articleIds.join(",")}}`}::integer[])
@@ -285,7 +292,17 @@ export const mergeStories = async (
     select title, excerpt from articles where hidden_at is null
       and published_at >= ${now.toISOString()}::timestamptz - make_interval(days => ${RARITY_DAYS})`);
   const rare = rarity(context.rows.map((a) => termsOf({ ...a, people: [] })));
-  const found = candidates(stories, rare);
+  // Stories split apart (split.ts) are never joined back.
+  const apart = new Set(
+    stories.length
+      ? (
+          await db.execute<{ low_id: number; high_id: number }>(sql`
+            select low_id, high_id from story_apart where low_id in (${sql.join(stories.map((s) => sql`${s.id}`), sql`, `)})`)
+        ).rows.map((r) => `${r.low_id}:${r.high_id}`)
+      : [],
+  );
+  const pairKey = (c: Candidate) => (c.a.id < c.b.id ? `${c.a.id}:${c.b.id}` : `${c.b.id}:${c.a.id}`);
+  const found = candidates(stories, rare).filter((c) => !apart.has(pairKey(c)));
 
   const confirmed: Candidate[] = [];
   let checked = 0;

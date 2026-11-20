@@ -330,6 +330,13 @@
       "when": 1795194402688,
       "tag": "0046_story_merge_articles",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1795195878453,
+      "tag": "0047_story_apart",
+      "breakpoints": true
     }
   ]
 }

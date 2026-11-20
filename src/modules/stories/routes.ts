@@ -86,12 +86,12 @@ export const storySchema = z.object({
   debate: z
     .object({ agree: debateCommentSchema.nullable(), disagree: debateCommentSchema.nullable() })
     .describe('The most liked comment that agrees, and that disagrees (at least 1 like each). Show the pair ("A favor" / "Contra") only when both exist'),
-});
-
-const storyDetailSchema = storySchema.extend({
   mergedFrom: z
     .array(z.number())
     .describe("Ids of stories joined into this one (the same news grouped apart at first); asking for one of them returns this story"),
+});
+
+const storyDetailSchema = storySchema.extend({
   context: z
     .object({
       explainers: z
@@ -237,12 +237,16 @@ export const storyRoutes =
     const hydrate = async (rows: StatsRow[]) => {
       const ids = rows.map((r) => r.id);
       if (ids.length === 0) return [];
-      const [all, counts, importance, debateOf] = await Promise.all([
+      const [all, counts, importance, debateOf, merges] = await Promise.all([
         selectArticles(db, ids),
         commentCounts(ids),
         importanceScale(),
         debates(ids),
+        db.execute<{ from_id: number; into_id: number }>(sql`
+          select from_id, into_id from story_merges where into_id in (${sql.join(ids.map((id) => sql`${id}`), sql`, `)}) order by from_id`),
       ]);
+      const mergedFrom = new Map<number, number[]>();
+      for (const m of merges.rows) mergedFrom.set(m.into_id, [...(mergedFrom.get(m.into_id) ?? []), m.from_id]);
       const byStory = new Map<number, ArticleRow[]>();
       for (const article of all) byStory.set(article.storyId!, [...(byStory.get(article.storyId!) ?? []), article]);
       return rows
@@ -281,6 +285,7 @@ export const storyRoutes =
             importance: importance(r.importa),
             commentCount: counts.get(r.id) ?? 0,
             debate: debateOf.get(r.id) ?? { agree: null, disagree: null },
+            mergedFrom: mergedFrom.get(r.id) ?? [],
           };
           return { card, articles: list };
         });
@@ -503,13 +508,9 @@ export const storyRoutes =
           select st.*, s.importa, s.tags from ${storyStats} st join stories s on s.id = st.id where st.id = ${id}`);
         const [story] = await hydrate(stats.rows);
         if (!story) throw notFound("Story");
-        const [context, merged] = await Promise.all([
-          contextOf(story.card),
-          db.execute<{ from_id: number }>(sql`select from_id from story_merges where into_id = ${id} order by from_id`),
-        ]);
+        const context = await contextOf(story.card);
         return {
           ...story.card,
-          mergedFrom: merged.rows.map((r) => r.from_id),
           context,
           articles: story.articles.map((a) => ({ ...a, publishedAt: a.publishedAt.toISOString() })),
         };

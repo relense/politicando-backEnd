@@ -1,3 +1,5 @@
+import { sql } from "drizzle-orm";
+import type { Db } from "../db/client.js";
 import { TOPICS } from "../parliament/plain.js";
 
 /*
@@ -98,4 +100,35 @@ export const editorialTagWords = (tag: StoryTag) => {
   if (/^oe20\d\d$/.test(tag.slug)) for (const w of ["orcamento", "orcamento do estado", "oe"]) words.add(w);
   if (tag.kind === "topic") for (const w of normalise(tag.name).split(/ e |, /)) words.add(w.trim());
   return [...words];
+};
+
+type Runner = Db | Parameters<Parameters<Db["transaction"]>[0]>[0];
+
+/** Recomputes the tags of the stories that changed, and of any never tagged. */
+export const refreshStoryTags = async (tx: Runner, touched: Set<number>) => {
+  const missing = (
+    await tx.execute<{ id: number }>(
+      sql`select id from stories where tags is null`,
+    )
+  ).rows.map((r) => r.id);
+  const ids = [...new Set([...touched, ...missing])];
+  if (ids.length === 0) return 0;
+  const rows = (
+    await tx.execute<{ story_id: number; title: string; excerpt: string }>(sql`
+      select story_id, title, excerpt from articles
+      where hidden_at is null and story_id in (${sql.join(
+        ids.map((id) => sql`${id}`),
+        sql`, `,
+      )})`)
+  ).rows;
+  const versions = new Map<number, { title: string; excerpt: string }[]>(
+    ids.map((id) => [id, []]),
+  );
+  for (const r of rows) versions.get(r.story_id)!.push(r);
+  for (const [id, list] of versions) {
+    await tx.execute(
+      sql`update stories set tags = ${JSON.stringify(storyTagsOf(list))}::jsonb where id = ${id}`,
+    );
+  }
+  return ids.length;
 };
