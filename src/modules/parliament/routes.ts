@@ -141,11 +141,11 @@ export const simplerTitle = (title: string) => {
   return same(simple) === same(title) ? null : simple;
 };
 
-const partyVoteSchema = z.object({
+export const partyVoteSchema = z.object({
   party: z.string().describe("Party slug, or the parliament's acronym for groups we don't list"),
   count: z.number().nullable().describe("Set when only part of the group voted this way"),
 });
-const voteSchema = z.object({
+export const voteSchema = z.object({
   id: z.string(),
   date: z.string(),
   phase: z.string(),

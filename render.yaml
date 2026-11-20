@@ -111,6 +111,26 @@ services:
       - key: PARLIAMENT_LEGISLATURE
         value: XVII
 
+  # The State Budget's amendment proposals and each party's votes (docs/budget-api.md). Hourly: during
+  # the voting weeks the parliament updates its file the same day; an unchanged file is skipped.
+  - type: cron
+    name: politicando-budget
+    runtime: docker
+    region: frankfurt
+    plan: starter
+    schedule: "35 * * * *"
+    dockerCommand: node dist/jobs/syncBudget.js
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase: { name: politicando-db, property: connectionString }
+      - key: FRONTEND_REVALIDATE_URL
+        sync: false
+      - key: REVALIDATE_SECRET
+        sync: false
+      # Change when a new legislature starts (see src/parliament/legislatures.ts).
+      - key: PARLIAMENT_LEGISLATURE
+        value: XVII
+
   # The Government and the President.
   - type: cron
     name: politicando-government-sync

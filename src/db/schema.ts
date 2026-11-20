@@ -1428,3 +1428,98 @@ export const media = pgTable("media", {
   size: integer().notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * The State Budget's amendment proposals and how each party voted on them, from the
+ * parliament's open data (Dados Abertos › Orçamento do Estado). Synced by src/jobs/syncBudget.ts;
+ * the whole year is replaced whenever the parliament's file changes. See docs/budget-api.md.
+ */
+export type BudgetVoteEntry = {
+  /** Our party slug, or null when the source's name matched no party (the vote is then ambiguous). */
+  party: string | null;
+  /** The group as the source names it ("Partido Social Democrata", "Pedro Coelho(PSD)"). */
+  group: string;
+  /** Set when a deputy voted apart from their group. */
+  deputy: string | null;
+  vote: "favor" | "against" | "abstention" | "absent" | null;
+};
+
+export const budgetProposals = pgTable(
+  "budget_proposals",
+  {
+    /** The parliament's id for the proposal. */
+    id: integer().primaryKey(),
+    year: smallint().notNull(),
+    number: text().notNull(),
+    submittedOn: date("submitted_on"),
+    title: text().notNull(),
+    article: text(),
+    topics: text().array().notNull().default(sql`'{}'::text[]`),
+    /** "articles" (the law's text) or "tables" (the budget maps), from Incide. */
+    target: text(),
+    kind: text(),
+    /** The source's status, as written ("Rejeitado(a) em Comissão"). */
+    status: text().notNull(),
+    result: text().notNull(),
+    resultPhase: text("result_phase"),
+    unanimous: boolean().notNull().default(false),
+    authorLabel: text("author_label"),
+    authorParties: text("author_parties").array().notNull().default(sql`'{}'::text[]`),
+    authorDeputies: text("author_deputies").array().notNull().default(sql`'{}'::text[]`),
+    documentUrl: text("document_url"),
+    lastVotedOn: date("last_voted_on"),
+    /** Number, title, article and topics, lower-case without accents, for ?q=. */
+    searchText: text("search_text").notNull().default(""),
+  },
+  (table) => [index("budget_proposals_year_idx").on(table.year, table.lastVotedOn)],
+);
+
+export const budgetVotes = pgTable(
+  "budget_votes",
+  {
+    proposalId: integer("proposal_id").notNull().references(() => budgetProposals.id, { onDelete: "cascade" }),
+    /** Order within the proposal: a proposal voted in parts has one row per part. */
+    seq: smallint().notNull(),
+    votedOn: date("voted_on").notNull(),
+    phase: text(),
+    result: text(),
+    unanimous: boolean().notNull().default(false),
+    /** The source's own words: the proposal's result at this vote, and this part's. */
+    label: text(),
+    partLabel: text("part_label"),
+    parts: text().array().notNull().default(sql`'{}'::text[]`),
+    subject: text(),
+    votes: jsonb().$type<BudgetVoteEntry[]>().notNull(),
+    /** Why the source can't be read with certainty, or null. Never guessed. */
+    ambiguity: text(),
+  },
+  (table) => [primaryKey({ columns: [table.proposalId, table.seq] }), index("budget_votes_day_idx").on(table.votedOn)],
+);
+
+/** One row per Budget year: which file was read, and its hash, so an unchanged file is skipped. */
+export const budgetSources = pgTable("budget_sources", {
+  year: smallint().primaryKey(),
+  url: text().notNull(),
+  hash: text().notNull(),
+  syncedAt: timestamp("synced_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * Each State Budget's own bill ("Orçamento do Estado para 2027") and its votes: on the general
+ * principles, the final overall vote, and the rest. From the current legislature's initiatives,
+ * and once from earlier legislatures' files (syncBudget --all). Keyed by initiative: 2022 had two.
+ */
+export const budgetBills = pgTable(
+  "budget_bills",
+  {
+    initiativeId: integer("initiative_id").primaryKey(),
+    year: smallint().notNull(),
+    legislature: text().notNull(),
+    number: text().notNull(),
+    title: text().notNull(),
+    status: text().notNull(),
+    votes: jsonb().$type<VoteRecord[]>().notNull().default([]),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("budget_bills_year_idx").on(table.year)],
+);
