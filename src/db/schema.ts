@@ -256,6 +256,10 @@ export interface PresidencyRecord {
   constitutionalCourt?: { ruling: string; url: string }[];
   /** Every veto, oldest first: a decree can be vetoed, passed again and vetoed again. */
   vetoes?: { date: string; kind: "political" | "unconstitutionality"; constitutionalCourt: { ruling: string; url: string }[] }[];
+  /** When the initiative became several decrees, each one's own decision ("48/XVII"). `status` is then promulgated if any was. */
+  decrees?: { number: string; status: "pending" | "promulgated" | "vetoed"; sentAt: string | null; promulgatedAt: string | null; vetoedAt: string | null }[];
+  /** Its decrees ended differently: e.g. one promulgated, another vetoed. */
+  partial?: boolean;
 }
 
 export interface VoteRecord {

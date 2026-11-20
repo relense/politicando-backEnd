@@ -250,28 +250,77 @@ export const constitutionalRulings = (text: string) =>
     url: `https://www.tribunalconstitucional.pt/tc/acordaos/${year}${n!.padStart(4, "0")}.html`,
   }));
 
-export const presidencyOf = (events: Json[]): PresidencyRecord | null => {
-  const matching = (pattern: RegExp) =>
-    events
-      .filter((event) => pattern.test(str(event.Fase) ?? "") && isoDate(event.DataFase) !== null)
-      .sort((a, b) => isoDate(a.DataFase)!.localeCompare(isoDate(b.DataFase)!));
-  const latest = (pattern: RegExp) => {
-    const found = matching(pattern);
-    return found.length ? isoDate(found.at(-1)!.DataFase) : null;
-  };
-  const sentAt = latest(/^Envio para promulgação/);
-  let promulgatedAt = latest(/^Promulgação/);
-  const vetoedAt = latest(/^Veto/);
+/** "Decreto n.º 48/XVII", "Decreto da Assembleia da República n.º 49/XVII/1.ª" → "48/XVII". */
+export const decreeOf = (text: string) => {
+  const match = /Decreto(?: da Assembleia da Rep[úu]blica)?\s+n\.?\s*[ºo°]?\s*(\d+)\s*\/\s*([IVXLC]+)/i.exec(text);
+  return match ? `${Number(match[1])}/${match[2]!.toUpperCase()}` : null;
+};
+
+type Decision = "pending" | "promulgated" | "vetoed";
+/** One decree's fate from its own events: the latest of sent, promulgated and vetoed wins. */
+const decide = (sentAt: string | null, promulgatedAt: string | null, vetoedAt: string | null, lawAt: string | null) => {
   // The record sometimes skips "Promulgação": a law published after it was sent was promulgated.
-  const lawAt = latest(/^Lei .*\(Publicação DR\)/);
   const inferred = !promulgatedAt && lawAt !== null && sentAt !== null && lawAt >= sentAt && (!vetoedAt || lawAt >= vetoedAt);
-  if (!sentAt && !promulgatedAt && !vetoedAt) return null;
-  const status =
+  const status: Decision =
     inferred || (promulgatedAt && (!vetoedAt || promulgatedAt >= vetoedAt))
       ? "promulgated"
       : vetoedAt && (!sentAt || vetoedAt >= sentAt)
         ? "vetoed"
         : "pending";
+  return { status, inferred };
+};
+
+export const presidencyOf = (events: Json[]): PresidencyRecord | null => {
+  const matching = (pattern: RegExp, decree?: string) =>
+    events
+      .filter((event) => pattern.test(str(event.Fase) ?? "") && isoDate(event.DataFase) !== null)
+      .filter((event) => decree === undefined || decreeOf(str(event.ObsFase) ?? "") === decree)
+      .sort((a, b) => isoDate(a.DataFase)!.localeCompare(isoDate(b.DataFase)!));
+  const latest = (pattern: RegExp, decree?: string) => {
+    const found = matching(pattern, decree);
+    return found.length ? isoDate(found.at(-1)!.DataFase) : null;
+  };
+  const SENT = /^Envio para promulgação/;
+  const PROMULGATED = /^Promulgação/;
+  const VETOED = /^Veto/;
+  // A veto's date is when Belém sent it ("Veto (Receção)", as in `vetoes`), not when parliament read or published it.
+  const vetoDate = (decree?: string) => latest(/^Veto \(Rece/, decree) ?? latest(VETOED, decree);
+  const sentAt = latest(SENT);
+  let promulgatedAt = latest(PROMULGATED);
+  const vetoedAt = vetoDate();
+  const lawAt = latest(/^Lei .*\(Publicação DR\)/);
+  if (!sentAt && !promulgatedAt && !vetoedAt) return null;
+
+  // One initiative can become several decrees (the Nationality Law and a Penal Code change):
+  // each goes through Belém on its own, so one's veto mustn't hide another's promulgation.
+  // With a single current decree, the initiative's latest event decides, as before.
+  const numbers = [
+    ...new Set(
+      matching(new RegExp(`${SENT.source}|${PROMULGATED.source}|${VETOED.source}`))
+        .map((event) => decreeOf(str(event.ObsFase) ?? ""))
+        .filter((n): n is string => n !== null),
+    ),
+  ];
+  const all = numbers.map((number) => {
+    const own = { sent: latest(SENT, number), promulgated: latest(PROMULGATED, number), vetoed: vetoDate(number) };
+    // A published law can't be pinned on one decree: it only stands in for a missing promulgation on one never vetoed.
+    const decision = decide(own.sent, own.promulgated, own.vetoed, own.vetoed ? null : lawAt);
+    return { number, status: decision.status, sentAt: own.sent, promulgatedAt: own.promulgated, vetoedAt: own.vetoed, inferred: decision.inferred };
+  });
+  // A vetoed decree passed again comes back under a new number: the old one is replaced once another is sent after its veto.
+  const current = all.filter((d) => d.status !== "vetoed" || !all.some((other) => other.sentAt !== null && other.sentAt > d.vetoedAt!));
+  let status: Decision;
+  let inferred: boolean;
+  let decrees: typeof all | undefined;
+  if (current.length > 1) {
+    decrees = current;
+    // Promulgated if any part became law; otherwise waiting if any part is still in Belém.
+    status = decrees.some((d) => d.status === "promulgated") ? "promulgated" : decrees.some((d) => d.status === "pending") ? "pending" : "vetoed";
+    inferred = status === "promulgated" && decrees.every((d) => d.status !== "promulgated" || d.inferred);
+    promulgatedAt = decrees.map((d) => d.promulgatedAt).filter((d): d is string => d !== null).sort().at(-1) ?? null;
+  } else {
+    ({ status, inferred } = decide(sentAt, promulgatedAt, vetoedAt, lawAt));
+  }
   // "Veto (Receção)", "(Leitura)" and "(Publicação)" are steps of one veto: group them by the first.
   const vetoes = matching(/^Veto \(Rece/).reduce<NonNullable<PresidencyRecord["vetoes"]>>((list, event) => {
     const date = isoDate(event.DataFase)!;
@@ -295,6 +344,10 @@ export const presidencyOf = (events: Json[]): PresidencyRecord | null => {
     vetoKind: vetoedAt ? (rulings.length ? "unconstitutionality" : "political") : null,
     constitutionalCourt: rulings,
     vetoes,
+    ...(decrees && {
+      decrees: decrees.map(({ inferred: _inferred, ...d }) => d),
+      partial: new Set(decrees.map((d) => d.status)).size > 1,
+    }),
   };
 };
 
