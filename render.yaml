@@ -89,6 +89,10 @@ services:
         value: 5b5bc5c4-6bd8-482f-97b8-3fabbef46451
       - key: SITE_URL
         value: https://www.politicando.pt
+      # Claude Haiku confirms which stories are the same news before they're joined (src/stories/merge.ts).
+      # A key from console.anthropic.com; costs well under $1 a month. Empty: stories are never joined.
+      - key: ANTHROPIC_API_KEY
+        sync: false
 
   - type: cron
     name: politicando-parliament-sync

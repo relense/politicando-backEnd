@@ -5,6 +5,7 @@ import type { Db } from "../../db/client.js";
 import { agendaEvents, articles, deputies, editorialPosts, initiatives, parties, stories, storyVotes } from "../../db/schema.js";
 import { ApiError, notFound } from "../../errors.js";
 import { storyVoterKey } from "../../forums/identity.js";
+import { resolveStoryId, resolveStoryIds } from "../../stories/merge.js";
 import { stemsOf } from "../../stories/similarity.js";
 import { editorialTagWords, textHasTag, type StoryTag } from "../../stories/tags.js";
 import {
@@ -88,6 +89,9 @@ export const storySchema = z.object({
 });
 
 const storyDetailSchema = storySchema.extend({
+  mergedFrom: z
+    .array(z.number())
+    .describe("Ids of stories joined into this one (the same news grouped apart at first); asking for one of them returns this story"),
   context: z
     .object({
       explainers: z
@@ -361,8 +365,9 @@ export const storyRoutes =
         }
 
         const conditions: SQL[] = [sql`exists (select 1 from articles where articles.story_id = st.id and ${sql.join(versions, sql` and `)})`];
-        if (query.ids) conditions.push(sql`st.id in (${sql.join(query.ids.map((id) => sql`${id}`), sql`, `)})`);
-        if (query.exclude) conditions.push(sql`st.id not in (${sql.join(query.exclude.map((id) => sql`${id}`), sql`, `)})`);
+        // Saved or hidden ids of stories since joined into others count as those.
+        if (query.ids) conditions.push(sql`st.id in (${sql.join((await resolveStoryIds(db, query.ids)).map((id) => sql`${id}`), sql`, `)})`);
+        if (query.exclude) conditions.push(sql`st.id not in (${sql.join((await resolveStoryIds(db, query.exclude)).map((id) => sql`${id}`), sql`, `)})`);
         if (query.excludeParty) {
           conditions.push(sql`not exists (
             select 1 from articles x join article_parties ap on ap.article_id = x.id join parties p on p.id = ap.party_id
@@ -492,14 +497,19 @@ export const storyRoutes =
         },
       },
       async (request) => {
-        const id = request.params.id;
+        // A story joined into another answers as that one: `id` then differs from the one asked for.
+        const id = await resolveStoryId(db, request.params.id);
         const stats = await db.execute<StatsRow>(sql`
           select st.*, s.importa, s.tags from ${storyStats} st join stories s on s.id = st.id where st.id = ${id}`);
         const [story] = await hydrate(stats.rows);
         if (!story) throw notFound("Story");
-        const context = await contextOf(story.card);
+        const [context, merged] = await Promise.all([
+          contextOf(story.card),
+          db.execute<{ from_id: number }>(sql`select from_id from story_merges where into_id = ${id} order by from_id`),
+        ]);
         return {
           ...story.card,
+          mergedFrom: merged.rows.map((r) => r.from_id),
           context,
           articles: story.articles.map((a) => ({ ...a, publishedAt: a.publishedAt.toISOString() })),
         };
@@ -524,7 +534,7 @@ export const storyRoutes =
         },
       },
       async (request) => {
-        const storyId = request.params.id;
+        const storyId = await resolveStoryId(db, request.params.id);
         const { value } = request.body;
         const who = app.participant(request, "votes");
         const voter = storyVoterKey(voteSecret, who.key, storyId);

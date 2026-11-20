@@ -13,7 +13,25 @@ where their headlines name parties, the parties overlap. To join a story, an art
 match at least half of its articles, so stories don't drift from topic to topic.
 
 The grouping favours a missed match over a wrong one: occasionally one story shows as two
-cards, but two different stories should not show as one. Every article has `storyId`, which
+cards, but two different stories should not show as one.
+
+**Joining stories afterwards.** The same event told in different words ("bloco fatal",
+"imaturidade", "geringonça ao contrário") can start several stories. So after each scan:
+
+1. Cheap rules look for pairs of stories with versions within 12 hours of each other that name
+   the same people or parties and share enough rare words. Fewer words are needed when they share
+   an event tag such as #OE2027.
+2. A small language model (Claude Haiku) reads both stories' headlines and says whether they're
+   the same happening, not just the same broad subject. Reactions by the same side to the same
+   vote are the same event; two Budget measures voted the same night aren't.
+3. Confirmed stories are joined into the **oldest** one. Its id stays, and it gains the other's
+   versions, Importa marks, comments, follows, saves and reads.
+
+The joined story's old id keeps working: `GET /stories/:id` (and its comments, Importa,
+`?ids=`, `?exclude=`) answers as the story it went into. So **check `id` in the response**: if it
+differs from the id you asked for, redirect to the new one (`/historias/688` → `/historias/659`).
+The story lists the ids joined into it in `mergedFrom`. If the reader saved or hid an old id,
+it still matches. Stories with no recent versions (36 hours) aren't joined. Every article has `storyId`, which
 is `null` for the few minutes between it being found and grouped. An article with no other
 version is a story of one.
 
@@ -117,6 +135,8 @@ those stories.
 
 The card plus:
 
+- `mergedFrom`: ids of stories joined into this one (`[]` usually). Asking for one of them
+  returns this story.
 - `context`, for the **"Contexto"** box:
   - `explainers` (**Explica**): up to 3 of our published blog posts whose tags match the
     story's (e.g. a post tagged "orçamento" or "oe2027" for #OE2027; "habitação" for

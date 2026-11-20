@@ -70,6 +70,42 @@ export const stories = pgTable("stories", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+/**
+ * Stories joined into another after the fact (src/stories/merge.ts): the same news grouped apart
+ * at first. The old id keeps answering, as the story it went into.
+ */
+export const storyMerges = pgTable(
+  "story_merges",
+  {
+    fromId: integer("from_id").primaryKey(),
+    intoId: integer("into_id")
+      .notNull()
+      .references(() => stories.id, { onDelete: "cascade" }),
+    /** Who decided: "model" (a language model confirmed it). */
+    reason: text().$type<"model">().notNull(),
+    mergedAt: timestamp("merged_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("story_merges_into_idx").on(table.intoId)],
+);
+
+/** What the model answered about two stories, so the same pair isn't asked again until either grows. */
+export const storyMergeChecks = pgTable(
+  "story_merge_checks",
+  {
+    lowId: integer("low_id")
+      .notNull()
+      .references(() => stories.id, { onDelete: "cascade" }),
+    highId: integer("high_id")
+      .notNull()
+      .references(() => stories.id, { onDelete: "cascade" }),
+    /** The articles each had when asked, e.g. "3:1". */
+    signature: text().notNull(),
+    same: boolean().notNull(),
+    checkedAt: timestamp("checked_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.lowId, table.highId] })],
+);
+
 /** One "Importa" per reader per story; `voter` is a keyed hash of the IP, never the IP. */
 export const storyVotes = pgTable(
   "story_votes",

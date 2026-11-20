@@ -8,6 +8,7 @@ import {
   type Grouping,
   type StoryArticle,
 } from "./similarity.js";
+import { mergeStories, type MergeJudge } from "./merge.js";
 import { storyTagsOf } from "./tags.js";
 
 /** Articles this far back are compared with, and measure how rare words are. */
@@ -29,7 +30,7 @@ interface Row extends Record<string, unknown> {
  * skipped (if one is shown again, the next run groups it). Runs after each ingest; safe to run
  * twice at once (the second waits).
  */
-export const assignStories = async (db: Db) => {
+export const assignStories = async (db: Db, { judge = null }: { judge?: MergeJudge | null } = {}) => {
   const created = new Set<number>();
   const result = await db.transaction(async (tx) => {
     await tx.execute(
@@ -51,8 +52,17 @@ export const assignStories = async (db: Db) => {
       console.error("Story notification failed:", error);
     }
   }
+  // Then stories that turned out to be the same news are joined (src/stories/merge.ts).
+  let merges: { candidates: number; checked: number; merged: number } = { candidates: 0, checked: 0, merged: 0 };
+  try {
+    const { into, ...counts } = await mergeStories(db, { judge });
+    merges = counts;
+    if (into.size) await db.transaction((tx) => refreshTags(tx, into));
+  } catch (error) {
+    console.error("Merging stories failed:", error);
+  }
   const { touched: _touched, ...counts } = result;
-  return { ...counts, notified };
+  return { ...counts, notified, merges };
 };
 
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
