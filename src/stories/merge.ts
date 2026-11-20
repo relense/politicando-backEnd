@@ -132,13 +132,18 @@ const lisbonTime = new Intl.DateTimeFormat("pt-PT", { timeZone: "Europe/Lisbon",
 export const briefOf = (story: MergeStory): StoryBrief => {
   const articles = [...story.articles].sort((x, y) => +x.publishedAt - +y.publishedAt);
   return {
-    headlines: articles.slice(0, 8).map((a) => ({ title: a.title, source: a.source, at: lisbonTime.format(a.publishedAt) })),
+    // The first and the latest versions: a story that grew shows where it has gone since.
+    headlines: (articles.length > 8 ? [...articles.slice(0, 4), ...articles.slice(-4)] : articles).map((a) => ({ title: a.title, source: a.source, at: lisbonTime.format(a.publishedAt) })),
     excerpt: articles[0]?.excerpt.slice(0, 400) ?? "",
   };
 };
 
 const PROMPT = `Recebes dois grupos de notícias portuguesas (A e B), cada um com títulos, jornal e hora, e o resumo da primeira.
-Diz se A e B contam o MESMO acontecimento: o mesmo facto concreto (uma votação, uma decisão, um anúncio, uma declaração, um incidente) ou a reação do mesmo protagonista ou do mesmo lado (por exemplo o Governo e o seu partido) a esse facto, no mesmo dia, mesmo com palavras diferentes.
+Diz se A e B contam o MESMO acontecimento, mesmo com palavras diferentes:
+- o mesmo facto concreto (uma votação, uma decisão, um anúncio, um incidente) contado por jornais diferentes; ou
+- reações do mesmo lado (por exemplo o primeiro-ministro, os ministros, o Governo e o seu partido) ao mesmo facto, no mesmo dia.
+Um facto e as reações a ele são acontecimentos DIFERENTES: a votação do IVA zero e o Governo a criticar quem a aprovou são false.
+Reações de lados diferentes (o Governo a acusar e a oposição a responder) também são false.
 Responde false quando só partilham o tema largo: duas medidas diferentes do Orçamento, votações diferentes, declarações de pessoas diferentes sobre assuntos diferentes, ou o mesmo assunto em dias diferentes sem facto novo comum.
 Na dúvida, false.`;
 
@@ -200,7 +205,8 @@ export const resolveStoryIds = async (db: Runner, ids: number[]) => {
 
 /** Moves everything from one story into another, then deletes it, leaving a redirect. */
 export const moveStory = async (tx: Tx, fromId: number, intoId: number, reason: "model" = "model") => {
-  await tx.execute(sql`update articles set story_id = ${intoId} where story_id = ${fromId}`);
+  const moved = await tx.execute<{ id: number }>(sql`update articles set story_id = ${intoId} where story_id = ${fromId} returning id`);
+  const articleIds = moved.rows.map((r) => r.id);
   await tx.execute(sql`update comments set story_id = ${intoId} where story_id = ${fromId}`);
   // Marks keep their voter key; one reader who marked both stories counts once.
   await tx.execute(sql`insert into story_votes (story_id, voter, user_id, created_at)
@@ -220,8 +226,9 @@ export const moveStory = async (tx: Tx, fromId: number, intoId: number, reason: 
   await tx.execute(sql`update notifications set target_id = ${intoId} where kind = 'story_update' and target_id = ${fromId}`);
   await tx.execute(sql`update story_merges set into_id = ${intoId} where into_id = ${fromId}`);
   await tx.execute(sql`delete from stories where id = ${fromId}`);
-  await tx.execute(sql`insert into story_merges (from_id, into_id, reason) values (${fromId}, ${intoId}, ${reason})
-    on conflict (from_id) do update set into_id = excluded.into_id, reason = excluded.reason, merged_at = now()`);
+  await tx.execute(sql`insert into story_merges (from_id, into_id, reason, article_ids)
+    values (${fromId}, ${intoId}, ${reason}, ${`{${articleIds.join(",")}}`}::integer[])
+    on conflict (from_id) do update set into_id = excluded.into_id, reason = excluded.reason, article_ids = excluded.article_ids, merged_at = now()`);
   await tx.execute(sql`update stories set importa = (select count(*)::int from story_votes v where v.story_id = ${intoId}) where id = ${intoId}`);
 };
 
@@ -320,28 +327,22 @@ export const mergeStories = async (
     }
   }
 
-  // Confirmed pairs make groups; each group goes into its oldest story.
-  const parent = new Map<number, number>();
-  const find = (id: number): number => {
-    const p = parent.get(id) ?? id;
-    if (p === id) return id;
-    const root = find(p);
-    parent.set(id, root);
-    return root;
-  };
+  // Each story joins at most once per run, strongest pairs first, newer into older. No chains:
+  // A like B and B like C doesn't join A and C. The grown story is asked about again next run,
+  // with its new headlines, so every join is one the model saw.
   const byId = new Map(stories.map((s) => [s.id, s]));
   const older = (x: number, y: number) => {
     const [a, b] = [byId.get(x)!, byId.get(y)!];
     return +a.createdAt < +b.createdAt || (+a.createdAt === +b.createdAt && a.id < b.id) ? x : y;
   };
-  for (const pair of confirmed) {
-    const [ra, rb] = [find(pair.a.id), find(pair.b.id)];
-    if (ra === rb) continue;
-    const root = older(ra, rb);
-    const child = root === ra ? rb : ra;
-    parent.set(child, root);
+  const used = new Set<number>();
+  const moves: { from: number; into: number }[] = [];
+  for (const pair of [...confirmed].sort((x, y) => y.score - x.score)) {
+    if (used.has(pair.a.id) || used.has(pair.b.id)) continue;
+    used.add(pair.a.id).add(pair.b.id);
+    const into = older(pair.a.id, pair.b.id);
+    moves.push({ from: into === pair.a.id ? pair.b.id : pair.a.id, into });
   }
-  const moves = stories.filter((s) => find(s.id) !== s.id).map((s) => ({ from: s.id, into: find(s.id) }));
 
   const into = new Set<number>();
   if (moves.length) {
