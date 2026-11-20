@@ -1,10 +1,11 @@
 import { looksLikeTeam } from "../../accounts/reserved.js";
 import { and, eq, isNull, sql } from "drizzle-orm";
-import type { FastifyBaseLogger } from "fastify";
+import type { FastifyBaseLogger, FastifyRequest } from "fastify";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
 import type { Db } from "../../db/client.js";
-import { articles, comments, forumPosts, forumThreads, forumVotes, initiatives, parties, reports } from "../../db/schema.js";
+import { articles, comments, forumPostVotes, forumPosts, forumThreads, forumVotes, initiatives, parties, reports } from "../../db/schema.js";
+import { escapeLike, searchWords } from "../articles/routes.js";
 import { ApiError, notFound } from "../../errors.js";
 import { posterId, reporterKey, voterKey } from "../../forums/identity.js";
 import type { RecaptchaVerifier } from "../comments/recaptcha.js";
@@ -23,7 +24,32 @@ const OWN_BOARDS = [
   { board: IDEAS_BOARD, name: "Ideias", acronym: null },
   { board: VOTES_BOARD, name: "Votações", acronym: null },
 ];
-export const IDEA_STATUSES = ["reviewing", "planned", "in_progress", "done", "declined"] as const;
+export const IDEA_STATUSES = ["reviewing", "planned", "in_progress", "done", "declined", "duplicate"] as const;
+/** How the team signs its replies (POST /admin/forum/threads/:id/posts). */
+export const TEAM_NAME = "Politicando";
+export const TEAM_POSTER_ID = "equipa";
+
+/** Words too common to tell ideas apart. */
+const STOPWORDS = new Set(
+  "que para com uma uns umas dos das nos nas pelo pela pelos pelas por mais como nao sim ser ter seria era sao esta este isto esse essa isso aquilo quando onde qual quais muito pouco tambem sobre entre depois antes ate sem mas ou ja so the and"
+    .split(" "),
+);
+/** The words of a search or a title worth matching: 3+ letters (or any number), common words left out unless that's all there is. */
+export const ideaWords = (text: string, min = 3) => {
+  const all = searchWords(text).filter((w) => w.length >= min || /\d/.test(w));
+  const kept = all.filter((w) => !STOPWORDS.has(w));
+  return kept.length ? kept : all;
+};
+const fold = (column: string) => sql.raw(`translate(lower(${column}), 'áàâãäåéèêëíìîïóòôõöúùûüçñý', 'aaaaaaeeeeiiiiooooouuuucny')`);
+/** 2 points per word in the title, 1 in the body. */
+const relevance = (words: string[]) =>
+  sql.join(
+    words.map((w) => {
+      const like = `%${escapeLike(w)}%`;
+      return sql`(case when ${fold("t.title")} like ${like} then 2 else 0 end + case when ${fold("t.body")} like ${like} then 1 else 0 end)`;
+    }),
+    sql` + `,
+  );
 const MAX_INT = 2_147_483_647;
 
 const nickname = z
@@ -59,6 +85,10 @@ const threadSummarySchema = z.object({
   status: z.enum(IDEA_STATUSES).nullable().describe("The team's verdict (ideas board): null until they look at it"),
   answer: z.string().nullable().describe("The team's public answer, if any"),
   answeredAt: z.string().nullable(),
+  expectedOn: z.string().nullable().describe("When the team expects it done (YYYY-MM-DD), if they said"),
+  duplicateOf: z.object({ id: z.number(), title: z.string() }).nullable().describe('With status "duplicate": the idea it repeats'),
+  area: z.string().nullable().describe("The part of the site an idea is about"),
+  followers: z.number().describe("Logged-in readers following it"),
 });
 
 const postSchema = z.object({
@@ -72,6 +102,8 @@ const postSchema = z.object({
   createdAt: z.string(),
   hidden: z.boolean(),
   pick: z.enum(["pass", "fail"]).nullable().describe('In a vote\'s megathread (board "votacoes"): the poster\'s "Passa ou chumba?" pick, shown as their side'),
+  team: z.boolean().describe("Written by the team, signed as the team"),
+  score: z.number().describe("Readers' votes (ideas board; 0 elsewhere)"),
 });
 
 export const REPORT_REASONS = ["spam", "insult", "hate", "personal_data", "illegal", "other"] as const;
@@ -104,6 +136,12 @@ export const forumRoutes =
       if (!human) throw new ApiError(403, "recaptcha_failed", "reCAPTCHA verification failed");
     };
 
+    /** The ideas board needs an account to open or vote on an idea, whatever LOGIN_REQUIRED says. */
+    const ideaAccount = (request: FastifyRequest) => {
+      if (!request.reader) throw new ApiError(401, "login_required", "Log in to take part");
+      return app.participant(request, "forum");
+    };
+
     const assertBoard = async (board: string) => {
       if (OWN_BOARDS.some((b) => b.board === board)) return;
       const [party] = await db.select({ id: parties.id }).from(parties).where(eq(parties.slug, board));
@@ -114,19 +152,25 @@ export const forumRoutes =
       id: number; board: string; title: string; body: string; nickname: string | null; account: boolean; poster_id: string; reply_count: number;
       created_at: string; bumped_at: string; pinned: boolean; locked: boolean;
       score: number; status: (typeof IDEA_STATUSES)[number] | null; answer: string | null; answered_at: string | null;
+      expected_on: string | null; duplicate_id: number | null; duplicate_title: string | null; area: string | null; followers: number;
       article_id: number | null; article_title: string | null; initiative_id: number | null; initiative_title: string | null;
     };
     const threadColumns = sql`t.id, t.board, t.title, t.body, t.nickname, t.user_id is not null as account, t.poster_id, t.reply_count,
       ${iso("t.created_at")} as created_at, ${iso("t.bumped_at")} as bumped_at, t.pinned, t.locked_at is not null as locked,
       t.score, t.status, t.answer, ${iso("t.answered_at")} as answered_at,
+      to_char(t.expected_on, 'YYYY-MM-DD') as expected_on, d.id as duplicate_id, d.title as duplicate_title, t.area,
+      (select count(*)::int from user_follows f where f.kind = 'thread' and f.target_id = t.id) as followers,
       a.id as article_id, a.title as article_title, i.id as initiative_id, i.title as initiative_title`;
     const threadFrom = sql`forum_threads t
       left join articles a on a.id = t.article_id and a.hidden_at is null
-      left join initiatives i on i.id = t.initiative_id`;
+      left join initiatives i on i.id = t.initiative_id
+      left join forum_threads d on d.id = t.duplicate_of and d.hidden_at is null`;
     const summary = (r: ThreadRow) => ({
       id: r.id, board: r.board, title: r.title, excerpt: r.body.length > 300 ? `${r.body.slice(0, 299)}…` : r.body,
       nickname: r.nickname, account: r.account, posterId: r.poster_id, replyCount: r.reply_count, createdAt: r.created_at, bumpedAt: r.bumped_at,
       pinned: r.pinned, locked: r.locked, score: r.score, status: r.status, answer: r.answer, answeredAt: r.answered_at,
+      expectedOn: r.expected_on, duplicateOf: r.duplicate_id !== null ? { id: r.duplicate_id, title: r.duplicate_title! } : null,
+      area: r.area, followers: r.followers,
       link: {
         article: r.article_id !== null ? { id: r.article_id, title: r.article_title! } : null,
         initiative: r.initiative_id !== null ? { id: r.initiative_id, title: r.initiative_title! } : null,
@@ -183,11 +227,12 @@ export const forumRoutes =
       {
         schema: {
           tags: ["forums"],
-          summary: "Threads on a board. Pinned threads come first",
+          summary: "Threads on a board. Pinned threads come first, except in a search",
           params: z.object({ board: z.string().regex(/^[a-z0-9-]{1,50}$/) }),
           querystring: z.object({
             sort: z.enum(["active", "new", "top"]).default("active").describe("active: last reply; new: newest; top: most upvoted (then most replies)"),
             status: z.enum(IDEA_STATUSES).optional().describe("Only threads the team gave this status (ideas board)"),
+            q: z.string().trim().min(3).max(200).optional().describe("Words in the title or body, ignoring accents and case; most relevant first, then most voted"),
             page: z.coerce.number().int().min(1).max(1000).default(1),
             limit: z.coerce.number().int().min(1).max(50).default(25),
           }),
@@ -197,13 +242,17 @@ export const forumRoutes =
       async (request) => {
         const { board } = request.params;
         await assertBoard(board);
-        const { sort, status, page, limit } = request.query;
-        const order =
-          sort === "new" ? sql`t.created_at desc` : sort === "top" ? sql`t.score desc, t.reply_count desc, t.bumped_at desc` : sql`t.bumped_at desc`;
-        const where = sql`t.board = ${board} and t.hidden_at is null ${status ? sql`and t.status = ${status}` : sql``}`;
+        const { sort, status, q, page, limit } = request.query;
+        const words = q ? ideaWords(q) : [];
+        if (q && words.length === 0) return { items: [], total: 0 };
+        const rank = words.length ? relevance(words) : null;
+        const order = rank
+          ? sql`${rank} desc, t.score desc`
+          : sql`t.pinned desc, ${sort === "new" ? sql`t.created_at desc` : sort === "top" ? sql`t.score desc, t.reply_count desc, t.bumped_at desc` : sql`t.bumped_at desc`}`;
+        const where = sql`t.board = ${board} and t.hidden_at is null ${status ? sql`and t.status = ${status}` : sql``} ${rank ? sql`and ${rank} > 0` : sql``}`;
         const [rows, total] = await Promise.all([
           db.execute<ThreadRow>(sql`select ${threadColumns} from ${threadFrom} where ${where}
-            order by t.pinned desc, ${order}, t.id desc limit ${limit} offset ${(page - 1) * limit}`),
+            order by ${order}, t.id desc limit ${limit} offset ${(page - 1) * limit}`),
           db.execute<{ n: number }>(sql`select count(*)::int as n from forum_threads t where ${where}`),
         ]);
         return { items: rows.rows.map(summary), total: total.rows[0]?.n ?? 0 };
@@ -220,10 +269,19 @@ export const forumRoutes =
           querystring: z.object({
             after: z.coerce.number().int().min(0).max(MAX_INT).default(0).describe("Replies with a larger id (for loading new ones)"),
             limit: z.coerce.number().int().min(1).max(500).default(200),
+            sort: z
+              .enum(["old", "top", "new"])
+              .default("old")
+              .describe("old: oldest first (default); new: newest first; top: most voted, then oldest (ideas board only; elsewhere it's old)"),
           }),
           response: {
             200: z.object({
-              thread: threadSummarySchema.omit({ excerpt: true }).extend({ body: z.string() }),
+              thread: threadSummarySchema.omit({ excerpt: true }).extend({
+                body: z.string(),
+                statusHistory: z
+                  .array(z.object({ status: z.enum(IDEA_STATUSES).nullable(), at: z.string() }))
+                  .describe("The idea's status over time, oldest first, starting with { status: null, at: createdAt }"),
+              }),
               posts: z.array(postSchema),
               hasMore: z.boolean(),
             }),
@@ -236,20 +294,28 @@ export const forumRoutes =
         const rows = await db.execute<ThreadRow>(sql`select ${threadColumns} from ${threadFrom} where t.id = ${request.params.id} and t.hidden_at is null`);
         const thread = rows.rows[0];
         if (!thread) throw notFound("Thread");
-        const { after, limit } = request.query;
-        const posts = await db.execute<{ id: number; body: string; nickname: string | null; account: boolean; poster_id: string; reply_to: number | null; created_at: string; hidden: boolean; pick: "pass" | "fail" | null }>(sql`
-          select p.id, p.body, p.nickname, p.user_id is not null as account, p.poster_id, p.reply_to, ${iso("p.created_at")} as created_at, p.hidden_at is not null as hidden,
-            pr.pick
-          from forum_posts p
-          left join predictions pr on pr.initiative_id = ${thread.board === VOTES_BOARD ? thread.initiative_id : null} and pr.user_id = p.user_id
-          where p.thread_id = ${thread.id} and p.id > ${after} order by p.id limit ${limit + 1}`);
+        const { after, limit, sort } = request.query;
+        const order = sort === "new" ? sql`p.id desc` : sort === "top" && thread.board === IDEAS_BOARD ? sql`p.score desc, p.id` : sql`p.id`;
+        const [posts, changes] = await Promise.all([
+          db.execute<{
+            id: number; body: string; nickname: string | null; account: boolean; poster_id: string; reply_to: number | null; created_at: string; hidden: boolean;
+            pick: "pass" | "fail" | null; team: boolean; score: number;
+          }>(sql`
+            select p.id, p.body, p.nickname, p.user_id is not null as account, p.poster_id, p.reply_to, ${iso("p.created_at")} as created_at, p.hidden_at is not null as hidden,
+              pr.pick, p.team, p.score
+            from forum_posts p
+            left join predictions pr on pr.initiative_id = ${thread.board === VOTES_BOARD ? thread.initiative_id : null} and pr.user_id = p.user_id
+            where p.thread_id = ${thread.id} and p.id > ${after} order by ${order} limit ${limit + 1}`),
+          db.execute<{ status: (typeof IDEA_STATUSES)[number] | null; at: string }>(sql`
+            select status, ${iso("at")} as at from forum_status_changes where thread_id = ${thread.id} order by at, id`),
+        ]);
         const { excerpt: _excerpt, ...rest } = summary(thread);
         return {
-          thread: { ...rest, body: thread.body },
+          thread: { ...rest, body: thread.body, statusHistory: [{ status: null, at: thread.created_at }, ...changes.rows] },
           posts: posts.rows.slice(0, limit).map((p) => ({
             id: p.id, body: p.hidden ? null : p.body, nickname: p.hidden ? null : p.nickname, account: !p.hidden && p.account, posterId: p.hidden ? null : p.poster_id,
-            isOp: !p.hidden && p.poster_id === thread.poster_id, replyTo: p.reply_to, createdAt: p.created_at, hidden: p.hidden,
-            pick: p.hidden ? null : p.pick,
+            isOp: !p.hidden && !p.team && p.poster_id === thread.poster_id, replyTo: p.reply_to, createdAt: p.created_at, hidden: p.hidden,
+            pick: p.hidden ? null : p.pick, team: !p.hidden && p.team, score: p.score,
           })),
           hasMore: posts.rows.length > limit,
         };
@@ -272,15 +338,25 @@ export const forumRoutes =
             nickname,
             articleId: z.number().int().positive().max(MAX_INT).nullish(),
             initiativeId: z.number().int().positive().max(MAX_INT).nullish(),
+            area: z
+              .string()
+              .trim()
+              .max(100)
+              .nullish()
+              .transform((value) => value || null)
+              .describe('Ideas: the part of the site it\'s about, as the feedback form\'s "page"'),
             recaptchaToken,
           }),
-          response: { 201: z.object({ id: z.number(), posterId: z.string() }), 400: errorSchema, 403: errorSchema, 404: errorSchema, 429: errorSchema, 503: errorSchema },
+          response: {
+            201: z.object({ id: z.number(), posterId: z.string() }),
+            400: errorSchema, 401: errorSchema, 403: errorSchema, 404: errorSchema, 429: errorSchema, 503: errorSchema,
+          },
         },
       },
       async (request, reply) => {
         const { board } = request.params;
-        const who = app.participant(request, "forum");
-        const { title, body, articleId, initiativeId } = request.body;
+        const who = board === IDEAS_BOARD ? ideaAccount(request) : app.participant(request, "forum");
+        const { title, body, articleId, initiativeId, area } = request.body;
         const name = who.username ?? request.body.nickname;
         assertPublishable(title, body, name);
         await checkHuman(who, request.body.recaptchaToken, request.ip, request.log);
@@ -297,7 +373,7 @@ export const forumRoutes =
         const id = await db.transaction(async (tx) => {
           const [created] = await tx
             .insert(forumThreads)
-            .values({ board, title, body, nickname: name, userId: who.userId, posterId: "", articleId: articleId ?? null, initiativeId: initiativeId ?? null })
+            .values({ board, title, body, nickname: name, userId: who.userId, posterId: "", articleId: articleId ?? null, initiativeId: initiativeId ?? null, area })
             .returning({ id: forumThreads.id });
           await tx.update(forumThreads).set({ posterId: posterId(forumSecret, who.key, created!.id) }).where(eq(forumThreads.id, created!.id));
           return created!.id;
@@ -394,19 +470,21 @@ export const forumRoutes =
         schema: {
           tags: ["forums"],
           summary: "Upvote a thread. Once per reader: voting again returns the same score",
+          description: "On the ideas board it needs an account, follows the idea, and a vote on a duplicate counts on the original too.",
           params: idParams,
-          response: { 200: z.object({ score: z.number() }), 400: errorSchema, 404: errorSchema, 429: errorSchema },
+          response: { 200: z.object({ score: z.number() }), 400: errorSchema, 401: errorSchema, 404: errorSchema, 429: errorSchema },
         },
       },
       async (request) => {
         const threadId = request.params.id;
-        const who = app.participant(request, "votes");
         const [thread] = await db
-          .select({ id: forumThreads.id })
+          .select({ id: forumThreads.id, board: forumThreads.board, duplicateOf: forumThreads.duplicateOf })
           .from(forumThreads)
           .where(and(eq(forumThreads.id, threadId), isNull(forumThreads.hiddenAt)));
         if (!thread) throw notFound("Thread");
-        return db.transaction(async (tx) => {
+        const idea = thread.board === IDEAS_BOARD;
+        const who = idea ? ideaAccount(request) : app.participant(request, "votes");
+        const result = await db.transaction(async (tx) => {
           const added = await tx
             .insert(forumVotes)
             .values({ threadId, voter: voterKey(forumSecret, who.key, threadId), userId: who.userId })
@@ -415,6 +493,83 @@ export const forumRoutes =
           const [row] = added.length
             ? await tx.update(forumThreads).set({ score: sql`${forumThreads.score} + 1` }).where(eq(forumThreads.id, threadId)).returning({ score: forumThreads.score })
             : await tx.select({ score: forumThreads.score }).from(forumThreads).where(eq(forumThreads.id, threadId));
+          if (added.length && idea && thread.duplicateOf !== null) {
+            const original = thread.duplicateOf;
+            const copied = await tx
+              .insert(forumVotes)
+              .values({ threadId: original, voter: voterKey(forumSecret, who.key, original), userId: who.userId, fromThreadId: threadId })
+              .onConflictDoNothing()
+              .returning({ threadId: forumVotes.threadId });
+            if (copied.length) await tx.update(forumThreads).set({ score: sql`${forumThreads.score} + 1` }).where(eq(forumThreads.id, original));
+          }
+          return { score: row!.score };
+        });
+        if (idea && who.userId !== null) {
+          try {
+            await follow(db, who.userId, "thread", threadId);
+          } catch (error) {
+            request.log.error(error, "follow failed");
+          }
+        }
+        return result;
+      },
+    );
+
+    app.get(
+      "/forums/threads/:id/similar",
+      {
+        schema: {
+          tags: ["forums"],
+          summary: "Threads on the same board that look like this one (by the words of its title), most alike first, then most voted",
+          params: idParams,
+          querystring: z.object({ limit: z.coerce.number().int().min(1).max(10).default(3) }),
+          response: { 200: z.object({ items: z.array(threadSummarySchema) }), 400: errorSchema, 404: errorSchema },
+        },
+      },
+      async (request) => {
+        const [thread] = await db
+          .select({ id: forumThreads.id, board: forumThreads.board, title: forumThreads.title })
+          .from(forumThreads)
+          .where(and(eq(forumThreads.id, request.params.id), isNull(forumThreads.hiddenAt)));
+        if (!thread) throw notFound("Thread");
+        const words = ideaWords(thread.title, 4);
+        if (words.length === 0) return { items: [] };
+        const rank = relevance(words);
+        // At least one word in the title, or two in the body: one shared word in passing isn't "alike".
+        const rows = await db.execute<ThreadRow>(sql`select ${threadColumns} from ${threadFrom}
+          where t.board = ${thread.board} and t.hidden_at is null and t.id <> ${thread.id} and ${rank} >= 2
+          order by ${rank} desc, t.score desc, t.id desc limit ${request.query.limit}`);
+        return { items: rows.rows.map(summary) };
+      },
+    );
+
+    app.post(
+      "/forums/posts/:id/vote",
+      {
+        config: { rateLimit: { max: 30, timeWindow: "1 minute" } },
+        schema: {
+          tags: ["forums"],
+          summary: "Vote for a reply on the ideas board. Needs an account; once per reader, no undo",
+          params: idParams,
+          response: { 200: z.object({ score: z.number() }), 400: errorSchema, 401: errorSchema, 404: errorSchema, 429: errorSchema },
+        },
+      },
+      async (request) => {
+        const reader = request.reader;
+        if (!reader) throw new ApiError(401, "login_required", "Log in to take part");
+        const [post] = await db
+          .select({ id: forumPosts.id, board: forumThreads.board })
+          .from(forumPosts)
+          .innerJoin(forumThreads, eq(forumThreads.id, forumPosts.threadId))
+          .where(and(eq(forumPosts.id, request.params.id), isNull(forumPosts.hiddenAt), isNull(forumThreads.hiddenAt)));
+        if (!post) throw notFound("Post");
+        // Discussion elsewhere goes by activity, never popularity: only ideas' replies get votes.
+        if (post.board !== IDEAS_BOARD) throw new ApiError(400, "not_an_idea", "Only replies on the ideas board take votes");
+        return db.transaction(async (tx) => {
+          const added = await tx.insert(forumPostVotes).values({ postId: post.id, userId: reader.id }).onConflictDoNothing().returning({ postId: forumPostVotes.postId });
+          const [row] = added.length
+            ? await tx.update(forumPosts).set({ score: sql`${forumPosts.score} + 1` }).where(eq(forumPosts.id, post.id)).returning({ score: forumPosts.score })
+            : await tx.select({ score: forumPosts.score }).from(forumPosts).where(eq(forumPosts.id, post.id));
           return { score: row!.score };
         });
       },

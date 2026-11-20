@@ -971,9 +971,15 @@ export const forumThreads = pgTable(
     /** Readers' upvotes (forum_votes), kept here for sorting. */
     score: integer().notNull().default(0),
     /** The team's verdict on an idea (board "ideias"), with an optional public answer. */
-    status: text().$type<"reviewing" | "planned" | "in_progress" | "done" | "declined">(),
+    status: text().$type<"reviewing" | "planned" | "in_progress" | "done" | "declined" | "duplicate">(),
     answer: text(),
     answeredAt: timestamp("answered_at", { withTimezone: true }),
+    /** When the team expects to ship an idea, if they say. */
+    expectedOn: date("expected_on"),
+    /** With status "duplicate": the idea this one repeats (its votes count there too). */
+    duplicateOf: integer("duplicate_of").references((): AnyPgColumn => forumThreads.id, { onDelete: "set null" }),
+    /** Which part of the site an idea is about, as on the feedback form ("page"). */
+    area: text(),
   },
   (table) => [
     index("forum_threads_user_idx").on(table.userId),
@@ -994,8 +1000,24 @@ export const forumVotes = pgTable(
     /** The reader's account, when they were logged in. */
     userId: integer("user_id").references(() => users.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    /** Set on votes carried over from a duplicate idea, so they can go back if it's unmarked. */
+    fromThreadId: integer("from_thread_id"),
   },
   (table) => [primaryKey({ columns: [table.threadId, table.voter] }), index("forum_votes_user_idx").on(table.userId)],
+);
+
+/** An idea's status over time (ideas board), oldest first: the public timeline. */
+export const forumStatusChanges = pgTable(
+  "forum_status_changes",
+  {
+    id: integer().primaryKey().generatedAlwaysAsIdentity(),
+    threadId: integer("thread_id")
+      .notNull()
+      .references(() => forumThreads.id, { onDelete: "cascade" }),
+    status: text(),
+    at: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("forum_status_changes_thread_idx").on(table.threadId, table.at)],
 );
 
 export const forumPosts = pgTable(
@@ -1014,8 +1036,27 @@ export const forumPosts = pgTable(
     replyTo: integer("reply_to"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     hiddenAt: timestamp("hidden_at", { withTimezone: true }),
+    /** Written by the team through the admin, signed as the team. */
+    team: boolean().notNull().default(false),
+    /** Readers' votes (forum_post_votes): ideas board only. */
+    score: integer().notNull().default(0),
   },
   (table) => [index("forum_posts_thread_idx").on(table.threadId, table.id), index("forum_posts_user_idx").on(table.userId)],
+);
+
+/** One vote per account per reply, on the ideas board; no undo. */
+export const forumPostVotes = pgTable(
+  "forum_post_votes",
+  {
+    postId: integer("post_id")
+      .notNull()
+      .references(() => forumPosts.id, { onDelete: "cascade" }),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.postId, table.userId] }), index("forum_post_votes_user_idx").on(table.userId)],
 );
 
 /** Readers' reports of threads, posts and comments, for moderators. */
@@ -1329,7 +1370,7 @@ export const userReads = pgTable(
   (table) => [primaryKey({ columns: [table.userId, table.storyId] })],
 );
 
-export const NOTIFICATION_KINDS = ["comment_reply", "forum_reply", "thread_update", "story_update", "prediction_result"] as const;
+export const NOTIFICATION_KINDS = ["comment_reply", "forum_reply", "thread_update", "story_update", "prediction_result", "idea_status"] as const;
 export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
 
 /**

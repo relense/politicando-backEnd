@@ -250,7 +250,8 @@ export const budgetRoutes =
             year: budgetSources.year,
             syncedAt: budgetSources.syncedAt,
             proposals: sql<number>`count(${budgetProposals.id})::int`,
-            voted: sql<number>`count(${budgetProposals.lastVotedOn})::int`,
+            // A result the source gives without the vote itself (e.g. 111C-2 in 2027) still counts as voted.
+            voted: sql<number>`count(*) filter (where ${budgetProposals.lastVotedOn} is not null or ${budgetProposals.result} in ('approved', 'partially_approved', 'rejected'))::int`,
             pending: sql<number>`count(*) filter (where ${budgetProposals.result} in ('pending', 'sent_to_plenary'))::int`,
             lastVotedOn: sql<string | null>`max(${budgetProposals.lastVotedOn})::text`,
           })

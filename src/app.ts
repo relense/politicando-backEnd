@@ -253,7 +253,7 @@ export const buildApp = async ({
       await api.register(notificationRoutes(db));
       await api.register(predictionRoutes(db));
       await api.register(adminRecordRoutes(db));
-      await api.register(adminForumRoutes(db));
+      await api.register(adminForumRoutes(db, forumSecret));
       await api.register(adminUserRoutes(db));
       await api.register(editorialRoutes(db, { voteSecret: forumSecret }));
       await api.register(publishRoutes(db, publishKeys, { apiUrl: publicApiUrl, revalidate }));

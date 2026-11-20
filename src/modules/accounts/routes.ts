@@ -1,5 +1,5 @@
 import { RESERVED } from "../../accounts/reserved.js";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
@@ -26,6 +26,7 @@ import {
   editorialPosts,
   editorialVotes,
   forumPosts,
+  forumPostVotes,
   forumThreads,
   forumVotes,
   reports,
@@ -104,6 +105,7 @@ const stateSchema = z.object({
     stories: z.array(z.number()).describe('Stories marked "Importa"'),
     comments: z.array(z.number()).describe("Comments liked"),
     forum: z.array(z.number()).describe("Forum threads upvoted"),
+    forumPosts: z.array(z.number()).describe("Replies voted for (ideas board)"),
   }),
 });
 
@@ -233,7 +235,7 @@ export const accountRoutes =
     };
 
     const state = async (userId: number): Promise<z.infer<typeof stateSchema>> => {
-      const [saves, hidden, mutes, reads, aVotes, eVotes, sVotes, likes, fVotes] = await Promise.all([
+      const [saves, hidden, mutes, reads, aVotes, eVotes, sVotes, likes, fVotes, pVotes] = await Promise.all([
         db.select({ kind: userSaves.kind, id: userSaves.targetId }).from(userSaves).where(eq(userSaves.userId, userId)).orderBy(desc(userSaves.createdAt)),
         db.select({ id: userHidden.articleId }).from(userHidden).where(eq(userHidden.userId, userId)).orderBy(desc(userHidden.createdAt)),
         db.select({ kind: userMutes.kind, value: userMutes.value }).from(userMutes).where(eq(userMutes.userId, userId)).orderBy(desc(userMutes.createdAt)),
@@ -246,7 +248,8 @@ export const accountRoutes =
           .where(eq(editorialVotes.userId, userId)),
         db.select({ id: storyVotes.storyId }).from(storyVotes).where(eq(storyVotes.userId, userId)),
         db.select({ id: commentLikes.commentId }).from(commentLikes).where(eq(commentLikes.userId, userId)),
-        db.select({ id: forumVotes.threadId }).from(forumVotes).where(eq(forumVotes.userId, userId)),
+        db.select({ id: forumVotes.threadId }).from(forumVotes).where(and(eq(forumVotes.userId, userId), isNull(forumVotes.fromThreadId))),
+        db.select({ id: forumPostVotes.postId }).from(forumPostVotes).where(eq(forumPostVotes.userId, userId)),
       ]);
       const vote = (v: number) => (v > 0 ? 1 : -1) as 1 | -1;
       return {
@@ -261,6 +264,7 @@ export const accountRoutes =
           stories: sVotes.map((v) => v.id),
           comments: likes.map((v) => v.id),
           forum: fVotes.map((v) => v.id),
+          forumPosts: pVotes.map((v) => v.id),
         },
       };
     };
@@ -956,6 +960,7 @@ export const deleteAccount = (db: Db, userId: number) =>
     const markedStories = await ids(tx.delete(storyVotes).where(eq(storyVotes.userId, userId)).returning({ id: storyVotes.storyId }));
     const likedComments = await ids(tx.delete(commentLikes).where(eq(commentLikes.userId, userId)).returning({ id: commentLikes.commentId }));
     const votedThreads = await ids(tx.delete(forumVotes).where(eq(forumVotes.userId, userId)).returning({ id: forumVotes.threadId }));
+    const votedReplies = await ids(tx.delete(forumPostVotes).where(eq(forumPostVotes.userId, userId)).returning({ id: forumPostVotes.postId }));
     if (votedArticles.length) {
       await tx.execute(sql`update articles a set
         upvotes = (select count(*)::int from article_votes v where v.article_id = a.id and v.value = 1),
@@ -976,6 +981,9 @@ export const deleteAccount = (db: Db, userId: number) =>
     }
     if (votedThreads.length) {
       await tx.update(forumThreads).set({ score: sql`greatest(${forumThreads.score} - 1, 0)` }).where(inArray(forumThreads.id, votedThreads));
+    }
+    if (votedReplies.length) {
+      await tx.update(forumPosts).set({ score: sql`greatest(${forumPosts.score} - 1, 0)` }).where(inArray(forumPosts.id, votedReplies));
     }
     const now = new Date();
     await tx.update(comments).set({ body: "[apagado]", username: null, hiddenAt: now }).where(eq(comments.userId, userId));

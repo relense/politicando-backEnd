@@ -80,6 +80,7 @@ const stillThereIn = (table: string) => {
   when 'forum_reply' then exists (select 1 from forum_posts p0 join forum_threads t0 on t0.id = p0.thread_id
     where p0.id = ${target} and p0.hidden_at is null and t0.hidden_at is null)
   when 'thread_update' then exists (select 1 from forum_threads t0 where t0.id = ${target} and t0.hidden_at is null)
+  when 'idea_status' then exists (select 1 from forum_threads t0 where t0.id = ${target} and t0.hidden_at is null)
   when 'story_update' then exists (select 1 from articles a0 where a0.story_id = ${target} and a0.hidden_at is null)
   else true end)`;
 };
@@ -122,6 +123,7 @@ interface InboxRow extends Record<string, unknown> {
   pick: string | null;
   outcome: string | null;
   vote_result: string | null;
+  idea_status: "reviewing" | "planned" | "in_progress" | "done" | "declined" | "duplicate" | null;
   cursor_at: string;
 }
 
@@ -138,14 +140,14 @@ export const inbox = async (db: Runner, userId: number, cursor?: string) => {
         coalesce(fp.thread_id, ft.id) as thread_id, coalesce(fpt.title, ft.title) as thread_title, coalesce(fpt.board, ft.board) as board,
         (select a.title from articles a where n.kind = 'story_update' and a.story_id = n.target_id and a.hidden_at is null
           order by a.published_at desc limit 1) as headline,
-        i.title as initiative_title, pr.pick, pr.outcome, pr.vote_result,
+        i.title as initiative_title, pr.pick, pr.outcome, pr.vote_result, case when n.kind = 'idea_status' then ft.status end as idea_status,
         to_char(n.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as cursor_at
       from notifications n
       left join comments c on n.kind = 'comment_reply' and c.id = n.target_id
       left join editorial_posts ep on ep.id = c.editorial_post_id
       left join forum_posts fp on n.kind = 'forum_reply' and fp.id = n.target_id
       left join forum_threads fpt on fpt.id = fp.thread_id
-      left join forum_threads ft on n.kind = 'thread_update' and ft.id = n.target_id
+      left join forum_threads ft on n.kind in ('thread_update', 'idea_status') and ft.id = n.target_id
       left join initiatives i on n.kind = 'prediction_result' and i.id = n.target_id
       left join predictions pr on n.kind = 'prediction_result' and pr.initiative_id = n.target_id and pr.user_id = n.user_id
       where n.user_id = ${userId} and ${stillThereIn("n")} ${after}
@@ -175,6 +177,7 @@ export const inbox = async (db: Runner, userId: number, cursor?: string) => {
       threadTitle: r.thread_title,
       board: r.board,
       headline: r.headline,
+      status: r.idea_status,
       prediction:
         r.kind === "prediction_result" && r.pick
           ? { initiativeTitle: r.initiative_title ?? "", pick: r.pick as "pass" | "fail", outcome: r.outcome as "hit" | "miss" | "void" | null, result: r.vote_result }

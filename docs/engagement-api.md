@@ -39,8 +39,9 @@ Newest first, 30 a page, with `nextCursor` for the next page (null at the end).
 | `thread_update` | New replies in a thread the reader follows | "*count* novas respostas em *threadTitle*" (latest: `actorName`) | Thread `threadId` |
 | `story_update` | New outlets covered a story the reader follows | "Novidades: *headline*" (`count` = runs with new coverage) | Story `storyId` |
 | `prediction_result` | A prediction was settled | "Acertaste!" / "Falhaste": *initiativeTitle* was `prediction.result` | Initiative `initiativeId` |
+| `idea_status` | The team changed the status of an idea the reader follows (ideas board) | "*threadTitle*: Planeado" (`status` is the idea's status now) | Thread `threadId` |
 
-- **Coalescing:** updates (`thread_update`, `story_update`) are one unread line per thread or story, whose `count` goes up and which moves back to the top. Once read, the next update starts a new line.
+- **Coalescing:** updates (`thread_update`, `story_update`, `idea_status`) are one unread line per thread or story, whose `count` goes up and which moves back to the top. Once read, the next update starts a new line.
 - **Hidden content:** anything hidden or deleted since is left out of the list and the count.
 - **Retention:** notifications are deleted after 90 days.
 

@@ -7,6 +7,7 @@ import type { Db } from "../../db/client.js";
 import { NOTIFICATION_KINDS } from "../../db/schema.js";
 import { ApiError } from "../../errors.js";
 import { type FollowKind, follow, inbox, markRead, unfollow, unreadCount } from "../../notifications/index.js";
+import { IDEA_STATUSES } from "../forums/routes.js";
 import { errorSchema } from "../shared.js";
 
 /*
@@ -38,6 +39,10 @@ const itemSchema = z.object({
   threadTitle: z.string().nullable(),
   board: z.string().nullable(),
   headline: z.string().nullable().describe("A story update: the newest headline in it"),
+  status: z
+    .enum(IDEA_STATUSES)
+    .nullable()
+    .describe("idea_status: the idea's status now (threadId, threadTitle say which idea)"),
   prediction: z
     .object({
       initiativeTitle: z.string(),

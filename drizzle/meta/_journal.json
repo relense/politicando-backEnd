@@ -302,6 +302,13 @@
       "when": 1795121830276,
       "tag": "0042_budget_summaries",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1795170592262,
+      "tag": "0043_ideas_board",
+      "breakpoints": true
     }
   ]
 }
