@@ -120,6 +120,26 @@ describe("joining stories that are the same news", () => {
     expect((await mergeStories(db, { judge })).checked).toBe(0);
   });
 
+  it("joins each story at most once per run, so a chain doesn't pull in stories the model never compared", async () => {
+    await background();
+    const { older, newer } = await reaction();
+    const third = await story(
+      [["Montenegro garante que Governo vai até ao fim apesar de PS e Chega e rejeita crise política", "O primeiro-ministro reagiu à aprovação do IVA zero no Orçamento do Estado pelo PS e pelo Chega.", "sicnoticias.pt", 1]],
+      ["ps", "chega"],
+    );
+    const { judge } = judgeSaying(true);
+    expect((await mergeStories(db, { judge })).merged).toBe(1);
+    expect((await db.select({ id: stories.id }).from(stories).where(sql`${stories.id} in (${older}, ${newer}, ${third})`))).toHaveLength(2);
+    // The grown story is asked about again with its new headlines, and the last one joins then.
+    expect((await mergeStories(db, { judge })).merged).toBe(1);
+    const left = await db.select({ id: stories.id }).from(stories).where(sql`${stories.id} in (${older}, ${newer}, ${third})`);
+    expect(left).toEqual([{ id: older }]);
+    // Each join keeps which articles moved, so it can be undone.
+    const merges = await db.select({ fromId: storyMerges.fromId, articleIds: storyMerges.articleIds }).from(storyMerges);
+    expect(merges).toHaveLength(2);
+    for (const m of merges) expect(m.articleIds).toHaveLength(1);
+  });
+
   it("asks about a pair again only once a story grows, and never joins on a no", async () => {
     await background();
     const { older, newer } = await reaction();

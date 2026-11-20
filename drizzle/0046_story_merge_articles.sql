@@ -1,0 +1,1 @@
+ALTER TABLE "story_merges" ADD COLUMN "article_ids" integer[];

@@ -83,6 +83,8 @@ export const storyMerges = pgTable(
       .references(() => stories.id, { onDelete: "cascade" }),
     /** Who decided: "model" (a language model confirmed it). */
     reason: text().$type<"model">().notNull(),
+    /** The articles that moved, so a wrong join can be undone. Null for joins before this was kept. */
+    articleIds: integer("article_ids").array(),
     mergedAt: timestamp("merged_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [index("story_merges_into_idx").on(table.intoId)],

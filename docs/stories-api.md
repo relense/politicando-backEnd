@@ -24,7 +24,9 @@ cards, but two different stories should not show as one.
 2. A small language model (Claude Haiku) reads both stories' headlines and says whether they're
    the same happening, not just the same broad subject. Reactions by the same side to the same
    vote are the same event; two Budget measures voted the same night aren't.
-3. Confirmed stories are joined into the **oldest** one. Its id stays, and it gains the other's
+   A vote and the reactions to it stay apart, and so do reactions from opposite sides.
+3. Confirmed stories are joined into the **older** one. Each story joins at most once per scan,
+   so a big story grows step by step, and the model sees its latest headlines each time. Its id stays, and it gains the other's
    versions, Importa marks, comments, follows, saves and reads.
 
 The joined story's old id keeps working: `GET /stories/:id` (and its comments, Importa,
