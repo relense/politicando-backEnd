@@ -567,6 +567,7 @@ describe("platform", () => {
       "/api/v2/elections/{id}/places/{key}",
       "/api/v2/explainers/become-deputy",
       "/api/v2/feedback",
+      "/api/v2/feedback/follow/{token}",
       "/api/v2/feedback/summary",
       "/api/v2/forums",
       "/api/v2/forums/posts/{id}/vote",

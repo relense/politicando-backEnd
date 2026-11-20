@@ -1,4 +1,5 @@
 import multipart from "@fastify/multipart";
+import { createHash, randomBytes } from "node:crypto";
 import { imageType } from "../../media/images.js";
 import { and, count, desc, eq, getTableColumns, gte, sql } from "drizzle-orm";
 import type { FastifyRequest } from "fastify";
@@ -10,6 +11,7 @@ import type { Db } from "../../db/client.js";
 import { corrections, feedbackMessages } from "../../db/schema.js";
 import { ApiError, notFound } from "../../errors.js";
 import { purgeFeedback } from "../../feedback/purge.js";
+import { notify } from "../../notifications/index.js";
 import type { Mailer } from "../../newsletter/mailer.js";
 import type { RecaptchaVerifier } from "../comments/recaptcha.js";
 import { errorSchema } from "../shared.js";
@@ -26,6 +28,9 @@ const FEEDBACK_KINDS = ["error", "idea", "broken", "other"] as const;
 const CORRECTION_STATUSES = ["fixed", "checking", "rejected"] as const;
 const MAX_INT = 2_147_483_647;
 
+
+/** The follow-up link's token is shown once; only its hash is kept. */
+export const followUpHash = (token: string) => createHash("sha256").update(token).digest("hex");
 
 const optionalText = (max: number) =>
   z
@@ -90,6 +95,8 @@ const adminMessageSchema = z.object({
   createdAt: z.string(),
   answeredAt: z.string().nullable(),
   closedAt: z.string().nullable(),
+  account: z.boolean().describe("Sent by a logged-in reader: an in-site answer reaches their inbox"),
+  followable: z.boolean().describe("The reader can read an in-site answer (an account, or their private link; the link goes when the message is closed)"),
   corrections: z.array(correctionSchema),
 });
 
@@ -164,7 +171,12 @@ export const feedbackRoutes =
             "Fields: kind (error | idea | broken | other), message (required, up to 1000), page, url, correction, source, email, screenshot (file), recaptchaToken.",
           consumes: ["multipart/form-data"],
           response: {
-            201: z.object({ id: z.number() }),
+            201: z.object({
+              id: z.number(),
+              followUpToken: z
+                .string()
+                .describe("Private, shown once: GET /feedback/follow/:token shows the team's answer. Works until the message is closed"),
+            }),
             400: errorSchema,
             403: errorSchema,
             413: errorSchema,
@@ -185,12 +197,54 @@ export const feedbackRoutes =
         }
         if (!human) throw new ApiError(403, "captcha_failed", "reCAPTCHA verification failed");
         const { recaptchaToken: _token, screenshot, ...fields } = form;
+        const followUpToken = randomBytes(24).toString("base64url");
         const [created] = await db
           .insert(feedbackMessages)
-          .values({ ...fields, screenshot: screenshot?.bytes ?? null, screenshotType: screenshot?.type ?? null })
+          .values({
+            ...fields, screenshot: screenshot?.bytes ?? null, screenshotType: screenshot?.type ?? null,
+            userId: request.reader?.id ?? null, followUpHash: followUpHash(followUpToken),
+          })
           .returning({ id: feedbackMessages.id });
         await purgeFeedback(db);
-        return reply.status(201).send({ id: created!.id });
+        return reply.status(201).send({ id: created!.id, followUpToken });
+      },
+    );
+
+    app.get(
+      "/feedback/follow/:token",
+      {
+        config: { rateLimit: { max: 30, timeWindow: "1 minute" } },
+        schema: {
+          tags: ["feedback"],
+          summary: "A message's status and the team's answer, by its private follow-up token (until the message is closed)",
+          description: "Never the email, the message or anything else the reader wrote. 404 for an unknown token or a closed message.",
+          params: z.object({ token: z.string().regex(/^[A-Za-z0-9_-]{20,64}$/) }),
+          response: {
+            200: z.object({
+              kind: z.enum(FEEDBACK_KINDS),
+              page: z.string().nullable(),
+              createdAt: z.string(),
+              status: z.enum(["open", "answered"]),
+              reply: z.string().nullable().describe("The team's answer, once given"),
+              answeredAt: z.string().nullable(),
+            }),
+            400: errorSchema,
+            404: errorSchema,
+            429: errorSchema,
+          },
+        },
+      },
+      async (request, reply) => {
+        const [row] = await db
+          .select({ kind: feedbackMessages.kind, page: feedbackMessages.page, createdAt: feedbackMessages.createdAt, status: feedbackMessages.status, reply: feedbackMessages.reply, answeredAt: feedbackMessages.answeredAt })
+          .from(feedbackMessages)
+          .where(eq(feedbackMessages.followUpHash, followUpHash(request.params.token)));
+        if (!row || row.status === "closed") throw notFound("Message");
+        reply.header("Cache-Control", "private, no-store");
+        return {
+          kind: row.kind, page: row.page, createdAt: row.createdAt.toISOString(), status: row.status,
+          reply: row.reply, answeredAt: row.answeredAt?.toISOString() ?? null,
+        };
       },
     );
 
@@ -287,6 +341,8 @@ export const feedbackRoutes =
       createdAt: row.createdAt.toISOString(),
       answeredAt: row.answeredAt?.toISOString() ?? null,
       closedAt: row.closedAt?.toISOString() ?? null,
+      account: row.userId !== null,
+      followable: row.userId !== null || row.followUpHash !== null,
       corrections: linked.map(presentCorrection),
     });
     // Everything but the image itself.
@@ -357,11 +413,14 @@ export const feedbackRoutes =
       {
         schema: {
           tags: ["admin"],
-          summary: "Answer a message: send the reply by email (send: true), or note one given elsewhere",
+          summary: "Answer a message: by email, on the site, or note one given elsewhere",
+          description:
+            "channel email (or the older send: true) emails it; site shows it on the reader's private follow-up link, with no email needed; none (default) only notes it. Either way the answer shows on the follow-up link, and with email or site a logged-in reader also gets it in their inbox.",
           params: idParams,
           body: z.object({
             reply: z.string().trim().min(1).max(5000).nullable().describe("What we answered"),
-            send: z.boolean().default(false).describe("Email it to the reader (needs their email and mail set up)"),
+            send: z.boolean().default(false).describe("Same as channel: email (kept for the admin that sends it)"),
+            channel: z.enum(["email", "site", "none"]).optional().describe("Default: email when send is true, otherwise none"),
           }),
           response: { 200: adminMessageSchema, 503: errorSchema, ...errors },
         },
@@ -369,7 +428,15 @@ export const feedbackRoutes =
       async (request) => {
         const me = await requireAdmin(request, "moderator");
         const before = await loadMessage(request.params.id);
-        const { reply, send } = request.body;
+        const { reply } = request.body;
+        const channel = request.body.channel ?? (request.body.send ? "email" : "none");
+        const send = channel === "email";
+        if (channel === "site") {
+          if (!reply) throw new ApiError(400, "empty_reply", "Write the reply first");
+          if (before.userId === null && before.followUpHash === null) {
+            throw new ApiError(400, "not_followable", "The reader can no longer see an answer on the site: the message was closed");
+          }
+        }
         if (send) {
           if (!reply) throw new ApiError(400, "empty_reply", "Write the reply first");
           if (!before.email) throw new ApiError(400, "no_email", "The reader didn't leave an email");
@@ -385,7 +452,14 @@ export const feedbackRoutes =
           .set({ reply: reply ?? before.reply, status: before.status === "closed" ? "closed" : "answered", answeredAt: before.answeredAt ?? new Date() })
           .where(eq(feedbackMessages.id, before.id))
           .returning();
-        await audit(db, me.id, send ? "feedback.reply" : "feedback.answered", "feedback", before.id);
+        await audit(db, me.id, channel === "email" ? "feedback.reply" : channel === "site" ? "feedback.reply_site" : "feedback.answered", "feedback", before.id);
+        if (channel !== "none" && reply && before.userId !== null) {
+          try {
+            await notify(db, { userIds: [before.userId], kind: "feedback_reply", targetId: before.id, actorName: "Politicando" });
+          } catch (error) {
+            request.log.error(error, "feedback notification failed");
+          }
+        }
         return withCorrections(after!);
       },
     );
@@ -412,14 +486,14 @@ export const feedbackRoutes =
     app.post(
       "/admin/feedback/:id/close",
       {
-        schema: { tags: ["admin"], summary: "Close a message; its email is deleted", params: idParams, response: { 200: adminMessageSchema, ...errors } },
+        schema: { tags: ["admin"], summary: "Close a message; its email and follow-up link are deleted", params: idParams, response: { 200: adminMessageSchema, ...errors } },
       },
       async (request) => {
         const me = await requireAdmin(request, "moderator");
         const before = await loadMessage(request.params.id);
         const [after] = await db
           .update(feedbackMessages)
-          .set({ status: "closed", closedAt: before.closedAt ?? new Date(), email: null })
+          .set({ status: "closed", closedAt: before.closedAt ?? new Date(), email: null, followUpHash: null })
           .where(eq(feedbackMessages.id, before.id))
           .returning();
         await audit(db, me.id, "feedback.close", "feedback", before.id);

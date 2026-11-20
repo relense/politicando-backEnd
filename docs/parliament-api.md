@@ -153,7 +153,20 @@ Query: `status` (`approved` | `in_progress` | `rejected` | `withdrawn`), `party`
 `presidency` is the President's decision, taken from the parliament's own stages. Status
 is the latest: a law that was vetoed, passed again by parliament and then promulgated
 shows `promulgated`, but keeps `vetoedAt`. Show "vetado e depois promulgado" when both
-dates are set. Only parliament decrees appear here; Government decrees don't pass through
+dates are set.
+
+**One initiative, several decrees.** Sometimes one initiative becomes several decrees, each
+decided on its own. For example, initiative 315160 became the Nationality Law (decree 48,
+promulgated) and a Penal Code change (decree 49, vetoed). Then:
+
+- `presidency.decrees` lists each current decree: `{ number: "48/XVII", status, sentAt, promulgatedAt, vetoedAt }`.
+  A decree that was vetoed and later passed again under a new number isn't listed.
+- `status` is `promulgated` if any of them became law. Otherwise it's `pending` if any is still
+  in Belém, and `vetoed` only if all were vetoed.
+- `partial: true` means they ended differently. Show e.g. "Promulgada em parte: 1 de 2 decretos
+  vetado", rather than "Vetada" or a bare "Promulgada".
+
+`decrees` and `partial` are left out for a single decree. Only parliament decrees appear here; Government decrees don't pass through
 the parliament's data. More in `docs/presidency-api.md`.
 
 `coverage` is how much news we found about it. See "News about an initiative" below

@@ -11,7 +11,7 @@ const { db, pool } = createTestDb();
 let human = true;
 const sent: MailMessage[] = [];
 const app = await buildApp({
-  db, corsOrigins: [], verifyRecaptcha: async () => human, loginLimitPerMinute: 1000, feedbackLimitPerHour: 1000,
+  db, corsOrigins: [], verifyRecaptcha: async () => human, loginLimitPerMinute: 1000, feedbackLimitPerHour: 1000, registerLimitPerHour: 1000,
   mailer: async (message) => void sent.push(message),
 });
 
@@ -64,7 +64,7 @@ describe("POST /feedback", () => {
       { kind: "error", message: "O deputado X não é do PS", page: "Percursos", url: "/percursos/x", correction: "É do PSD", source: "parlamento.pt", email: "leitor@example.pt" },
       { type: "image/png", bytes: PNG },
     );
-    expect(created).toEqual({ status: 201, body: { id: expect.any(Number) } });
+    expect(created).toEqual({ status: 201, body: { id: expect.any(Number), followUpToken: expect.stringMatching(/^[A-Za-z0-9_-]{32}$/) } });
     const [row] = await db.select().from(feedbackMessages);
     expect(row).toMatchObject({ kind: "error", page: "Percursos", correction: "É do PSD", email: "leitor@example.pt", screenshotType: "image/png", status: "open" });
     expect(row!.screenshot!.equals(PNG)).toBe(true);
@@ -155,5 +155,67 @@ describe("feedback admin and corrections", () => {
     }
     expect((await call("GET", "/feedback/summary")).body.stats.responseDays).toBe(3);
     await db.delete(feedbackMessages).where(eq(feedbackMessages.message, "m"));
+  });
+});
+
+describe("answers on the site", () => {
+  const reader = async (username: string) => {
+    const response = await app.inject({ method: "POST", url: "/api/v2/auth/register", payload: { username, password: "palavra-passe", recaptchaToken: "t" } });
+    return `politicando_session=${response.cookies.find((c) => c.name === "politicando_session")!.value}`;
+  };
+  const sendAs = async (cookie: string, fields: Record<string, string>) => {
+    const body = form({ recaptchaToken: "t", ...fields });
+    const response = await app.inject({ method: "POST", url: "/api/v2/feedback", payload: body.payload, headers: { ...body.headers, cookie } });
+    return response.json();
+  };
+
+  it("lets a reader with no account follow their message by its private link, until it's closed", async () => {
+    const cookie = await login();
+    const { id, followUpToken } = (await send({ kind: "error", message: "O meu nome é Rui e o deputado X não é do PS", page: "Percursos" })).body;
+    const follow = () => call("GET", `/feedback/follow/${followUpToken}`);
+
+    const open = await follow();
+    expect(open.headers["cache-control"]).toBe("private, no-store");
+    expect(open.body).toEqual({ kind: "error", page: "Percursos", createdAt: expect.any(String), status: "open", reply: null, answeredAt: null });
+    expect(JSON.stringify(open.body)).not.toContain("Rui");
+    expect((await call("GET", `/admin/feedback/${id}`, cookie)).body).toMatchObject({ account: false, followable: true, email: null });
+
+    // No email left: answering by email is refused, on the site it isn't.
+    expect((await call("POST", `/admin/feedback/${id}/answer`, cookie, { reply: "Obrigado", channel: "email" })).body.error.code).toBe("no_email");
+    expect((await call("POST", `/admin/feedback/${id}/answer`, cookie, { reply: null, channel: "site" })).body.error.code).toBe("empty_reply");
+    const answered = await call("POST", `/admin/feedback/${id}/answer`, cookie, { reply: "Obrigado, já corrigimos.", channel: "site" });
+    expect(answered.body).toMatchObject({ status: "answered", reply: "Obrigado, já corrigimos." });
+    expect(sent).toHaveLength(0);
+    expect((await follow()).body).toMatchObject({ status: "answered", reply: "Obrigado, já corrigimos.", answeredAt: expect.any(String) });
+
+    await call("POST", `/admin/feedback/${id}/close`, cookie);
+    expect((await follow()).status).toBe(404);
+    const [row] = await db.select().from(feedbackMessages).where(eq(feedbackMessages.id, id));
+    expect(row!.followUpHash).toBeNull();
+    expect((await call("GET", `/admin/feedback/${id}`, cookie)).body).toMatchObject({ followable: false });
+    expect((await call("POST", `/admin/feedback/${id}/answer`, cookie, { reply: "Mais", channel: "site" })).body.error.code).toBe("not_followable");
+    expect((await call("GET", "/feedback/follow/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")).status).toBe(404);
+    expect((await call("GET", "/feedback/follow/x")).status).toBe(400);
+  });
+
+  it("tells a logged-in reader in their inbox, but not when the answer is only noted", async () => {
+    const cookie = await login();
+    const ana = await reader("ana");
+    const { id } = await sendAs(ana, { kind: "idea", message: "Modo escuro" });
+    expect((await call("GET", `/admin/feedback/${id}`, cookie)).body).toMatchObject({ account: true, followable: true });
+
+    await call("POST", `/admin/feedback/${id}/answer`, cookie, { reply: "Respondido por telefone" });
+    expect((await call("GET", "/me/notifications", ana)).body.items).toEqual([]);
+
+    await call("POST", `/admin/feedback/${id}/answer`, cookie, { reply: "Está nos planos para dezembro.", channel: "site" });
+    const [item] = (await call("GET", "/me/notifications", ana)).body.items;
+    expect(item).toMatchObject({
+      kind: "feedback_reply", actorName: "Politicando", link: expect.objectContaining({ feedbackId: id }),
+      feedback: { id, reply: "Está nos planos para dezembro." },
+    });
+    // The account goes, the message stays (without it).
+    await call("DELETE", "/me", ana, { password: "palavra-passe" });
+    const [row] = await db.select().from(feedbackMessages).where(eq(feedbackMessages.id, id));
+    expect(row!.userId).toBeNull();
   });
 });

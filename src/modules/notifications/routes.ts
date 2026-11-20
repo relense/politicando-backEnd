@@ -35,6 +35,7 @@ const itemSchema = z.object({
     threadId: z.number().nullable(),
     postId: z.number().nullable().describe("A forum reply: the new post in threadId"),
     initiativeId: z.number().nullable(),
+    feedbackId: z.number().nullable().describe("feedback_reply: the reader's message the team answered"),
   }),
   threadTitle: z.string().nullable(),
   board: z.string().nullable(),
@@ -43,6 +44,10 @@ const itemSchema = z.object({
     .enum(IDEA_STATUSES)
     .nullable()
     .describe("idea_status: the idea's status now (threadId, threadTitle say which idea)"),
+  feedback: z
+    .object({ id: z.number(), reply: z.string().describe("The team's answer, in full") })
+    .nullable()
+    .describe("feedback_reply: the team answered the reader's message"),
   prediction: z
     .object({
       initiativeTitle: z.string(),
