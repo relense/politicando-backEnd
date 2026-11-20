@@ -1,4 +1,5 @@
 import { looksLikeTeam } from "../../accounts/reserved.js";
+import { resolveStoryId } from "../../stories/merge.js";
 import { and, asc, eq, isNull, or, sql, type SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import type { FastifyRequest } from "fastify";
@@ -96,7 +97,9 @@ export const commentRoutes =
       if (!article) throw notFound("Article");
       return { id, scope: eq(comments.articleId, id), insert: { articleId: id } };
     };
-    const storyTarget = async (id: number): Promise<Target> => {
+    const storyTarget = async (asked: number): Promise<Target> => {
+      // A story joined into another answers as that one (src/stories/merge.ts).
+      const id = await resolveStoryId(db, asked);
       const [story] = await db
         .select({ id: articles.storyId })
         .from(articles)

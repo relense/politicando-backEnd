@@ -9,6 +9,7 @@ import { syncPodcast } from "../podcast/spotify.js";
 import { changedPages, pingIndexNow } from "../seo/indexNow.js";
 import { createRevalidator } from "../revalidate.js";
 import { assignStories } from "../stories/assign.js";
+import { judgeFromEnv } from "../stories/merge.js";
 
 const config = loadIngestConfig();
 const { db, pool } = createDb(config.DATABASE_URL);
@@ -28,7 +29,7 @@ try {
   for (const source of stats) console.log(JSON.stringify(source));
   console.log(JSON.stringify({ refreshedHeadlines: await refreshGenericHeadlines({ db, client }) }));
   // After the headlines are final: every new article joins a story, or starts one.
-  console.log(JSON.stringify({ stories: await assignStories(db) }));
+  console.log(JSON.stringify({ stories: await assignStories(db, { judge: judgeFromEnv() }) }));
   // Not news, but this job runs every hour: old feedback screenshots go here too.
   await purgeFeedback(db);
   console.log(JSON.stringify({ prunedNotifications: await pruneNotifications(db) }));

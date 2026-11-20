@@ -86,7 +86,7 @@ describe("assignStories", () => {
     expect(await assignStories(db)).toMatchObject({ assigned: 1, created: 0, tagged: 1, notified: 1 });
     expect(await storyOf(d.id)).toBe(story);
     expect(await db.select().from(notifications)).toMatchObject([{ userId: reader!.id, kind: "story_update", targetId: story, count: 1 }]);
-    expect(await assignStories(db)).toEqual({ assigned: 0, created: 0, tagged: 0, notified: 0 });
+    expect(await assignStories(db)).toEqual({ assigned: 0, created: 0, tagged: 0, notified: 0, merges: { candidates: expect.any(Number), checked: 0, merged: 0 } });
   });
 
   it("doesn't join news days apart", async () => {
