@@ -26,8 +26,10 @@ weeks. We read it every hour (`:35`), and only an unchanged file is skipped.
   principles (generalidade), the final overall vote (votação final global), and the rest, as on
   `/initiatives`. Bills go back to OE1983 (only some old ones have votes recorded). Parliament's
   files have no bill for OE2016 or OE2020, so those years have only their proposals.
-- **No summaries:** the source has a title (usually the article it changes), a topic and the
-  official PDF (`documentUrl`), not a plain-language summary. Link the PDF for the text.
+- **Plain summaries ("O que muda"):** the source has only a title (usually the article it
+  changes), a topic and the official PDF (`documentUrl`). The research studio reads the PDFs and
+  sends a one- or two-sentence summary through the publish key; it appears as `plain`, null until
+  written. Summaries arrive gradually, latest votes first.
 
 ## GET /budget
 
@@ -97,6 +99,7 @@ Each item:
   },
   "submittedOn": "2026-11-06",
   "lastVotedOn": "2026-11-19",
+  "plain": { "summary": "Alarga a isenção a mais imóveis para alojamento de estudantes.", "automatic": true, "updatedAt": "…" },
   "documentUrl": "https://app.parlamento.pt/webutils/docs/doc.pdf?path=…",
   "sourceUrl": "https://www.parlamento.pt/Cidadania/Paginas/DAOE.aspx",
   "votes": [
@@ -120,6 +123,8 @@ Each item:
 }
 ```
 
+- `plain`: "O que muda", or null. When `automatic` is true a model wrote it from the PDF: label it
+  ("Resumo automático") next to the "PDF oficial" link. Without it, show the title and the PDF.
 - `vote`: `favor`, `against`, `abstention` or `absent` (Favor, Contra, Abstenção, Ausente).
 - `party` is null for an independent deputy (`group: "Não Inscrito"`), and when the source names a
   group we don't recognise (then the vote is `ambiguous`).
@@ -156,8 +161,10 @@ in those days and only those votes count: **the daily summary**).
   "lastVotedOn": "2026-11-19", "syncedAt": "…",
   "bills": [ … ],                                       // as on GET /budget
   "schedule": [
-    { "id": "ar-48688", "title": "Comissão de Orçamento, Finanças e Administração Pública", "kind": "committee", "startsAt": "2026-11-20T15:00:00.000Z", "allDay": false },
-    { "id": "ar-48676", "title": "Discussão de artigos remetidos a Plenário e normas avocadas", "kind": "parliament", "startsAt": "…", "allDay": false }
+    { "id": "ar-48688", "title": "Comissão de Orçamento, Finanças e Administração Pública", "kind": "committee", "stage": "committee",
+      "startsAt": "2026-11-20T15:00:00.000Z", "endsAt": null, "allDay": false, "started": false },
+    { "id": "ar-48677", "title": "Discussão de artigos remetidos a Plenário e normas avocadas", "kind": "parliament", "stage": "final_vote",
+      "startsAt": "2026-11-24T10:00:00.000Z", "endsAt": null, "allDay": false, "started": false }
   ],
   "sourceUrl": "…"
 }
@@ -168,6 +175,16 @@ in those days and only those votes count: **the daily summary**).
   waiting, this lists those sessions in the next 14 days (from `/agenda`: the Budget committee,
   the plenary's "normas avocadas", the final overall vote). It's empty once everything is voted,
   and on a day's summary (`votedFrom`/`votedTo`).
+- `stage`: what the session is for. `committee` (committee votes), `plenary` (proposals called
+  up to the plenary, "normas avocadas"), `general_vote` (the debate and vote on the general
+  principles), `final_vote` (**the session that ends with the final overall vote**: show its
+  date in the header ahead of time), or null. The parliament's agenda rarely writes "votação final
+  global": that vote closes the session whose agenda reads "Encerramento do debate na
+  especialidade", so that session is `final_vote`. If none is `final_vote`, the agenda doesn't
+  show it yet.
+- `started`: the session has already begun. A session stays listed until it ends; the parliament
+  almost never gives an end time (`endsAt` is then null), so a started session stays until the
+  end of its day. Show "Começou às 10h00", not "a decorrer": we can't know it is still running.
 
 - `votesOnOthers` counts the group's own line on each vote (each part counts) on proposals it
   didn't author. A deputy voting apart doesn't change it.

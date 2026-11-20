@@ -4,7 +4,7 @@ import { z } from "zod";
 import { PROPOSAL_RESULTS, VOTE_RESULTS } from "../../budget/parse.js";
 import { BUDGET_DATASET_PAGE } from "../../budget/sync.js";
 import type { Db } from "../../db/client.js";
-import { agendaEvents, budgetBills, budgetProposals, budgetSources, budgetVotes, parties, type BudgetVoteEntry } from "../../db/schema.js";
+import { agendaEvents, budgetBills, budgetProposals, budgetSources, budgetSummaries, budgetVotes, parties, type BudgetVoteEntry } from "../../db/schema.js";
 import { ApiError, notFound } from "../../errors.js";
 import { PARTY_DEFINITIONS } from "../../matching/parties.js";
 import { escapeLike, searchWords } from "../articles/routes.js";
@@ -61,6 +61,14 @@ const proposalSchema = z.object({
   }),
   submittedOn: z.string().nullable(),
   lastVotedOn: z.string().nullable(),
+  plain: z
+    .object({
+      summary: z.string().describe('"O que muda": what the proposal changes, in plain words'),
+      automatic: z.boolean().describe('Written by a model from the PDF: label it ("Resumo automático") and link the PDF'),
+      updatedAt: z.string(),
+    })
+    .nullable()
+    .describe("Null until one is written"),
   documentUrl: z.string().nullable().describe("The proposal's official text (PDF)"),
   sourceUrl: z.string().describe("The parliament's open-data page this comes from"),
   votes: z.array(voteSchema).describe("Oldest first; a proposal voted in parts has one per part"),
@@ -92,6 +100,22 @@ const decodeCursor = (value: string) => {
   }
 };
 
+export const SESSION_STAGES = ["committee", "plenary", "general_vote", "final_vote"] as const;
+
+/**
+ * What a Budget session is for, from its title and agenda. The parliament's agenda rarely says
+ * "votação final global" in words: the final vote closes the session headed "Encerramento do
+ * debate na especialidade", so that counts too.
+ */
+export function sessionStage(kind: string, text: string): (typeof SESSION_STAGES)[number] | null {
+  const t = text.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+  if (/votacao final global|encerramento do debate na especialidade/.test(t)) return "final_vote";
+  if (/debate na generalidade|votacao na generalidade/.test(t) && /orcamento do estado/.test(t)) return "general_vote";
+  if (kind === "committee" || /comissao de orcamento/.test(t)) return "committee";
+  if (/normas avocadas|remetidos a plenario|debate na especialidade/.test(t)) return "plenary";
+  return null;
+}
+
 export const budgetRoutes =
   (db: Db): FastifyPluginAsyncZod =>
   async (app) => {
@@ -120,6 +144,9 @@ export const budgetRoutes =
         .from(budgetVotes)
         .where(sql`${budgetVotes.proposalId} in ${rows.map((r) => r.id)}`)
         .orderBy(budgetVotes.proposalId, budgetVotes.seq);
+      const summaries = new Map(
+        (await db.select().from(budgetSummaries).where(sql`${budgetSummaries.proposalId} in ${rows.map((r) => r.id)}`)).map((s) => [s.proposalId, s]),
+      );
       const byProposal = new Map<number, typeof votes>();
       for (const v of votes) byProposal.set(v.proposalId, [...(byProposal.get(v.proposalId) ?? []), v]);
       return rows.map((r) => ({
@@ -127,7 +154,9 @@ export const budgetRoutes =
         target: r.target as "articles" | "tables" | null, kind: r.kind, status: r.status,
         result: r.result as (typeof PROPOSAL_RESULTS)[number], resultPhase: r.resultPhase as "committee" | "plenary" | null, unanimous: r.unanimous,
         authors: { parties: r.authorParties.map((s) => party(map, s)).filter((p) => p !== null), deputies: r.authorDeputies, label: r.authorLabel },
-        submittedOn: r.submittedOn, lastVotedOn: r.lastVotedOn, documentUrl: r.documentUrl, sourceUrl: BUDGET_DATASET_PAGE,
+        submittedOn: r.submittedOn, lastVotedOn: r.lastVotedOn,
+        plain: ((s) => (s ? { summary: s.summary, automatic: s.automatic, updatedAt: s.updatedAt.toISOString() } : null))(summaries.get(r.id)),
+        documentUrl: r.documentUrl, sourceUrl: BUDGET_DATASET_PAGE,
         votes: (byProposal.get(r.id) ?? []).map((v) => ({
           votedOn: v.votedOn, phase: v.phase as "committee" | "plenary" | null, result: v.result as (typeof VOTE_RESULTS)[number] | null,
           unanimous: v.unanimous, label: v.label, partLabel: v.partLabel, parts: v.parts, subject: v.subject,
@@ -156,7 +185,10 @@ export const budgetRoutes =
     // The parliament gives no date per proposal; the agenda has the sessions where they're voted.
     const schedule = async (year: number) => {
       const rows = await db
-        .select({ id: agendaEvents.id, title: agendaEvents.title, kind: agendaEvents.kind, startsAt: agendaEvents.startsAt, allDay: agendaEvents.allDay })
+        .select({
+          id: agendaEvents.id, title: agendaEvents.title, summary: agendaEvents.summary, kind: agendaEvents.kind,
+          startsAt: agendaEvents.startsAt, endsAt: agendaEvents.endsAt, allDay: agendaEvents.allDay,
+        })
         .from(agendaEvents)
         .where(
           and(
@@ -169,7 +201,14 @@ export const budgetRoutes =
         )
         .orderBy(agendaEvents.startsAt)
         .limit(20);
-      return rows.map((r) => ({ ...r, startsAt: r.startsAt.toISOString() }));
+      const now = Date.now();
+      return rows.map(({ summary, ...r }) => ({
+        ...r,
+        stage: sessionStage(r.kind, `${r.title}\n${summary ?? ""}`),
+        startsAt: r.startsAt.toISOString(),
+        endsAt: r.endsAt?.toISOString() ?? null,
+        started: r.startsAt.getTime() <= now,
+      }));
     };
 
     const votedBetween = (from?: string, to?: string) =>
@@ -339,7 +378,14 @@ export const budgetRoutes =
               syncedAt: z.string(),
               bills: z.array(billSchema).describe("The Budget's own bill and its votes"),
               schedule: z
-                .array(z.object({ id: z.string(), title: z.string(), kind: z.string(), startsAt: z.string(), allDay: z.boolean() }))
+                .array(
+                  z.object({
+                    id: z.string(), title: z.string(), kind: z.string(),
+                    stage: z.enum(SESSION_STAGES).nullable().describe("final_vote: the session that ends with the final overall vote"),
+                    startsAt: z.string(), endsAt: z.string().nullable().describe("When the parliament gives one; usually null"),
+                    allDay: z.boolean(), started: z.boolean().describe("Already started (it's listed until it ends, or until the end of its day)"),
+                  }),
+                )
                 .describe("While proposals are still waiting: the coming sessions where Budget votes happen (next 14 days, from /agenda). Sessions, not a date per proposal"),
               sourceUrl: z.string(),
             }),

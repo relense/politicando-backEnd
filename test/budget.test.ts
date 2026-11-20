@@ -4,10 +4,12 @@ import { budgetBillYear, syncCurrentBudgetBills } from "../src/budget/bills.js";
 import { parseProposals, partyVotes, proposalResult } from "../src/budget/parse.js";
 import { findLegislatures, findProposalFiles, syncBudget } from "../src/budget/sync.js";
 import { agendaEvents, budgetBills, budgetProposals, initiatives } from "../src/db/schema.js";
+import { sessionStage } from "../src/modules/budget/routes.js";
 import { createTestDb, resetDb } from "./helpers.js";
 
 const { db, pool } = createTestDb();
-const app = await buildApp({ db, corsOrigins: [], verifyRecaptcha: async () => true, forumSecret: "test-secret" });
+const KEY = "k".repeat(40);
+const app = await buildApp({ db, corsOrigins: [], verifyRecaptcha: async () => true, forumSecret: "test-secret", publishKeys: [KEY] });
 
 beforeEach(async () => {
   await resetDb(db);
@@ -265,9 +267,9 @@ describe("what is still to be voted", () => {
   beforeEach(async () => {
     await syncBudget(db, { legislatures: ["XVII"], fetchFn: site(() => JSON.stringify(FILE)) });
   });
-  const session = (id: string, title: string, days: number, source: "parliament" | "editorial" = "parliament") =>
+  const session = (id: string, title: string, days: number, source: "parliament" | "editorial" = "parliament", summary: string | null = null) =>
     db.insert(agendaEvents).values({
-      id, source, kind: "committee", title, allDay: false,
+      id, source, kind: title.startsWith("Comissão") ? "committee" : "parliament", title, summary, allDay: false,
       startsAt: new Date(Date.now() + days * 86_400_000), until: new Date(Date.now() + days * 86_400_000 + 3_600_000), startDay: "2030-01-01",
       attend: { open: false, how: null, url: null },
     } as typeof agendaEvents.$inferInsert);
@@ -288,5 +290,66 @@ describe("what is still to be voted", () => {
     expect(schedule.map((e: { id: string }) => e.id)).toEqual(["a", "b"]);
     // A day's summary is about what happened: no schedule.
     expect((await get("/budget/2027/summary?votedFrom=2026-11-18")).json().schedule).toEqual([]);
+  });
+
+  it("marks the session with the final overall vote, and the ones already under way", async () => {
+    await session("now", "Comissão de Orçamento, Finanças e Administração Pública", -0.01);
+    await session("avoc", "Discussão de artigos remetidos a Plenário e normas avocadas", 1, "parliament", "1 - Discussão de artigos remetidos a Plenário e normas avocadas\n2 - Votações");
+    await session("end", "Discussão de artigos remetidos a Plenário e normas avocadas", 2, "parliament",
+      "3- Encerramento do debate na especialidade do Orçamento do Estado para 2027\n4 - Votações");
+    const { schedule } = (await get("/budget/2027/summary")).json();
+    expect(schedule.map((e: { id: string; stage: string; started: boolean; endsAt: string | null }) => [e.id, e.stage, e.started, e.endsAt])).toEqual([
+      ["now", "committee", true, null],
+      ["avoc", "plenary", false, null],
+      ["end", "final_vote", false, null],
+    ]);
+    expect(schedule[0]).not.toHaveProperty("summary");
+  });
+
+  it("tells a Budget session's stage from its agenda", () => {
+    expect(sessionStage("parliament", "Votação final global da Proposta de Lei n.º 110/XVII")).toBe("final_vote");
+    expect(sessionStage("parliament", "Sessão plenária\nDebate na generalidade da Proposta de Lei 110/XVII – Orçamento do Estado para 2027")).toBe("general_vote");
+    expect(sessionStage("parliament", "Debate na especialidade do Orçamento do Estado para 2027")).toBe("plenary");
+    expect(sessionStage("committee", "Comissão de Orçamento, Finanças e Administração Pública")).toBe("committee");
+    expect(sessionStage("parliament", "Sessão plenária")).toBeNull();
+  });
+});
+
+describe("plain summaries (\"O que muda\")", () => {
+  const get = (url: string) => app.inject({ method: "GET", url: `/api/v2${url}` });
+  const call = (method: "GET" | "PUT" | "DELETE", url: string, payload?: object, key: string | null = KEY) =>
+    app.inject({ method, url: `/api/v2/publish/budget${url}`, payload, headers: key ? { authorization: `Bearer ${key}` } : {} });
+  beforeEach(async () => {
+    await syncBudget(db, { legislatures: ["XVII"], fetchFn: site(() => JSON.stringify(FILE)) });
+  });
+
+  it("are written with the publish key, shown on the proposal, and survive a sync that replaces the year", async () => {
+    const summary = "Alarga a isenção a mais imóveis destinados a alojamento de estudantes.";
+    expect((await call("PUT", "/1/summary", { summary }, null)).statusCode).toBe(401);
+    expect((await call("PUT", "/99/summary", { summary })).statusCode).toBe(404);
+    expect((await call("PUT", "/1/summary", { summary: "curto" })).statusCode).toBe(400);
+    expect((await call("PUT", "/1/summary", { summary })).json()).toEqual({ id: 1, summary, automatic: true, changed: true });
+    expect((await call("PUT", "/1/summary", { summary })).json().changed).toBe(false);
+
+    expect((await get("/budget/2027/proposals/1")).json().plain).toMatchObject({ summary, automatic: true });
+    expect((await get("/budget/2027/proposals/4")).json().plain).toBeNull();
+
+    // The parliament's file changes: the year is replaced, the summary stays.
+    await syncBudget(db, { legislatures: ["XVII"], fetchFn: site(() => JSON.stringify({ PropostaDeAlteracao: [...FILE.PropostaDeAlteracao].reverse() })) });
+    expect((await get("/budget/2027/proposals/1")).json().plain.summary).toBe(summary);
+
+    expect((await call("DELETE", "/1/summary")).statusCode).toBe(204);
+    expect((await get("/budget/2027/proposals/1")).json().plain).toBeNull();
+    expect((await call("DELETE", "/1/summary")).statusCode).toBe(404);
+  });
+
+  it("lists what still needs one, latest votes first", async () => {
+    await call("PUT", "/2/summary", { summary: "Uma frase que chega para o teste.", automatic: false });
+    const missing = (await call("GET", "/missing?year=2027&voted=true")).json();
+    // 2C-1 has one; 10C and 3C were voted the same day.
+    expect(missing.items.map((p: { number: string }) => p.number)).toEqual(["10C", "3C"]);
+    expect(missing.items[1]).toMatchObject({ documentUrl: "https://app.parlamento.pt/webutils/docs/doc.pdf?path=3" });
+    expect((await call("GET", "/missing?voted=false")).json().total).toBe(3);
+    expect((await call("GET", "/missing", undefined, null)).statusCode).toBe(401);
   });
 });

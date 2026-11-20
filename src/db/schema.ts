@@ -1523,3 +1523,16 @@ export const budgetBills = pgTable(
   },
   (table) => [index("budget_bills_year_idx").on(table.year)],
 );
+
+/**
+ * A plain "O que muda" for a Budget proposal, written from its official PDF by automation (the
+ * research studio) through the publish key. Kept apart from budget_proposals, which the sync
+ * replaces whole when the parliament's file changes, so summaries survive it.
+ */
+export const budgetSummaries = pgTable("budget_summaries", {
+  proposalId: integer("proposal_id").primaryKey(),
+  summary: text().notNull(),
+  /** True when a model wrote it (shown as an automatic summary); false when a person did. */
+  automatic: boolean().notNull().default(true),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
