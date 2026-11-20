@@ -1241,8 +1241,15 @@ export const feedbackMessages = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     answeredAt: timestamp("answered_at", { withTimezone: true }),
     closedAt: timestamp("closed_at", { withTimezone: true }),
+    /** The reader's account, when they were logged in: the answer reaches their inbox. */
+    userId: integer("user_id").references(() => users.id, { onDelete: "set null" }),
+    /** SHA-256 of the private follow-up link's token (GET /feedback/follow/:token); deleted when closed. */
+    followUpHash: text("follow_up_hash"),
   },
-  (table) => [index("feedback_messages_status_idx").on(table.status, table.createdAt.desc())],
+  (table) => [
+    index("feedback_messages_status_idx").on(table.status, table.createdAt.desc()),
+    uniqueIndex("feedback_messages_follow_up_idx").on(table.followUpHash),
+  ],
 );
 
 /** The public corrections log ("Correções"): what readers pointed out and what we did. */
@@ -1370,7 +1377,7 @@ export const userReads = pgTable(
   (table) => [primaryKey({ columns: [table.userId, table.storyId] })],
 );
 
-export const NOTIFICATION_KINDS = ["comment_reply", "forum_reply", "thread_update", "story_update", "prediction_result", "idea_status"] as const;
+export const NOTIFICATION_KINDS = ["comment_reply", "forum_reply", "thread_update", "story_update", "prediction_result", "idea_status", "feedback_reply"] as const;
 export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
 
 /**

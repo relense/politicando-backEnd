@@ -39,6 +39,7 @@ Newest first, 30 a page, with `nextCursor` for the next page (null at the end).
 | `thread_update` | New replies in a thread the reader follows | "*count* novas respostas em *threadTitle*" (latest: `actorName`) | Thread `threadId` |
 | `story_update` | New outlets covered a story the reader follows | "Novidades: *headline*" (`count` = runs with new coverage) | Story `storyId` |
 | `prediction_result` | A prediction was settled | "Acertaste!" / "Falhaste": *initiativeTitle* was `prediction.result` | Initiative `initiativeId` |
+| `feedback_reply` | The team answered a message the reader sent from the feedback form | "A equipa respondeu à tua mensagem": `feedback.reply` | Show the reply inline (`link.feedbackId`) |
 | `idea_status` | The team changed the status of an idea the reader follows (ideas board) | "*threadTitle*: Planeado" (`status` is the idea's status now) | Thread `threadId` |
 
 - **Coalescing:** updates (`thread_update`, `story_update`, `idea_status`) are one unread line per thread or story, whose `count` goes up and which moves back to the top. Once read, the next update starts a new line.

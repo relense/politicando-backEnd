@@ -21,7 +21,31 @@ exist; use `POST /forums/threads/:id/vote`.
 | `screenshot` | file | PNG or JPG, up to 5 MB. Checked by its content, not its name or type |
 | `recaptchaToken` | required | reCAPTCHA v2 |
 
-Empty fields count as not sent. Returns 201 `{ "id": 12 }`.
+Empty fields count as not sent. Returns 201 `{ "id": 12, "followUpToken": "…" }`.
+
+**Getting the answer on the site, with or without an email:**
+
+- **Logged in:** send the session cookie with the form (from the browser, as usual). The
+  message is tied to the account, and when the team answers on the site the reader gets a
+  `feedback_reply` notification in their inbox (`docs/engagement-api.md`).
+- **Not logged in:** `followUpToken` is a private token, shown once. Keep it in the browser
+  (e.g. a list of the reader's sent messages) and offer a private link such as
+  `/feedback/acompanhar/<token>`. Whoever has it can read the answer, so don't put it in a
+  shareable place.
+
+## GET /feedback/follow/:token
+
+The message's status and the team's answer, for its private link:
+
+```json
+{ "kind": "error", "page": "Percursos", "createdAt": "…", "status": "answered", "reply": "Obrigado, já corrigimos.", "answeredAt": "…" }
+```
+
+- `status`: `open` or `answered`. `reply` is null until the team answers.
+- It never returns the email, the message, or anything else the reader wrote.
+- 404 for an unknown token, and once the message is closed: the token is deleted then. Show
+  "Esta mensagem foi encerrada".
+- 400 for a malformed token. Not cached (`private, no-store`). 30 a minute per IP.
 
 | Status | `code` | When |
 |---|---|---|
@@ -37,6 +61,8 @@ the page expects.
 
 Privacy, as the privacy page says:
 - The email is used only to answer that message and is deleted when the message is closed.
+- The private follow-up link stops working when the message is closed. A logged-in reader's
+  message keeps a link to their account until it's deleted.
 - Screenshots are deleted after 90 days.
 - The public log never says who asked.
 
@@ -75,7 +101,7 @@ All of these need an admin session with role moderator or above.
 | GET | `/admin/feedback?status=&kind=&limit=` | Messages, newest first. `status`: `open`, `answered`, `closed` |
 | GET | `/admin/feedback/:id` | One message, with the corrections made from it |
 | GET | `/admin/feedback/:id/screenshot` | The image (the `screenshot` field gives this path; null when none or past 90 days) |
-| POST | `/admin/feedback/:id/answer` | `{ "reply": "…", "send": true }` emails the reply to the reader. `{ "reply": "…" or null, "send": false }` only notes that it was answered (e.g. from your own email). Sets `answeredAt` the first time, which is what `responseDays` counts |
+| POST | `/admin/feedback/:id/answer` | `{ "reply": "…", "channel": "email" }` emails it (the older `"send": true` does the same). `"channel": "site"` answers on the site, with no email needed: it shows on the reader's follow-up link, and in their inbox if they were logged in. `"channel": "none"` (the default) only notes that it was answered (e.g. from your own email). Every reply also shows on the follow-up link, and email or site answers reach a logged-in reader's inbox. Sets `answeredAt` the first time, which is what `responseDays` counts |
 | PUT | `/admin/feedback/:id/note` | `{ "note": "…" }`, internal |
 | POST | `/admin/feedback/:id/close` | Closes it and **deletes the email** |
 | POST | `/admin/feedback/:id/correction` | Turns it into a log entry: `{ status, title, url, area?, date? }`. `area` defaults to the reader's `page`, `date` to today |
@@ -86,9 +112,12 @@ All of these need an admin session with role moderator or above.
 
 Answer errors:
 - 400 `no_email`: the reader left no email (or it was deleted on close).
-- 400 `empty_reply`: `send: true` with no reply.
+- 400 `empty_reply`: email or site with no reply.
+- 400 `not_followable`: site, but the message was closed and had no account, so nobody can see it.
 - 503 `mail_unavailable`: mail isn't set up on the server yet (`SMTP_URL`). Answer from your
   own email and note it with `send: false`.
 
 Admin message fields: `id, kind, message, page, url, correction, source, email, screenshot,
-status, reply, note, createdAt, answeredAt, closedAt, corrections`.
+status, reply, note, createdAt, answeredAt, closedAt, account, followable, corrections`.
+`account`: sent logged in. `followable`: an answer on the site can reach the reader (offer
+"Responder no site" when true, "Responder por email" when there's an `email`).
