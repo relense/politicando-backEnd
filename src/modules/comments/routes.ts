@@ -1,5 +1,5 @@
 import { looksLikeTeam } from "../../accounts/reserved.js";
-import { resolveStoryId } from "../../stories/merge.js";
+import { resolveStoryId, withStory } from "../../stories/merge.js";
 import { and, asc, eq, isNull, or, sql, type SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import type { FastifyRequest } from "fastify";
@@ -147,30 +147,47 @@ export const commentRoutes =
         if (!human) throw new ApiError(403, "recaptcha_failed", "reCAPTCHA verification failed");
       }
 
-      const target = await findTarget();
-      let parentUsername: string | null = null;
-      let parentUserId: number | null = null;
-      if (parentId != null) {
-        const [parent] = await db
-          .select({ username: comments.username, userId: comments.userId })
-          .from(comments)
-          .where(and(eq(comments.id, parentId), target.scope, isNull(comments.hiddenAt)));
-        if (!parent) throw new ApiError(400, "invalid_parent", "The parent comment is not on this page");
-        parentUsername = parent.username;
-        parentUserId = parent.userId;
+      const save = async () => {
+        const target = await findTarget();
+        let parentUsername: string | null = null;
+        let parentUserId: number | null = null;
+        if (parentId != null) {
+          const [parent] = await db
+            .select({ username: comments.username, userId: comments.userId })
+            .from(comments)
+            .where(and(eq(comments.id, parentId), target.scope, isNull(comments.hiddenAt)));
+          if (!parent) throw new ApiError(400, "invalid_parent", "The parent comment is not on this page");
+          parentUsername = parent.username;
+          parentUserId = parent.userId;
+        }
+        const [created] = await db
+          .insert(comments)
+          .values({ ...target.insert, parentId: parentId ?? null, username, userId: who.userId, body, stance: stance ?? null })
+          .returning();
+        if (!created) throw new Error("Insert returned no row");
+        return { target, created, parentUsername, parentUserId };
+      };
+      // A story joined into another while this was being written (the merge holds its row until
+      // it's deleted): the foreign key fails, and the comment goes to the story it joined.
+      const isGone = (error: unknown) => {
+        const e = error as { code?: string; cause?: { code?: string } } | null;
+        return (e?.code ?? e?.cause?.code) === "23503";
+      };
+      let saved: Awaited<ReturnType<typeof save>>;
+      try {
+        saved = await save();
+      } catch (error) {
+        if (!isGone(error)) throw error;
+        saved = await save();
       }
-
-      const [created] = await db
-        .insert(comments)
-        .values({ ...target.insert, parentId: parentId ?? null, username, userId: who.userId, body, stance: stance ?? null })
-        .returning();
-      if (!created) throw new Error("Insert returned no row");
+      const { target, created, parentUsername, parentUserId } = saved;
       // Best effort: a reply is never lost because its notification failed.
       try {
         if (parentUserId !== null && parentUserId !== who.userId) {
           await notify(db, { userIds: [parentUserId], kind: "comment_reply", targetId: created.id, actorName: username });
         }
-        if (who.userId !== null && target.insert.storyId) await follow(db, who.userId, "story", target.insert.storyId);
+        const follower = who.userId;
+        if (follower !== null && target.insert.storyId) await withStory(db, target.insert.storyId, (tx, id) => follow(tx, follower, "story", id));
       } catch (error) {
         request.log.error(error, "comment notification failed");
       }

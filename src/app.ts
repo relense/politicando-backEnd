@@ -167,6 +167,11 @@ export const buildApp = async ({
     if (status === 429) {
       return reply.status(429).send(errorBody("rate_limited", "Too many requests"));
     }
+    if (status === 413) {
+      // The image upload has its own code for "too big", whichever way the body came.
+      if (request.url.startsWith("/api/v2/publish/image")) return reply.status(413).send(errorBody("too_large", "Images can be up to 2 MB"));
+      return reply.status(413).send(errorBody("payload_too_large", "The request body is too large"));
+    }
     if (status >= 500) {
       request.log.error(error);
       return reply.status(status).send(errorBody("internal_error", "Something went wrong"));
@@ -192,6 +197,15 @@ export const buildApp = async ({
     const session = await sessionReader(db, token);
     request.reader = session?.reader ?? null;
     if (session?.renewedUntil) reply.setCookie(READER_COOKIE, token, { ...readerCookieOptions(secureCookies), expires: session.renewedUntil });
+  });
+  // Never cached by anyone else: what depends on the reader or admin (/me, /admin), what needs
+  // the publish key, and any response that sets a cookie (a renewed session can ride on a
+  // public, cacheable page, and a shared cache would hand it to the next reader).
+  // Registered after the cookie plugin, so its onSend has already written Set-Cookie.
+  const privatePath = /^\/api\/v2\/(?:me|admin|publish)(?:[/?]|$)/;
+  app.addHook("onSend", async (request, reply, payload) => {
+    if (privatePath.test(request.url) || reply.hasHeader("set-cookie")) reply.header("Cache-Control", "private, no-store");
+    return payload;
   });
   // credentials: the website's server forwards the session cookies; only the listed origins may.
   await app.register(cors, { origin: corsOrigins, methods: ["GET", "POST", "PUT", "PATCH", "DELETE"], credentials: true });
@@ -255,7 +269,7 @@ export const buildApp = async ({
       await api.register(adminRecordRoutes(db));
       await api.register(adminForumRoutes(db, forumSecret));
       await api.register(adminUserRoutes(db));
-      await api.register(editorialRoutes(db, { voteSecret: forumSecret }));
+      await api.register(editorialRoutes(db, { voteSecret: forumSecret, revalidate }));
       await api.register(publishRoutes(db, publishKeys, { apiUrl: publicApiUrl, revalidate }));
       await api.register(agendaRoutes(db));
       await api.register(feedbackRoutes({ db, verifyRecaptcha, mailer, limitPerHour: feedbackLimitPerHour }));

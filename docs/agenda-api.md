@@ -104,6 +104,9 @@ says whose politicians are on.
   - Parliamentary groups' audiences: one item per hearing, at its time in `start` (parliament
     lists a day's hearings as lines like "15h30 - Tabaqueira"). Title "Audiência do PS:
     Tabaqueira", closed, with the party. A day listed without times stays one all-day item.
+    Each hearing's id comes from its time and who is heard (`ar-48673-1530-3f9a1c2b`), so it
+    stays put when parliament adds or reorders hearings. (Until 2026-11 it was the line number,
+    `ar-48673-2`; those events were replaced on the next import.)
   - School visits and guided tours are left out.
 - **President**: what presidencia.pt shows (today and the next day or two), with the place.
   Not open to the public.

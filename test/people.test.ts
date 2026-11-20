@@ -122,3 +122,29 @@ describe("GET /people/featured", () => {
     ]);
   });
 });
+
+describe("GET /parties government members", () => {
+  it("matches the curated list by name key, as /government and /people do", async () => {
+    const position = (id: string, memberId: string, endDate: string | null = null) => ({
+      id, memberId, government: "gc25", kind: "minister" as const, title: "Ministro", area: id, areaName: id,
+      areaRank: 1, rank: 0, startDate: "2025-06-05", endDate, url: "u",
+    });
+    await db.insert(governmentMembers).values([
+      // Spelled without accents, in other case: still PSD.
+      { id: "a", name: "LUIS MONTENEGRO" },
+      { id: "b", name: "Paulo  Rangel" },
+      // Not in the list; and a deputy's party comes from parliament.
+      { id: "c", name: "Fulano Independente" },
+      { id: "d", name: "Francisco César", deputyId: 7341 },
+      // Left office: not counted.
+      { id: "e", name: "Telmo Correia" },
+    ]);
+    await db.insert(governmentPositions).values([
+      position("p1", "a"), position("p2", "b"), position("p3", "b"), position("p4", "c"), position("p5", "d"),
+      position("p6", "e", "2026-01-01"),
+    ]);
+    const { body } = await get("/parties");
+    const members = (slug: string) => body.find((p: { slug: string }) => p.slug === slug).governmentMembers;
+    expect([members("psd"), members("ps"), members("cds-pp")]).toEqual([2, 1, 0]);
+  });
+});

@@ -149,6 +149,29 @@ describe("Passa ou chumba?", () => {
     expect((await call("PUT", "/predictions/1", ana, { pick: "fail" })).statusCode).toBe(409);
   });
 
+  it("settles every prediction even when telling the reader fails", async () => {
+    await initiative(1);
+    await initiative(2);
+    await plenary("soon", 1, [1, 2]);
+    await openVoteRounds(db);
+    const ana = await register("ana");
+    await call("PUT", "/predictions/1", ana, { pick: "pass" });
+    await call("PUT", "/predictions/2", ana, { pick: "fail" });
+    await db.update(predictions).set({ updatedAt: sql`now() - interval '5 days'` });
+    const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+    await db.update(initiatives).set({ status: "rejected", votes: [vote(yesterday, "Rejeitado")] });
+    // Every notification insert fails while this constraint is on.
+    await db.execute(sql`alter table notifications add constraint no_notifications check (false) not valid`);
+    const errors: string[] = [];
+    try {
+      expect(await resolvePredictions(db, { error: (_e, msg) => errors.push(msg) })).toEqual({ hit: 1, miss: 1, void: 0 });
+    } finally {
+      await db.execute(sql`alter table notifications drop constraint no_notifications`);
+    }
+    expect(errors).toHaveLength(2);
+    expect((await db.select().from(predictions)).every((p) => p.outcome !== null)).toBe(true);
+  });
+
   it("answers the initiative page's box in every state, and keeps it as history", async () => {
     await initiative(1);
     await initiative(2);

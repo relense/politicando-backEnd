@@ -308,8 +308,13 @@ export const predictionRoutes =
             setWhere: sql`${predictions.outcome} is null and ${predictions.pick} is distinct from excluded.pick`,
           });
         // Picking a side follows the vote's megathread, where that side gets argued.
-        const threadId = await ensureThread(db, initiativeId);
-        if (threadId) await follow(db, reader.id, "thread", threadId);
+        // Best effort: the pick is saved either way.
+        try {
+          const threadId = await ensureThread(db, initiativeId);
+          if (threadId) await follow(db, reader.id, "thread", threadId);
+        } catch (error) {
+          request.log.error(error, "Following the vote's megathread failed");
+        }
         return { pick: request.body.pick, split: await split(initiativeId) };
       },
     );

@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, or, sql, type SQL } from "drizzle-orm";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
 import type { Db } from "../../db/client.js";
@@ -115,13 +115,15 @@ const selectArticles = (db: Db, storyIds: number[]) =>
     .where(and(inArray(articles.storyId, storyIds), visibleArticle))
     .orderBy(asc(articles.publishedAt), asc(articles.id));
 
-/** Each story's numbers, over its visible articles. */
-const storyStats = sql`(
-  select a.story_id as id, count(*)::int as article_count, count(distinct a.source)::int as source_count,
-    min(a.published_at) as first_at, max(a.published_at) as last_at
-  from articles a where a.hidden_at is null and a.story_id is not null
-  group by a.story_id
+/**
+ * Each story's numbers, over its visible articles: kept on the story by a trigger on articles
+ * (migration 0049). Given `lastAtLeast`, only stories with a version since then.
+ */
+const storyStatsSince = (lastAtLeast?: SQL) => sql`(
+  select id, article_count, source_count, first_at, last_at from stories
+  where article_count > 0 ${lastAtLeast ? sql`and last_at >= ${lastAtLeast}` : sql``}
 )`;
+const storyStats = storyStatsSince();
 
 interface StatsRow extends Record<string, unknown> {
   id: number;
@@ -378,18 +380,24 @@ export const storyRoutes =
             select 1 from articles x join article_parties ap on ap.article_id = x.id join parties p on p.id = ap.party_id
             where x.story_id = st.id and x.hidden_at is null and p.slug in (${sql.join(query.excludeParty.map((s) => sql`${s}`), sql`, `)}))`);
         }
-        if (query.since !== undefined) conditions.push(sql`st.last_at >= now() - make_interval(hours => ${query.since})`);
+        // The earliest last_at a time filter allows, to bound the stats to recent stories.
+        const bounds: SQL[] = [];
+        if (query.since !== undefined) bounds.push(sql`now() - make_interval(hours => ${query.since})`);
         if (query.tag) conditions.push(sql`s.tags @> ${JSON.stringify([{ slug: query.tag }])}::jsonb`);
         if (query.sort === "comments") conditions.push(sql`${storyCommentsSql} > 0`);
-        if (query.period === "today") conditions.push(sql`st.last_at >= ${lisbonMidnight(0)}`);
-        if (query.period === "week") conditions.push(sql`st.last_at >= ${lisbonMidnight(6)}`);
-        if (query.period === "month") conditions.push(sql`st.last_at >= ${lisbonMidnight(29)}`);
+        if (query.period === "today") bounds.push(sql`${lisbonMidnight(0)}`);
+        if (query.period === "week") bounds.push(sql`${lisbonMidnight(6)}`);
+        if (query.period === "month") bounds.push(sql`${lisbonMidnight(29)}`);
         if (query.period === "yesterday") {
+          bounds.push(sql`${lisbonMidnight(1)}`);
           // A version published yesterday, whenever the others came out.
           conditions.push(sql`exists (select 1 from articles y where y.story_id = st.id and y.hidden_at is null
             and y.published_at >= ${lisbonMidnight(1)} and y.published_at < ${lisbonMidnight(0)})`);
         }
 
+        for (const bound of bounds) conditions.push(sql`st.last_at >= ${bound}`);
+        const lastAtLeast = bounds.length ? sql`greatest(${sql.join(bounds, sql`, `)})` : undefined;
+        const stats = storyStatsSince(lastAtLeast);
         const where = sql.join(conditions, sql` and `);
         const order = {
           newest: sql`st.last_at desc, st.id desc`,
@@ -399,9 +407,9 @@ export const storyRoutes =
         }[query.sort];
         const [page, total] = await Promise.all([
           db.execute<StatsRow>(sql`
-            select st.*, s.importa, s.tags from ${storyStats} st join stories s on s.id = st.id
+            select st.*, s.importa, s.tags from ${stats} st join stories s on s.id = st.id
             where ${where} order by ${order} limit ${query.limit + 1} offset ${offset}`),
-          db.execute<{ n: number }>(sql`select count(*)::int as n from ${storyStats} st join stories s on s.id = st.id where ${where}`),
+          db.execute<{ n: number }>(sql`select count(*)::int as n from ${stats} st join stories s on s.id = st.id where ${where}`),
         ]);
         const rows = page.rows.slice(0, query.limit);
         return {
@@ -480,7 +488,7 @@ export const storyRoutes =
             count(*)::int as stories, sum(x.comments)::int as comments, sum(x.importa)::int as importa
           from (
             select s.tags, s.importa, ${storyCommentsSql} as comments
-            from ${storyStats} st join stories s on s.id = st.id
+            from ${storyStatsSince(sql`${lisbonMidnight(days - 1)}`)} st join stories s on s.id = st.id
             where st.last_at >= ${lisbonMidnight(days - 1)} and s.tags is not null
           ) x, jsonb_array_elements(x.tags) t
           where ${kind ? sql`t->>'kind' = ${kind}` : sql`true`}
@@ -535,27 +543,49 @@ export const storyRoutes =
         },
       },
       async (request) => {
-        const storyId = await resolveStoryId(db, request.params.id);
         const { value } = request.body;
         const who = app.participant(request, "votes");
-        const voter = storyVoterKey(voteSecret, who.key, storyId);
-        const importa = await db.transaction(async (tx) => {
-          // Locks the story, so marks on it count one at a time and the total stays exact.
-          const [story] = await tx
-            .select({ id: stories.id })
-            .from(stories)
-            .where(and(eq(stories.id, storyId), sql`exists (select 1 from articles a where a.story_id = ${storyId} and a.hidden_at is null)`))
-            .for("update");
-          if (!story) throw notFound("Story");
-          if (value === 0) await tx.delete(storyVotes).where(and(eq(storyVotes.storyId, storyId), eq(storyVotes.voter, voter)));
-          else await tx.insert(storyVotes).values({ storyId, voter, userId: who.userId }).onConflictDoNothing();
-          const [row] = await tx
-            .update(stories)
-            .set({ importa: sql`(select count(*)::int from story_votes v where v.story_id = ${storyId})` })
-            .where(eq(stories.id, storyId))
-            .returning({ importa: stories.importa });
-          return row!.importa;
-        });
+        const vote = async (storyId: number) =>
+          db.transaction(async (tx) => {
+            // Locks the story, so marks on it count one at a time and the total stays exact.
+            const [story] = await tx
+              .select({ id: stories.id })
+              .from(stories)
+              .where(and(eq(stories.id, storyId), sql`exists (select 1 from articles a where a.story_id = ${storyId} and a.hidden_at is null)`))
+              .for("update");
+            if (!story) return null;
+            // A mark made on a story joined into this one keeps that story's key (see moveStory):
+            // the reader's mark is any of those, or, logged in, any of theirs. Joins since moved to a
+            // story split off this one (split.ts) count too: their marks stayed here.
+            const merged = await tx.execute<{ from_id: number }>(sql`
+              select from_id from story_merges where into_id = ${storyId}
+                or into_id in (select case when low_id = ${storyId} then high_id else low_id end from story_apart where ${storyId} in (low_id, high_id))`);
+            const keys = [storyId, ...merged.rows.map((r) => r.from_id)].map((id) => storyVoterKey(voteSecret, who.key, id));
+            const mine = or(
+              inArray(storyVotes.voter, keys),
+              who.userId === null ? undefined : eq(storyVotes.userId, who.userId),
+            );
+            if (value === 0) await tx.delete(storyVotes).where(and(eq(storyVotes.storyId, storyId), mine));
+            else {
+              const [already] = await tx.select({ voter: storyVotes.voter }).from(storyVotes).where(and(eq(storyVotes.storyId, storyId), mine)).limit(1);
+              if (!already) await tx.insert(storyVotes).values({ storyId, voter: keys[0]!, userId: who.userId }).onConflictDoNothing();
+            }
+            const [row] = await tx
+              .update(stories)
+              .set({ importa: sql`(select count(*)::int from story_votes v where v.story_id = ${storyId})` })
+              .where(eq(stories.id, storyId))
+              .returning({ importa: stories.importa });
+            return row!.importa;
+          });
+        // The story may be joined into another while this waits for its lock: then mark that one.
+        const asked = request.params.id;
+        const first = await resolveStoryId(db, asked);
+        let importa = await vote(first);
+        if (importa === null) {
+          const now = await resolveStoryId(db, asked);
+          if (now !== first) importa = await vote(now);
+        }
+        if (importa === null) throw notFound("Story");
         return { importa, importance: (await importanceScale())(importa), mine: value };
       },
     );
@@ -584,7 +614,7 @@ export const storyRoutes =
         // fades at the same rate, so the order only changes when new articles arrive.
         const rows = await db.execute<StatsRow & { recent_sources: number }>(sql`
           select st.*, s.importa, s.tags, recent.sources as recent_sources
-          from ${storyStats} st
+          from ${storyStatsSince(sql`${since.toISOString()}::timestamptz`)} st
           join stories s on s.id = st.id
           join lateral (
             select count(*)::int as sources,

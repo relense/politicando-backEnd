@@ -112,7 +112,10 @@ export const adminForumRoutes =
         const rows = await db.execute<{
           kind: Kind; target_id: number; n: number; reasons: string[]; details: string[]; first: string; resolution: "hidden" | "dismissed" | null;
         }>(sql`
-          select kind, target_id, count(*)::int as n, array_agg(distinct reason) as reasons,
+          select kind, target_id,
+            -- People, not rows: an account (whichever way its reports were keyed) or a connection.
+            count(distinct coalesce('u:' || user_id::text, reporter))::int as n,
+            array_agg(distinct reason) as reasons,
             coalesce(array_agg(details) filter (where details is not null), '{}') as details,
             to_char(min(created_at) at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as first,
             max(resolution) as resolution

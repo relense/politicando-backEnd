@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import {
   articleDeputies,
@@ -204,6 +204,15 @@ const findKnownUrls = async (db: Db, urls: string[]) => {
 
 const markSeen = (db: Db, url: string) =>
   db.insert(seenSourceUris).values({ sourceUri: url }).onConflictDoNothing();
+
+/**
+ * Forgets URLs seen long enough ago that the scanner would skip them anyway (it never looks at
+ * articles older than MAX_ARTICLE_AGE_MS): otherwise the table grows by thousands a day, for good.
+ * Kept a good while past that, for listings that don't date their items.
+ */
+export const SEEN_KEEP_DAYS = 14;
+export const pruneSeen = async (db: Db, now = new Date()) =>
+  (await db.execute(sql`delete from seen_source_uris where seen_at < ${now.toISOString()}::timestamptz - make_interval(days => ${SEEN_KEEP_DAYS})`)).rowCount ?? 0;
 
 const saveArticle = (
   db: Db,

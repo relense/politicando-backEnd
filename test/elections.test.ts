@@ -7,8 +7,8 @@ import { parseV3Election, parseV3Options, placeNameKey, v3Urls } from "../src/el
 import { importMayors } from "../src/elections/mayors.js";
 import { HISTORIC_LEGISLATIVAS, importHistoricLegislativas } from "../src/elections/historic.js";
 import { candidatesUrl, importCandidates, looselySame, parseCandidates, properName } from "../src/elections/candidates.js";
-import { deputies, parties } from "../src/db/schema.js";
-import { eq } from "drizzle-orm";
+import { deputies, folded, parties } from "../src/db/schema.js";
+import { eq, sql, type SQL } from "drizzle-orm";
 import { createTestDb, resetDb } from "./helpers.js";
 
 const results = (voters: number, lists: [string, number, number | null][], totalMandates = 0) => ({
@@ -453,6 +453,33 @@ describe("election endpoints", () => {
     const autarquicas = await get("/elections?type=autarquicas");
     expect(autarquicas.body.items).toHaveLength(1);
     expect(autarquicas.body.upcoming.map((e: { type: string }) => e.type)).toEqual(["autarquicas"]);
+  });
+
+  it("gives the same turnout and winner as each election's page, and shows the next import", async () => {
+    const list = (await get("/elections")).body.items;
+    for (const item of list) {
+      const page = (await get(`/elections/${item.id}`)).body;
+      expect(item.turnout, item.id).toEqual(page.turnout);
+      expect(item.winner, item.id).toEqual(page.lists[0]);
+    }
+    await importHistoricLegislativas(db, HISTORIC_LEGISLATIVAS.filter((e) => e.id === "legislativas-1979"));
+    const after = (await get("/elections")).body.items;
+    expect(after.map((e: { id: string }) => e.id)).toEqual(["legislativas-2025", "autarquicas-2017", "legislativas-1979"]);
+    expect(after[2]).toMatchObject({ winner: { list: "AD", votes: 2_554_458 }, turnout: { voters: 6_007_453 }, deepestLevel: "country" });
+  });
+
+  it("finds mayors' other roles through the folded-name indexes", async () => {
+    const plans = await db.transaction(async (tx) => {
+      await tx.execute(sql`set local enable_seqscan = off`);
+      const plan = async (query: SQL) => (await tx.execute<{ "QUERY PLAN": string }>(sql`explain ${query}`)).rows.map((r) => r["QUERY PLAN"]).join("\n");
+      const key = folded(sql`${"José Silva"}::text`);
+      return [
+        await plan(sql`select id from deputies where ${folded(sql`full_name`)} = ${key}`),
+        await plan(sql`select c.list from election_candidates c where ${folded(sql`c.name`)} = ${key}`),
+      ];
+    });
+    expect(plans[0]).toMatch(/deputies_full_name_folded_idx/);
+    expect(plans[1]).toMatch(/election_candidates_name_folded_idx/);
   });
 
   it("returns the whole country with its children, and drills down with a breadcrumb", async () => {

@@ -144,6 +144,20 @@ describe("taking out articles that don't belong in their story", () => {
     expect(await detachStrays(db, { judge: judgeSaying(() => false).judge })).toMatchObject({ suspects: 4, detached: 0 });
   });
 
+  it("acts on a story only once all its odd ones are answered", async () => {
+    await background();
+    await drifted();
+    // No budget for this story's question: nothing is asked or moved, rather than half a story.
+    const { judge, asked } = judgeSaying(() => false);
+    expect(await detachStrays(db, { judge, maxChecks: 0 })).toEqual({ suspects: 1, checked: 0, detached: 0 });
+    expect(asked).toEqual([]);
+    // The model failing leaves it for the next run too.
+    const failing: MergeJudge = async () => {
+      throw new Error("overloaded");
+    };
+    expect(await detachStrays(db, { judge: failing, log: { error: () => undefined } })).toMatchObject({ detached: 0 });
+  });
+
   it("leaves alone the articles that came in through a merge", async () => {
     await background();
     const s = await drifted();
@@ -182,6 +196,9 @@ describe("splitting a story by hand", () => {
 
     await expect(db.transaction((tx) => splitStory(tx, s.id, [irc!], "manual"))).rejects.toThrow(/Not every article/);
     await expect(db.transaction((tx) => splitStory(tx, s.id, iva, "manual"))).rejects.toThrow(/no visible articles left/);
+    // A hidden article alone would make a story nobody sees.
+    await db.update(articles).set({ hiddenAt: new Date() }).where(eq(articles.id, iva[0]!));
+    await expect(db.transaction((tx) => splitStory(tx, s.id, [iva[0]!], "manual"))).rejects.toThrow(/hidden/);
   });
 });
 
@@ -215,5 +232,75 @@ describe("stories kept apart", () => {
     await db.insert(storyApart).values({ lowId: x, highId: y, reason: "model" });
     await db.transaction((tx) => moveStory(tx, x, z));
     expect(await db.select({ low: storyApart.lowId, high: storyApart.highId }).from(storyApart)).toEqual([{ low: y, high: z }]);
+  });
+});
+
+describe("story numbers kept on the story", () => {
+  it("follow every article joining, leaving, hiding or showing, and a story with nothing visible leaves the lists", async () => {
+    const s = await story([
+      ["Primeira versão", "Texto.", "a.pt", 5],
+      ["Segunda versão", "Texto.", "b.pt", 3],
+      ["Terceira versão", "Texto.", "a.pt", 1],
+    ]);
+    const numbers = async () =>
+      (await db.select({ n: stories.articleCount, sources: stories.sourceCount, last: stories.lastAt }).from(stories).where(eq(stories.id, s.id)))[0]!;
+    expect(await numbers()).toMatchObject({ n: 3, sources: 2 });
+    await db.update(articles).set({ hiddenAt: new Date() }).where(eq(articles.id, s.articles[2]!));
+    const afterHide = await numbers();
+    expect(afterHide).toMatchObject({ n: 2, sources: 2 });
+    expect(Date.now() - +afterHide.last!).toBeGreaterThan(2 * HOUR);
+    const other = await story([["Outra", "Texto.", "c.pt", 2]]);
+    await db.update(articles).set({ storyId: other.id }).where(eq(articles.id, s.articles[1]!));
+    expect(await numbers()).toMatchObject({ n: 1, sources: 1 });
+    await db.update(articles).set({ hiddenAt: new Date() }).where(eq(articles.id, s.articles[0]!));
+    expect(await numbers()).toMatchObject({ n: 0, last: null });
+    const list = (await app.inject({ method: "GET", url: "/api/v2/stories?limit=50" })).json();
+    expect(list.items.map((c: { id: number }) => c.id)).not.toContain(s.id);
+    expect(list.items.find((c: { id: number }) => c.id === other.id)).toMatchObject({ articleCount: 2, sourceCount: 2 });
+  });
+});
+
+describe("story numbers with two writers at once", () => {
+  it("a hide waiting on an open ingest counts the article that ingest added", async () => {
+    const s = await story([["Primeira versão", "Texto.", "a.pt", 5]]);
+    const ingest = await pool.connect();
+    const moderator = await pool.connect();
+    try {
+      await ingest.query("begin");
+      await ingest.query(
+        `insert into articles (title, excerpt, source, source_uri, url, published_at, story_id) values ('Segunda', 'Texto.', 'b.pt', 'race-1', 'https://b.pt/race', now(), $1)`,
+        [s.id],
+      );
+      // The moderator hides the first article while the ingest is still open: it waits for the story.
+      const hide = moderator.query("update articles set hidden_at = now() where id = $1", [s.articles[0]]);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      await ingest.query("commit");
+      await hide;
+    } finally {
+      ingest.release();
+      moderator.release();
+    }
+    const [row] = await db.select({ n: stories.articleCount, last: stories.lastAt }).from(stories).where(eq(stories.id, s.id));
+    expect(row).toMatchObject({ n: 1 });
+    expect(row!.last).not.toBeNull();
+  });
+});
+
+describe("Importa after a split", () => {
+  it("a mark carried in from a join stays removable on the story it was left on", async () => {
+    await background();
+    const s = await drifted();
+    const mark = (id: number, value: 0 | 1) =>
+      app.inject({ method: "POST", url: `/api/v2/stories/${id}/vote`, payload: { value }, remoteAddress: "198.51.100.7" });
+    // The reader marked story 999995, later joined into s (its mark kept its own key).
+    const [joined] = await db.insert(stories).values({}).returning({ id: stories.id });
+    await insertArticle(db, { title: "Isenção de IVA do cabaz", excerpt: IVA, source: "rtp.pt", sourceUri: "j1", url: "https://rtp.pt/j1", publishedAt: new Date(Date.now() - 6 * HOUR), storyId: joined!.id }, ["ps"]);
+    expect((await mark(joined!.id, 1)).json()).toMatchObject({ importa: 1 });
+    const joinedArticles = (await db.select({ id: articles.id }).from(articles).where(eq(articles.storyId, joined!.id))).map((r) => r.id);
+    await db.transaction((tx) => moveStory(tx, joined!.id, s.id));
+    // Then the join's article was split off again: the old id now answers as the new story, the mark stayed.
+    await db.transaction((tx) => splitStory(tx, s.id, joinedArticles, "manual"));
+    expect((await mark(s.id, 1)).json()).toMatchObject({ importa: 1 });
+    expect((await mark(s.id, 0)).json()).toMatchObject({ importa: 0 });
   });
 });

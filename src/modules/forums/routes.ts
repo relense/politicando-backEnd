@@ -1,5 +1,5 @@
 import { looksLikeTeam } from "../../accounts/reserved.js";
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import type { FastifyBaseLogger, FastifyRequest } from "fastify";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
@@ -116,6 +116,25 @@ export interface ForumRouteOptions {
   forumSecret: string;
   createLimitPerMinute: number;
 }
+
+/** Where a page of a thread's replies ended, in the order it was asked for ("top" also needs the score). */
+const replyCursorSchema = z.strictObject({
+  sort: z.enum(["old", "new", "top"]),
+  id: z.number().int().min(0).max(MAX_INT),
+  score: z.number().int().min(-MAX_INT).max(MAX_INT).optional(),
+});
+type ReplyCursor = z.infer<typeof replyCursorSchema>;
+const encodeReplyCursor = (cursor: ReplyCursor) => Buffer.from(JSON.stringify(cursor)).toString("base64url");
+const decodeReplyCursor = (value: string, sort: ReplyCursor["sort"]): ReplyCursor => {
+  let cursor: ReplyCursor;
+  try {
+    cursor = replyCursorSchema.parse(JSON.parse(Buffer.from(value, "base64url").toString()));
+  } catch {
+    throw new ApiError(400, "invalid_cursor", "The cursor is not valid");
+  }
+  if (cursor.sort !== sort || (sort === "top" && cursor.score === undefined)) throw new ApiError(400, "invalid_cursor", "The cursor is for another sort");
+  return cursor;
+};
 
 const iso = (column: string) => sql.raw(`to_char(${column} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`);
 
@@ -268,6 +287,7 @@ export const forumRoutes =
           params: idParams,
           querystring: z.object({
             after: z.coerce.number().int().min(0).max(MAX_INT).default(0).describe("Replies with a larger id (for loading new ones)"),
+            cursor: z.string().max(200).optional().describe("The previous page's nextCursor, with the same sort: the next page of replies"),
             limit: z.coerce.number().int().min(1).max(500).default(200),
             sort: z
               .enum(["old", "top", "new"])
@@ -284,6 +304,7 @@ export const forumRoutes =
               }),
               posts: z.array(postSchema),
               hasMore: z.boolean(),
+              nextCursor: z.string().nullable().describe("Pass as ?cursor= (same sort) for the next page; null when there's no more"),
             }),
             400: errorSchema,
             404: errorSchema,
@@ -294,8 +315,18 @@ export const forumRoutes =
         const rows = await db.execute<ThreadRow>(sql`select ${threadColumns} from ${threadFrom} where t.id = ${request.params.id} and t.hidden_at is null`);
         const thread = rows.rows[0];
         if (!thread) throw notFound("Thread");
-        const { after, limit, sort } = request.query;
-        const order = sort === "new" ? sql`p.id desc` : sort === "top" && thread.board === IDEAS_BOARD ? sql`p.score desc, p.id` : sql`p.id`;
+        const { after, limit } = request.query;
+        const sort = request.query.sort === "top" && thread.board !== IDEAS_BOARD ? "old" : request.query.sort;
+        const order = sort === "new" ? sql`p.id desc` : sort === "top" ? sql`p.score desc, p.id` : sql`p.id`;
+        const cursor = request.query.cursor === undefined ? null : decodeReplyCursor(request.query.cursor, sort);
+        // The next page starts after the last reply of this one, in this order.
+        const from = !cursor
+          ? sql``
+          : sort === "new"
+            ? sql`and p.id < ${cursor.id}`
+            : sort === "top"
+              ? sql`and (p.score < ${cursor.score ?? 0} or (p.score = ${cursor.score ?? 0} and p.id > ${cursor.id}))`
+              : sql`and p.id > ${cursor.id}`;
         const [posts, changes] = await Promise.all([
           db.execute<{
             id: number; body: string; nickname: string | null; account: boolean; poster_id: string; reply_to: number | null; created_at: string; hidden: boolean;
@@ -305,11 +336,13 @@ export const forumRoutes =
               pr.pick, p.team, p.score
             from forum_posts p
             left join predictions pr on pr.initiative_id = ${thread.board === VOTES_BOARD ? thread.initiative_id : null} and pr.user_id = p.user_id
-            where p.thread_id = ${thread.id} and p.id > ${after} order by ${order} limit ${limit + 1}`),
+            where p.thread_id = ${thread.id} and p.id > ${after} ${from} order by ${order} limit ${limit + 1}`),
           db.execute<{ status: (typeof IDEA_STATUSES)[number] | null; at: string }>(sql`
             select status, ${iso("at")} as at from forum_status_changes where thread_id = ${thread.id} order by at, id`),
         ]);
         const { excerpt: _excerpt, ...rest } = summary(thread);
+        const hasMore = posts.rows.length > limit;
+        const last = posts.rows[limit - 1];
         return {
           thread: { ...rest, body: thread.body, statusHistory: [{ status: null, at: thread.created_at }, ...changes.rows] },
           posts: posts.rows.slice(0, limit).map((p) => ({
@@ -317,7 +350,8 @@ export const forumRoutes =
             isOp: !p.hidden && !p.team && p.poster_id === thread.poster_id, replyTo: p.reply_to, createdAt: p.created_at, hidden: p.hidden,
             pick: p.hidden ? null : p.pick, team: !p.hidden && p.team, score: p.score,
           })),
-          hasMore: posts.rows.length > limit,
+          hasMore,
+          nextCursor: hasMore && last ? encodeReplyCursor({ sort, id: last.id, ...(sort === "top" && { score: last.score }) }) : null,
         };
       },
     );
@@ -485,11 +519,20 @@ export const forumRoutes =
         const idea = thread.board === IDEAS_BOARD;
         const who = idea ? ideaAccount(request) : app.participant(request, "votes");
         const result = await db.transaction(async (tx) => {
+          const voter = voterKey(forumSecret, who.key, threadId);
           const added = await tx
             .insert(forumVotes)
-            .values({ threadId, voter: voterKey(forumSecret, who.key, threadId), userId: who.userId })
+            .values({ threadId, voter, userId: who.userId })
             .onConflictDoNothing()
             .returning({ threadId: forumVotes.threadId });
+          // Already counted, carried over from a duplicate this reader voted on: it's now their own
+          // vote here too, so unmarking the duplicate later doesn't take it away.
+          if (!added.length) {
+            await tx
+              .update(forumVotes)
+              .set({ fromThreadId: null })
+              .where(and(eq(forumVotes.threadId, threadId), eq(forumVotes.voter, voter), isNotNull(forumVotes.fromThreadId)));
+          }
           const [row] = added.length
             ? await tx.update(forumThreads).set({ score: sql`${forumThreads.score} + 1` }).where(eq(forumThreads.id, threadId)).returning({ score: forumThreads.score })
             : await tx.select({ score: forumThreads.score }).from(forumThreads).where(eq(forumThreads.id, threadId));
@@ -600,15 +643,17 @@ export const forumRoutes =
         },
       },
       async (request, reply) => {
-        // One report per connection, logged in or not: a reader can't count twice by logging out.
         const who = app.participant(request, "reports");
         const { kind, id, reason, details } = request.body;
         const table = kind === "thread" ? forumThreads : kind === "post" ? forumPosts : kind === "article" ? articles : comments;
         const [found] = await db.select({ id: table.id }).from(table).where(and(eq(table.id, id), isNull(table.hiddenAt)));
         if (!found) throw notFound(kind === "thread" ? "Thread" : kind === "post" ? "Post" : kind === "article" ? "Article" : "Comment");
+        // One report per account, or per connection when logged out, each kept as its sender wrote
+        // it (a shared connection's anonymous report never becomes an account's). Only accounts
+        // count toward hiding.
         await db
           .insert(reports)
-          .values({ kind, targetId: id, reason, details: details || null, reporter: reporterKey(forumSecret, request.ip), userId: who.userId })
+          .values({ kind, targetId: id, reason, details: details || null, reporter: reporterKey(forumSecret, who.key), userId: who.userId })
           .onConflictDoNothing();
         await autoModerate(db, kind, id);
         return reply.status(202).send(null);

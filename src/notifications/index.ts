@@ -1,6 +1,7 @@
 import { and, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import { type NotificationKind, notifications, userFollows } from "../db/schema.js";
+import { ApiError } from "../errors.js";
 
 /*
  * A reader's private inbox and what they follow. Everything else only calls notify() and
@@ -129,10 +130,24 @@ interface InboxRow extends Record<string, unknown> {
   cursor_at: string;
 }
 
+/**
+ * The inbox's `nextCursor` back: "<ISO time in UTC>_<id>", exactly as it was handed out. Anything
+ * else is a 400 here rather than a 500 from Postgres ("1_1" parses as a date in JS, not in SQL).
+ */
+const afterCursor = (cursor: string) => {
+  const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(\.\d{1,6})?Z_(\d{1,10})$/.exec(cursor);
+  const id = Number(match?.[3]);
+  const time = match ? new Date(`${match[1]}Z`) : null;
+  // A real date and time (no 30th of February), and an id Postgres' integer can hold.
+  if (!match || !time || Number.isNaN(time.getTime()) || time.toISOString().slice(0, 19) !== match[1] || id > 2_147_483_647) {
+    throw new ApiError(400, "invalid_cursor", "The cursor is not valid");
+  }
+  return sql`and (n.created_at, n.id) < (${`${match[1]}${match[2] ?? ""}Z`}::timestamptz, ${id})`;
+};
+
 /** One page of the inbox, newest first, with what the site needs to show and link each line. */
 export const inbox = async (db: Runner, userId: number, cursor?: string) => {
-  const [at, id] = cursor?.split("_") ?? [];
-  const after = at && id && !Number.isNaN(Date.parse(at)) && /^\d+$/.test(id) ? sql`and (n.created_at, n.id) < (${at}::timestamptz, ${Number(id)})` : sql``;
+  const after = cursor === undefined ? sql`` : afterCursor(cursor);
   const rows = (
     await db.execute<InboxRow>(sql`
       select n.id, n.kind, n.target_id, n.actor_name, n.count, n.created_at, n.read_at,

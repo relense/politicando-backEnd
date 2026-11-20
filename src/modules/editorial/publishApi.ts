@@ -37,6 +37,8 @@ export const publishRoutes =
       const ok = sent !== undefined && expected.map((key) => timingSafeEqual(digest(sent), key)).some(Boolean);
       if (!ok) throw new ApiError(401, "invalid_key", "Missing or wrong API key");
     };
+    // Every route here needs the key, checked first: without it, nothing is read, parsed or validated.
+    app.addHook("onRequest", async (request) => requireKey(request));
 
     const result = z.object({
       slug: z.string(),
@@ -51,6 +53,8 @@ export const publishRoutes =
       "/publish",
       {
         config: { rateLimit: { max: 30, timeWindow: "1 minute" } },
+        // The longest article.md (every character up to 4 bytes of UTF-8) plus the other fields.
+        bodyLimit: 200_000 * 4 + 64 * 1024,
         schema: {
           tags: ["editorial"],
           summary: "Publish (or update) a blog post from its article.md, with the team's API key",
@@ -66,7 +70,6 @@ export const publishRoutes =
         },
       },
       async (request) => {
-        requireKey(request);
         const { markdown, draft, author } = request.body;
         let post;
         try {
@@ -101,7 +104,6 @@ export const publishRoutes =
         },
       },
       async (request) => {
-        requireKey(request);
         let bytes: Buffer | undefined;
         if (request.isMultipart()) {
           const file = await request.file();
@@ -154,7 +156,6 @@ export const publishRoutes =
         },
       },
       async (request) => {
-        requireKey(request);
         const { year, voted, limit } = request.query;
         const where = and(
           isNull(budgetSummaries.proposalId),
@@ -193,7 +194,6 @@ export const publishRoutes =
         },
       },
       async (request) => {
-        requireKey(request);
         const { id } = request.params;
         const { summary, automatic } = request.body;
         if (!(await proposalExists(id))) throw notFound("Proposal");
@@ -223,7 +223,6 @@ export const publishRoutes =
         },
       },
       async (request, reply) => {
-        requireKey(request);
         const removed = await db.delete(budgetSummaries).where(eq(budgetSummaries.proposalId, request.params.id)).returning({ id: budgetSummaries.proposalId });
         if (removed.length === 0) throw notFound("Summary");
         void revalidate(["budget"]);
@@ -244,7 +243,6 @@ export const publishRoutes =
         },
       },
       async (request, reply) => {
-        requireKey(request);
         const [row] = await db
           .update(editorialPosts)
           .set({ status: "draft", featured: false, updatedAt: new Date() })

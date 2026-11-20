@@ -188,5 +188,7 @@ What helps on the frontend side (`app/contratos/page.tsx`):
 - Present facts, not accusations. An ajuste direto is legal within its limits; what's newsworthy
   is patterns (the same supplier again and again, contracts just under thresholds), which
   readers can explore with these endpoints.
+- A record with an impossible publication date (e.g. "2019-02-29") is skipped and counted as
+  invalid in the import's stats; an impossible signing or closing date is left empty.
 - Data covers 2024 onwards for now; older years can be imported on request (BASE goes back to
   2012). `GET /contracts/stats?by=year` shows what's there.

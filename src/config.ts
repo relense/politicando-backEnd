@@ -77,8 +77,24 @@ const parliamentSchema = baseSchema.extend({
 
 export const loadDatabaseConfig = (env: NodeJS.ProcessEnv = process.env) =>
   baseSchema.parse(env);
-export const loadApiConfig = (env: NodeJS.ProcessEnv = process.env) =>
-  apiSchema.parse(env);
+/**
+ * Settings that work locally but are wrong in production. Only warned about, never fatal: a
+ * missing variable mustn't take the live site down at the next deploy.
+ */
+export const apiConfigWarnings = (env: NodeJS.ProcessEnv): string[] => {
+  if (env.NODE_ENV !== "production") return [];
+  const warnings: string[] = [];
+  if (!env.SITE_URL) warnings.push("SITE_URL is not set: email links point at http://localhost:3000");
+  if (!env.PUBLIC_API_URL) warnings.push("PUBLIC_API_URL is not set: uploaded image and newsletter URLs point at http://localhost:4000");
+  if (!env.RECAPTCHA_HOSTNAMES?.trim()) warnings.push("RECAPTCHA_HOSTNAMES is empty: reCAPTCHA tokens solved on any site are accepted");
+  return warnings;
+};
+
+export const loadApiConfig = (env: NodeJS.ProcessEnv = process.env, warn: (message: string) => void = (message) => console.warn(`[config] ${message}`)) => {
+  const config = apiSchema.parse(env);
+  for (const message of apiConfigWarnings(env)) warn(message);
+  return config;
+};
 export const loadIngestConfig = (env: NodeJS.ProcessEnv = process.env) =>
   ingestSchema.parse(env);
 export const loadParliamentConfig = (env: NodeJS.ProcessEnv = process.env) =>

@@ -71,7 +71,7 @@ The place page. The first fields are the same as before (`key`, `name`, `level`,
 | `deputies` | Deputies elected by the district (círculo) the place is in: `{ circle: { key, name }, items: [{ id, name, photoUrl, party }] }`. Link each to `/deputados/:id` |
 | `elections` | The latest election of each type with results here, newest first: `[{ election, name, date, organ, turnoutPct, winner: { list, label, validPct } }]`. Link to the full results at `/elections/:election/places/:key` |
 | `contracts.carriedOut` | `{ count, total }`: public contracts carried out here, from BASE since 2024. Link to `/contracts?place=:key` |
-| `contracts.council` | Municipalities: the câmara as a public buyer, `{ nif, name, count, total, directAwards }`. Link to `/contracts/parties/:nif`; show "ajustes diretos: N" |
+| `contracts.council` | Municipalities: the câmara as a public buyer, `{ nif, name, count, total, directAwards }`. Link to `/contracts/parties/:nif`; show "ajustes diretos: N". Both `contracts` figures are kept in memory until the next weekly contracts import, like the contracts API's totals |
 
 Non-local places (`GLOBAL-…`, `FOREIGN-…`) still answer, with the place-specific sections
 empty.

@@ -59,7 +59,8 @@ describe("an account's email", () => {
     expect(sent).toHaveLength(1);
     expect(sent[0]!.text).toContain("https://politicando.example/conta/confirmar-email?token=");
     expect(sent[0]!.text).toContain("newsletter");
-    expect(await subscribers()).toEqual([expect.objectContaining({ email: "ana@example.pt", confirmedAt: null })]);
+    // The wish waits on the account: nothing is written for the address until it's confirmed.
+    expect(await subscribers()).toEqual([]);
 
     // Logged out, on another device: it still works.
     const confirmed = await call("POST", "/auth/email/confirm", { token: tokenIn(sent[0]!, "/conta/confirmar-email") });
@@ -137,9 +138,106 @@ describe("the newsletter switch", () => {
     sent.length = 0;
     expect((await call("PUT", "/me/newsletter", undefined, cookie)).body).toEqual({ newsletter: "pending", emailSent: true });
     expect(sent[0]!.text).toContain("newsletter");
-    expect((await call("GET", "/me", undefined, cookie)).body.newsletter).toBe("pending");
+    // Until the email is confirmed, "pending" is the account's own wish, not the address's state.
+    expect((await call("GET", "/me", undefined, cookie)).body).toMatchObject({ emailConfirmed: false, newsletter: "pending" });
     await call("POST", "/auth/email/confirm", { token: tokenIn(sent[0]!, "/conta/confirmar-email") });
     expect((await call("GET", "/me", undefined, cookie)).body.newsletter).toBe("confirmed");
+  });
+
+  it("never tells or changes the newsletter of an address the account hasn't confirmed", async () => {
+    await db.insert(newsletterSubscribers).values({ email: "vitima@example.pt", confirmedAt: new Date() });
+    const { cookie, body } = await register({ email: "vitima@example.pt" });
+    expect(body.user).toMatchObject({ emailConfirmed: false, newsletter: "none" });
+    expect((await call("GET", "/me", undefined, cookie)).body.newsletter).toBe("none");
+    // Asking for it shows the account's own wish ("pending"), never that the address is subscribed.
+    expect((await call("PUT", "/me/email", { email: "vitima@example.pt", newsletter: true }, cookie)).body.user.newsletter).toBe("pending");
+    // The switch answers the same as for any unconfirmed address, and resends the confirmation.
+    sent.length = 0;
+    expect((await call("PUT", "/me/newsletter", undefined, cookie)).body).toEqual({ newsletter: "pending", emailSent: true });
+    expect(sent).toHaveLength(1);
+    // Switching it off can't unsubscribe someone else's address.
+    expect((await call("DELETE", "/me/newsletter", undefined, cookie)).status).toBe(204);
+    expect(await subscribers()).toEqual([expect.objectContaining({ email: "vitima@example.pt", confirmedAt: expect.any(Date) })]);
+  });
+});
+
+describe("the newsletter switch, before the email is confirmed", () => {
+  it("switched on then off, confirming the email later doesn't subscribe it", async () => {
+    const { cookie } = await register({ email: "rita@example.pt" });
+    sent.length = 0;
+    expect((await call("PUT", "/me/newsletter", undefined, cookie)).body).toEqual({ newsletter: "pending", emailSent: true });
+    const link = tokenIn(sent[0]!, "/conta/confirmar-email");
+    // Asked again straight away: no second email.
+    expect((await call("PUT", "/me/newsletter", undefined, cookie)).body).toEqual({ newsletter: "pending", emailSent: false });
+    expect(sent).toHaveLength(1);
+    expect((await call("DELETE", "/me/newsletter", undefined, cookie)).status).toBe(204);
+    expect(await subscribers()).toEqual([]);
+    expect((await call("POST", "/auth/email/confirm", { token: link })).body).toEqual({ status: "confirmed", newsletter: false });
+    expect(await subscribers()).toEqual([]);
+  });
+
+  // A fresh app: PUT /me/email's hourly limit counts per account id, and ids restart in each test.
+  const freshApp = () => buildApp({ ...options, newsletter: settings });
+
+  it("the profile's 'resend' (no newsletter field) still confirms the newsletter chosen at sign-up", async () => {
+    const fresh = await freshApp();
+    try {
+      const { cookie } = await register({ email: "eva@example.pt", newsletter: true }, fresh);
+      sent.length = 0;
+      expect((await call("PUT", "/me/email", { email: "eva@example.pt" }, cookie, fresh)).status).toBe(200);
+      const resent = tokenIn(sent[0]!, "/conta/confirmar-email");
+      expect((await call("POST", "/auth/email/confirm", { token: resent }, undefined, fresh)).body).toEqual({ status: "confirmed", newsletter: true });
+    } finally {
+      await fresh.close();
+    }
+  });
+
+  it("keeps the reader's choice on the account: other sign-ups for the address can't change it", async () => {
+    const { cookie } = await register({ email: "rita@example.pt", newsletter: true });
+    const link = tokenIn(sent[0]!, "/conta/confirmar-email");
+    // Nothing written for the address yet, so another account can't drop or delay the owner's own sign-up.
+    expect(await subscribers()).toEqual([]);
+    await call("DELETE", "/me/newsletter", undefined, cookie);
+    expect((await call("GET", "/me", undefined, cookie)).body.newsletter).toBe("none");
+    // Someone else's pending sign-up for the address appears: the reader said no, so confirming leaves it pending.
+    await db.insert(newsletterSubscribers).values({ email: "rita@example.pt" });
+    expect((await call("POST", "/auth/email/confirm", { token: link })).body).toEqual({ status: "confirmed", newsletter: false });
+    expect(await subscribers()).toEqual([expect.objectContaining({ email: "rita@example.pt", confirmedAt: null })]);
+  });
+
+  it("switched off and on again within minutes, the link already sent still subscribes", async () => {
+    const { cookie } = await register({ email: "ivo@example.pt" });
+    sent.length = 0;
+    await call("PUT", "/me/newsletter", undefined, cookie);
+    const link = tokenIn(sent[0]!, "/conta/confirmar-email");
+    await call("DELETE", "/me/newsletter", undefined, cookie);
+    expect((await call("PUT", "/me/newsletter", undefined, cookie)).body).toEqual({ newsletter: "pending", emailSent: false });
+    expect((await call("POST", "/auth/email/confirm", { token: link })).body).toEqual({ status: "confirmed", newsletter: true });
+  });
+
+  it("a new address gets its own confirmation straight away, even just after one for the old address", async () => {
+    const fresh = await freshApp();
+    try {
+      const { cookie } = await register({ email: "old@example.pt" }, fresh);
+      await call("PUT", "/me/newsletter", undefined, cookie, fresh);
+      expect((await call("PUT", "/me/email", { email: "new@example.pt", newsletter: false }, cookie, fresh)).status).toBe(200);
+      sent.length = 0;
+      expect((await call("PUT", "/me/newsletter", undefined, cookie, fresh)).body).toEqual({ newsletter: "pending", emailSent: true });
+      const link = tokenIn(sent[0]!, "/conta/confirmar-email");
+      expect((await call("POST", "/auth/email/confirm", { token: link }, undefined, fresh)).body).toEqual({ status: "confirmed", newsletter: true });
+    } finally {
+      await fresh.close();
+    }
+  });
+
+  it("confirming an email sent without the newsletter doesn't subscribe it, nor cancel a sign-up left pending", async () => {
+    await db.insert(newsletterSubscribers).values({ email: "rui@example.pt" });
+    const { body } = await register({ email: "rui@example.pt" });
+    expect(body.user.emailConfirmed).toBe(false);
+    const link = tokenIn(sent.at(-1)!, "/conta/confirmar-email");
+    expect((await call("POST", "/auth/email/confirm", { token: link })).body).toEqual({ status: "confirmed", newsletter: false });
+    // The account's choice decides, not the link: the other sign-up for the address is left alone.
+    expect(await subscribers()).toEqual([expect.objectContaining({ email: "rui@example.pt", confirmedAt: null })]);
   });
 });
 

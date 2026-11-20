@@ -5,6 +5,7 @@ import type { Db } from "../../db/client.js";
 import { partiesInList } from "../../elections/mai.js";
 import { ApiError, notFound } from "../../errors.js";
 import { municipalityAt } from "../../places/locate.js";
+import { createVersionedCache } from "../contracts/cache.js";
 import { photoUrl } from "../parliament/routes.js";
 import { errorSchema } from "../shared.js";
 
@@ -69,6 +70,67 @@ export const placeRoutes =
         ]),
       );
     };
+
+    // Contract totals scan many rows and only change with the weekly import: keep them until
+    // contract_imports records a new one, as the contracts API does.
+    const contractsCache = createVersionedCache<unknown>({
+      version: async () =>
+        (
+          await db.execute<{ v: string }>(sql`
+            select count(*) || ':' || coalesce(max(imported_at)::text, '') || ':' || coalesce(max(xmin::text::bigint), 0) as v
+            from contract_imports`)
+        ).rows[0]?.v ?? "none",
+      max: 1000,
+      checkEveryMs: 0,
+    });
+
+    /**
+     * Every name a public body goes by as "Município de …", with its NIF: read once per import
+     * (a scan of all the contracts' parties), then matched to each câmara in memory.
+     */
+    const municipalityNames = () =>
+      contractsCache.get("municipality-names", async () =>
+        (
+          await db.execute<{ nif: string; name: string }>(sql`
+            select distinct nif, name from contract_parties
+            where role = 'entity' and nif <> '' and name ~* '^munic[ií]pio d(e|a|o|as|os) '`)
+        ).rows,
+      ) as Promise<{ nif: string; name: string }[]>;
+
+    type PlaceContracts = {
+      carriedOut: { count: number; total: number };
+      council: { nif: string; name: string; count: number; total: number; directAwards: number } | null;
+    };
+    const placeContracts = (key: string, municipality: string | null) =>
+      contractsCache.get(`place:${key}:${municipality ?? ""}`, async (): Promise<PlaceContracts> => {
+        const [carried] = (
+          await db.execute<{ count: number; total: number }>(sql`
+            select count(*)::int as count, round(coalesce(sum(price), 0)::numeric, 2)::float8 as total
+            from contracts where place_keys @> array[${key}]::text[]`)
+        ).rows;
+
+        // The câmara as a contracting entity: "Município de X", the NIF with most contracts here.
+        let council: PlaceContracts["council"] = null;
+        if (municipality) {
+          const name = municipality.replace(/\s*\([^)]*\)\s*$/, "");
+          const pattern = new RegExp(`^munic[ií]pio d(e|a|o|as|os) ${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}( |\\(|,|$)`, "iu");
+          const matching = (await municipalityNames()).filter((n) => pattern.test(n.name));
+          if (matching.length) {
+            const list = (values: string[]) => sql.join([...new Set(values)].map((v) => sql`${v}`), sql`, `);
+            // By NIF (indexed), and only under the names that matched, as before.
+            const rows = await db.execute<{ nif: string; name: string; count: number; total: number; direct: number }>(sql`
+              select p.nif, max(p.name) as name, count(*)::int as count, round(coalesce(sum(c.price), 0)::numeric, 2)::float8 as total,
+                (count(*) filter (where c.procedure_kind in ('direct_award', 'direct_award_simplified')))::int as direct,
+                count(*) filter (where c.place_keys @> array[${key}]::text[]) as here
+              from contract_parties p join contracts c on c.id = p.contract_id
+              where p.role = 'entity' and p.nif in (${list(matching.map((n) => n.nif))}) and p.name in (${list(matching.map((n) => n.name))})
+              group by p.nif order by here desc, count desc limit 1`);
+            const r = rows.rows[0];
+            if (r) council = { nif: r.nif, name: r.name, count: r.count, total: r.total, directAwards: r.direct };
+          }
+        }
+        return { carriedOut: carried ?? { count: 0, total: 0 }, council };
+      }) as Promise<PlaceContracts>;
 
     app.get(
       "/places",
@@ -274,27 +336,7 @@ export const placeRoutes =
           }))
           .sort((a, b) => b.date.localeCompare(a.date));
 
-        const [carried] = (
-          await db.execute<{ count: number; total: number }>(sql`
-            select count(*)::int as count, round(coalesce(sum(price), 0)::numeric, 2)::float8 as total
-            from contracts where place_keys @> array[${key}]::text[]`)
-        ).rows;
-
-        // The câmara as a contracting entity: "Município de X", the NIF with most contracts here.
-        let councilContracts = null;
-        if (place.level === "municipality") {
-          const name = place.name.replace(/\s*\([^)]*\)\s*$/, "");
-          const rows = await db.execute<{ nif: string; name: string; count: number; total: number; direct: number }>(sql`
-            select p.nif, max(p.name) as name, count(*)::int as count, round(coalesce(sum(c.price), 0)::numeric, 2)::float8 as total,
-              (count(*) filter (where c.procedure_kind in ('direct_award', 'direct_award_simplified')))::int as direct,
-              count(*) filter (where c.place_keys @> array[${key}]::text[]) as here
-            from contract_parties p join contracts c on c.id = p.contract_id
-            where p.role = 'entity' and p.nif <> ''
-              and p.name ~* ${`^munic[ií]pio d(e|a|o|as|os) ${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}( |\\(|,|$)`}
-            group by p.nif order by here desc, count desc limit 1`);
-          const r = rows.rows[0];
-          if (r) councilContracts = { nif: r.nif, name: r.name, count: r.count, total: r.total, directAwards: r.direct };
-        }
+        const contracts = await placeContracts(key, place.level === "municipality" ? place.name : null);
 
         return {
           key: place.key, name: place.name, level: place.level, dicofre: place.dicofre,
@@ -304,7 +346,7 @@ export const placeRoutes =
           council,
           deputies,
           elections,
-          contracts: { carriedOut: carried ?? { count: 0, total: 0 }, council: councilContracts },
+          contracts,
         };
       },
     );

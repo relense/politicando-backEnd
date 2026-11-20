@@ -43,8 +43,10 @@ The answer:
   (`changed: false`), so retries are safe.
 - **`featured: true`** makes it the blog's highlighted post (the newest featured one is the
   highlight); `featured: false` takes it off; leaving it out keeps what it was.
-- **Errors:** 401 `invalid_key`; 400 `invalid_article` (no slug or title, a bad cover URL…); 429
-  past 30 calls a minute.
+- **Errors:** 401 `invalid_key` (checked first, before the body is read: every `/publish` route);
+  400 `invalid_article` (no slug or title, a bad cover URL…); 413 `payload_too_large` past about
+  850 KB (the body takes 200,000 characters of any script); 429 past 30 calls a minute.
+- Every `/publish` response is `Cache-Control: private, no-store`.
 - New posts reach search engines at the next hourly ingest (IndexNow).
 
 ```sh

@@ -101,6 +101,13 @@ describe("BASE records", () => {
     expect(parseContract(record({ idcontrato: "" }))).toBeNull();
     expect(parseContract(record({ precoContratual: null }))).toBeNull();
     expect(parseContract(record({ dataPublicacao: "26/10/2026" }))).toBeNull();
+    // Impossible days: the record is invalid without a publication date; other dates are left empty.
+    expect(parseContract(record({ dataPublicacao: "2019-02-29" }))).toBeNull();
+    expect(parseContract(record({ dataPublicacao: "2026-13-01" }))).toBeNull();
+    expect(parseContract(record({ dataPublicacao: "0000-01-01" }))).toBeNull();
+    expect(parseContract(record({ dataPublicacao: "2024-02-29" }))?.publishedAt).toBe("2024-02-29");
+    expect(parseContract(record({ dataCelebracaoContrato: "2026-02-30" }))?.signedAt).toBeNull();
+    expect(parseContract(record({ PrecoTotalEfetivo: 5, dataFechoContrato: "2026-04-31" }))?.effectivePrice).toBeNull();
     expect(parseContract("nope")).toBeNull();
   });
 
@@ -170,6 +177,38 @@ describe("importContracts", () => {
     await importContracts(db, stream([record({ precoContratual: 1, adjudicatarios: [] })]));
     const { body } = await get("/contracts/100");
     expect(body).toMatchObject({ price: 1, suppliers: [], entities: [{ nif: "506415082" }] });
+  });
+});
+
+describe("impossible dates", () => {
+  it("count as invalid instead of failing the batch", async () => {
+    const stats = await importContracts(
+      db,
+      stream([record({ idcontrato: "200", dataPublicacao: "2019-02-29" }), record({ idcontrato: "201", dataCelebracaoContrato: "2026-02-30" })]),
+    );
+    expect(stats).toMatchObject({ read: 2, imported: 1, invalid: 1 });
+    expect((await get("/contracts/201")).body).toMatchObject({ signedAt: null });
+  });
+});
+
+describe("a municipality's page", () => {
+  it("shows the contracts carried out there and the câmara's, kept until the next import", async () => {
+    await seed();
+    await db.insert(contractImports).values({ year: 2026, sourceModified: "2026-11-15", contracts: 3 });
+    const contractsOf = async (key: string) => (await get(`/places/${key}`)).body.contracts;
+    expect(await contractsOf("LOCAL-060300")).toEqual({
+      carriedOut: { count: 1, total: 906352.76 },
+      council: { nif: "506415082", name: "Município de Coimbra", count: 2, total: 916352.76, directAwards: 2 },
+    });
+    // Two Lagoas: the one whose contracts are carried out in it.
+    expect((await contractsOf("LOCAL-080600")).council).toMatchObject({ nif: "506804240", count: 1 });
+    expect(await contractsOf("LOCAL-080000")).toEqual({ carriedOut: { count: 1, total: 2_000_000 }, council: null });
+
+    // New contracts show once the import that brought them is recorded.
+    await importContracts(db, stream([record({ idcontrato: "103", precoContratual: 100 })]));
+    expect((await contractsOf("LOCAL-060300")).carriedOut.count).toBe(1);
+    await db.update(contractImports).set({ importedAt: new Date(Date.now() + 1000) });
+    expect(await contractsOf("LOCAL-060300")).toMatchObject({ carriedOut: { count: 2 }, council: { count: 3 } });
   });
 });
 

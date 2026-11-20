@@ -107,6 +107,13 @@ Query: `after` (a post id; only newer replies, for polling), `limit` (1-500, def
 oldest). `top` only means something on the ideas board, the only place replies take votes;
 elsewhere it's the same as `old`. Poll with `after` in the default order.
 
+**More replies:** when `hasMore` is true, `nextCursor` is set: ask again with the same `sort`
+and `?cursor=<nextCursor>` for the next page (it works in every order, unlike `after`, which
+only fits oldest first). Treat it as opaque; a cursor from another sort, or a mangled one, is
+400 `invalid_cursor`. `nextCursor` is null when there's nothing more. In `top`, a vote cast
+between pages can move a reply across the page boundary (shown twice or skipped): fine for
+a "Ver mais" button.
+
 ```json
 {
   "thread": { "id": 7, "title": "Orçamento", "body": "O que acham?", "posterId": "Xk3_a9Qz", "locked": false, "…": "…" },
@@ -115,7 +122,8 @@ elsewhere it's the same as `old`. Poll with `after` in the default order.
     { "id": 32, "body": null, "nickname": null, "posterId": null, "isOp": false, "replyTo": 31, "createdAt": "…", "hidden": true, "team": false, "score": 0 },
     { "id": 33, "body": "Está nos planos", "nickname": "Politicando", "posterId": "equipa", "isOp": false, "replyTo": 31, "createdAt": "…", "hidden": false, "team": true, "score": 4 }
   ],
-  "hasMore": false
+  "hasMore": false,
+  "nextCursor": null
 }
 ```
 
@@ -242,15 +250,19 @@ Lets readers report threads, replies, comments and news articles:
 ```
 
 `reason`: `spam`, `insult`, `hate`, `personal_data`, `illegal`, `other`. Returns 202, also
-when the same person reports twice (counted once: per connection, so reporting logged in and
-again logged out still counts once). There is no captcha; it's limited to 10 a
+when the same person reports twice (counted once: per account when logged in, per connection
+when logged out). Only signed-in readers' reports count toward hiding something automatically;
+logged-out reports reach the moderators but never hide anything on their own. There is no captcha; it's limited to 10 a
 minute per IP. Show a "Denunciar" link on every post and comment, with these reasons as
 options. 404 for unknown or already hidden items.
 
-**Reported items hide themselves, but only for what's illegal or spam.** When 2 different
-readers report the same thread, reply or comment as `hate`, `personal_data` or `illegal`,
-it's hidden at once; 3 readers for `spam`. `insult` and `other` never hide anything (rudeness
-stays up); they only reach the moderators. A moderator can bring an item back, and then it
+**Reported items hide themselves, but only for what's illegal or spam, and only on reports
+from signed-in readers.** When 2 different accounts report the same thread, reply or comment
+as `hate`, `personal_data` or `illegal`, it's hidden at once; 3 accounts for `spam`. Anonymous
+reports are kept and reach the moderators' queue, but never hide anything on their own (so
+it's worth suggesting "Entra para a denúncia contar mais depressa" to logged-out readers,
+without promising anything). An account counts once per item, from any connection. `insult`
+and `other` never hide anything (rudeness stays up); they only reach the moderators. A moderator can bring an item back, and then it
 takes twice as many new reports. After a reader reports something, "Obrigado, vamos rever" is
 accurate; don't promise it'll be removed. Suggested labels: `illegal` "Ilegal (difamação,
 crime…)", `hate` "Ataque a um grupo", `personal_data` "Dados pessoais", `spam` "Spam",
@@ -260,8 +272,8 @@ News articles (`"kind": "article"`) take their own reasons, about our tagging or
 rather than what the outlet wrote: `wrong_tags` ("Partido ou pessoa errados"),
 `broken_link` ("Link não funciona"), `duplicate` ("Notícia repetida"), `not_politics`
 ("Não é sobre política"), `other`. Mixing the two lists is 400.
-News is hidden on its own after 3 reports of `duplicate`, `broken_link` or `not_politics`,
-never for `wrong_tags` (that's ours to fix).
+News is hidden on its own after 3 accounts report it as `duplicate`, `broken_link` or
+`not_politics`, never for `wrong_tags` (that's ours to fix).
 
 ## Moderation
 

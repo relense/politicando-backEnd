@@ -1,7 +1,7 @@
 import { asc, eq } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { articleGovernmentMembers, articleParties, articles, governmentMembers, parties, seenSourceUris } from "../src/db/schema.js";
-import { canonicalUrl, ingest, refreshGenericHeadlines, toExcerpt } from "../src/ingestion/ingest.js";
+import { canonicalUrl, ingest, pruneSeen, refreshGenericHeadlines, toExcerpt } from "../src/ingestion/ingest.js";
 import { createPoliteClient } from "../src/ingestion/politeClient.js";
 import type { NewsSource } from "../src/ingestion/sources.js";
 import { createTestDb, resetDb } from "./helpers.js";
@@ -346,5 +346,17 @@ describe("refreshGenericHeadlines", () => {
     fetch.mockClear();
     expect(await refreshGenericHeadlines({ db, client, now: NOW })).toBe(0);
     expect(fetch.mock.calls.filter(([u]) => !String(u).endsWith("robots.txt"))).toEqual([]);
+  });
+});
+
+describe("pruneSeen", () => {
+  it("forgets URLs seen more than two weeks ago, long after the scanner would skip them", async () => {
+    const day = 24 * 3_600_000;
+    await db.insert(seenSourceUris).values([
+      { sourceUri: "https://a.pt/old", seenAt: new Date(NOW.getTime() - 15 * day) },
+      { sourceUri: "https://a.pt/recent", seenAt: new Date(NOW.getTime() - 5 * day) },
+    ]);
+    expect(await pruneSeen(db, NOW)).toBe(1);
+    expect(await seenUrls()).toEqual(["https://a.pt/recent"]);
   });
 });

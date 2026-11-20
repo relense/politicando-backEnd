@@ -54,3 +54,12 @@ export const deputyVote = (
 /** Whether a date falls in one of the deputy's sitting periods. */
 export const wasSitting = (periods: { from: string; to: string | null }[], date: string) =>
   periods.some((p) => p.from <= date && (p.to === null || date < p.to));
+
+/**
+ * The group a deputy sat for on a date. On the day they switched, the new group (the record
+ * may end the old spell on that same day). Null when the history doesn't cover the date.
+ */
+export const groupOn = (periods: { group: string; from: string; to: string | null }[], date: string) =>
+  [...periods]
+    .sort((a, b) => b.from.localeCompare(a.from))
+    .find((p) => p.from <= date && (p.to === null || date <= p.to))?.group ?? null;

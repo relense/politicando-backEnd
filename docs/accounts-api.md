@@ -45,7 +45,8 @@ account and their comments carry their username.
   semanal". `newsletter: true` needs an email.
 - Username: 3–20 letters, digits or `_`. Shown as typed, unique ignoring case, and screened like
   comments (no personal data or hate). Names such as `admin`, `politicando` and `moderador` are
-  reserved.
+  reserved, and so is anything that reads like the team (`Admin_PT`, `EquipaPoliticando`,
+  `moderador2`): the same rule as anonymous nicknames. Both answer 409 `username_taken`.
 - Password: 8–200 characters.
 - 201 `{ "user": { "id", "username", "createdAt", "email", "emailConfirmed", "askForEmail", "newsletter" } }`,
   sets the cookie (they're logged in). With an email, also `emailSent` (whether the confirmation
@@ -75,7 +76,8 @@ account and their comments carry their username.
 "Confirma o teu email" and a **Confirmar** button, which calls `POST /auth/email/confirm`
 `{ token }`. **Only on the button, never on page load**: mail scanners open every link.
 - 200 `{ "status": "confirmed", "newsletter": true|false }` ("Email confirmado", plus "e estás
-  inscrito na newsletter" when `newsletter`).
+  inscrito na newsletter" when `newsletter`). The newsletter follows the account's latest choice,
+  whichever of its confirmation links is clicked.
 - 400 `invalid_token`: expired (7 days), changed since, or broken. Offer to send it again from
   the profile (`PUT /me/email`).
 - 409 `email_taken`: another account confirmed it first.
@@ -104,10 +106,10 @@ they forgot.
 
 | Call | What |
 |---|---|
-| `GET /me` | `{ id, username, createdAt, email, emailConfirmed, askForEmail, newsletter }`, or 401. `newsletter`: `"none"`, `"pending"` or `"confirmed"` |
-| `PUT /me/newsletter` | The profile's newsletter switch, on: 200 `{ newsletter, emailSent }`. A confirmed email is `"confirmed"` at once; an unconfirmed one is `"pending"` and the confirmation email goes again (confirming the email confirms both). 409 `no_email` without an email: offer to add one |
-| `DELETE /me/newsletter` | Switch off: 204, unsubscribes the account's email |
-| `PUT /me/email` `{ email, newsletter? }` | Add or change the email: 200 `{ user, emailSent }`; a confirmation link is emailed. 5 an hour |
+| `GET /me` | `{ id, username, createdAt, email, emailConfirmed, askForEmail, newsletter }`, or 401. `newsletter`: `"none"`, `"pending"` or `"confirmed"`. While the email isn't confirmed it's only the account's own choice: `"pending"` if the reader asked for it (register box, `PUT /me/newsletter`, `PUT /me/email` with `newsletter: true`), else `"none"`; it never says whether the address itself is subscribed (it might be someone else's). Show the switch on for `"pending"` with "Confirma o teu email para começares a receber" |
+| `PUT /me/newsletter` | The profile's newsletter switch, on: 200 `{ newsletter, emailSent }`. A confirmed email is `"confirmed"` at once; an unconfirmed one answers `"pending"` (so does `GET /me` from then on), the choice is kept on the account, and the confirmation email goes again, at most every 10 minutes (`emailSent: false` when not); confirming the email subscribes it. 409 `no_email` without an email: offer to add one |
+| `DELETE /me/newsletter` | Switch off: 204, unsubscribes the account's email. With an unconfirmed email it cancels the account's choice, so confirming the email later doesn't subscribe it (whatever link is clicked) |
+| `PUT /me/email` `{ email, newsletter? }` | Add or change the email: 200 `{ user, emailSent }`; a confirmation link is emailed. 5 an hour. `newsletter: true` subscribes the address once confirmed, `false` doesn't. Left out, the earlier choice is kept for the same address (use this for "Reenviar") and is off for a new address. Send the add/change form's box as a real `true`/`false`. Changing away from a subscribed address leaves that address subscribed (its emails carry an unsubscribe link) |
 | `DELETE /me/email` | 204, removes it (a newsletter subscription stays, with its own unsubscribe link) |
 | `POST /me/email/remind-later` | 204, "Agora não": `askForEmail` is false for 30 days |
 | `PUT /me/password` `{ current, new }` | 204; logs out every other session. 401 if `current` is wrong |
@@ -156,7 +158,7 @@ the blog posts the reader marked "Importa" (always `1`; blog posts no longer hav
 
 | Call | What |
 |---|---|
-| `PUT` / `DELETE /me/saved/:kind/:id` | Save or unsave. `kind`: `article` (news), `story`, `editorial` (a blog post, by its `id`), `comment`, `thread` (forum) or `reply` (a post in a forum thread). 404 for something that doesn't exist or was hidden |
+| `PUT` / `DELETE /me/saved/:kind/:id` | Save or unsave. `kind`: `article` (news), `story`, `editorial` (a blog post, by its `id`), `comment`, `thread` (forum) or `reply` (a post in a forum thread). 404 for something that doesn't exist or was hidden. A merged story's old id acts on the story it went into (also in `POST /me/merge`, for saved and read stories) |
 | `PUT` / `DELETE /me/hidden/:articleId` | Hide a news article from the feed, or show it again |
 | `PUT` / `DELETE /me/muted/{source\|party}/:value` | Mute an outlet (its domain, e.g. `publico.pt`) or a party (its slug) |
 | `PUT /me/read/:storyId` | Mark a story read |

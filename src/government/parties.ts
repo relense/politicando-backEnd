@@ -1,4 +1,3 @@
-import { sql } from "drizzle-orm";
 import { nameKey } from "./sync.js";
 
 /*
@@ -40,10 +39,3 @@ export const memberParty = (name: string, deputyParty: string | null) =>
     : curatedParty(name)
       ? { party: curatedParty(name), partySource: "curated" as const, independent: false }
       : { party: null, partySource: null, independent: isIndependent(name) };
-
-/** The curated list as SQL rows (name, slug), for queries that count members per party. */
-export const curatedPartiesSql = () =>
-  sql`(values ${sql.join(
-    Object.entries(BY_NAME).map(([name, slug]) => sql`(${name}, ${slug})`),
-    sql`, `,
-  )}) as curated(name, slug)`;

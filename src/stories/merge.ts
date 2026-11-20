@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import { sql } from "drizzle-orm";
 import type { Db } from "../db/client.js";
@@ -184,6 +185,16 @@ export const claudeJudge = (apiKey: string, model = "claude-haiku-5-5"): MergeJu
 export const judgeFromEnv = (env: NodeJS.ProcessEnv = process.env): MergeJudge | null =>
   env.ANTHROPIC_API_KEY ? claudeJudge(env.ANTHROPIC_API_KEY) : null;
 
+/**
+ * What a model answer about a pair was based on: both stories' articles. Counts alone aren't
+ * enough now that stories can lose articles (split.ts) and gain others back.
+ */
+export const signatureOf = (low: number[], high: number[]) =>
+  createHash("sha1")
+    .update(`${[...low].sort((a, b) => a - b).join(",")}|${[...high].sort((a, b) => a - b).join(",")}`)
+    .digest("base64url")
+    .slice(0, 16);
+
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 type Runner = Db | Tx;
 
@@ -203,14 +214,46 @@ export const resolveStoryIds = async (db: Runner, ids: number[]) => {
   return [...new Set(ids.map((id) => map.get(id) ?? id))];
 };
 
+/**
+ * Runs `write` on the story an id now is, holding its row (FOR KEY SHARE) so a merge can't delete
+ * it meanwhile: rows without a foreign key to stories (follows, saves, reads) would otherwise land
+ * on a story that's gone. If it was merged while this waited, tries the story it went into.
+ * Returns null when there's no such story.
+ */
+export const withStory = async <T>(db: Db, asked: number, write: (tx: Tx, id: number) => Promise<T>): Promise<{ id: number; result: T } | null> => {
+  let id = await resolveStoryId(db, asked);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const done = await db.transaction(async (tx) => {
+      const held = await tx.execute(sql`select 1 from stories where id = ${id} for key share`);
+      if (held.rows.length === 0) return null;
+      return { id, result: await write(tx, id) };
+    });
+    if (done) return done;
+    const now = await resolveStoryId(db, asked);
+    if (now === id) return null;
+    id = now;
+  }
+  return null;
+};
+
 /** Moves everything from one story into another, then deletes it, leaving a redirect. */
 export const moveStory = async (tx: Tx, fromId: number, intoId: number, reason: "model" = "model") => {
+  // Articles first, then the stories, the same order as anything that changes an article (its
+  // trigger then updates the story's numbers): the other way round, a hide during a merge deadlocks.
+  await tx.execute(sql`select id from articles where story_id in (${fromId}, ${intoId}) order by id for update`);
+  // Holds both rows until the end: a comment, mark or follow written meanwhile waits, then finds
+  // the old story gone and goes to the new one, instead of being deleted with it.
+  await tx.execute(sql`select id from stories where id in (${fromId}, ${intoId}) order by id for update`);
   const moved = await tx.execute<{ id: number }>(sql`update articles set story_id = ${intoId} where story_id = ${fromId} returning id`);
   const articleIds = moved.rows.map((r) => r.id);
   await tx.execute(sql`update comments set story_id = ${intoId} where story_id = ${fromId}`);
-  // Marks keep their voter key; one reader who marked both stories counts once.
+  // Marks keep their voter key (it can't be recomputed without the reader). A logged-in reader
+  // who marked both stories counts once; an anonymous one can't be told apart, and counts twice.
   await tx.execute(sql`insert into story_votes (story_id, voter, user_id, created_at)
-    select ${intoId}, voter, user_id, created_at from story_votes where story_id = ${fromId} on conflict do nothing`);
+    select ${intoId}, v.voter, v.user_id, v.created_at from story_votes v
+    where v.story_id = ${fromId}
+      and (v.user_id is null or not exists (select 1 from story_votes w where w.story_id = ${intoId} and w.user_id = v.user_id))
+    on conflict do nothing`);
   await tx.execute(sql`insert into user_follows (user_id, kind, target_id, created_at)
     select user_id, kind, ${intoId}, created_at from user_follows where kind = 'story' and target_id = ${fromId} on conflict do nothing`);
   await tx.execute(sql`delete from user_follows where kind = 'story' and target_id = ${fromId}`);
@@ -312,7 +355,7 @@ export const mergeStories = async (
     const toAsk: { candidate: Candidate; low: MergeStory; high: MergeStory; signature: string }[] = [];
     for (const candidate of found) {
       const [low, high] = candidate.a.id < candidate.b.id ? [candidate.a, candidate.b] : [candidate.b, candidate.a];
-      const signature = `${low.articles.length}:${high.articles.length}`;
+      const signature = signatureOf(low.articles.map((a) => a.id), high.articles.map((a) => a.id));
       const cached = await db.execute<{ same: boolean; signature: string }>(
         sql`select same, signature from story_merge_checks where low_id = ${low.id} and high_id = ${high.id}`,
       );
@@ -326,19 +369,18 @@ export const mergeStories = async (
     for (let i = 0; i < toAsk.length && failures < 3; i += CONCURRENCY) {
       await Promise.all(
         toAsk.slice(i, i + CONCURRENCY).map(async ({ candidate, low, high, signature }) => {
-          let same: boolean | null;
           try {
             checked++;
-            same = await judge(briefOf(low), briefOf(high));
+            const same = await judge(briefOf(low), briefOf(high));
+            if (same === null) return;
+            if (same) confirmed.push(candidate);
+            await db.execute(sql`insert into story_merge_checks (low_id, high_id, signature, same) values (${low.id}, ${high.id}, ${signature}, ${same})
+              on conflict (low_id, high_id) do update set signature = excluded.signature, same = excluded.same, checked_at = now()`);
           } catch (error) {
+            // The model, or a story merged away by another run meanwhile: this pair waits.
             failures++;
             log.error("Story merge check failed:", error instanceof Error ? error.message : error);
-            return;
           }
-          if (same === null) return;
-          await db.execute(sql`insert into story_merge_checks (low_id, high_id, signature, same) values (${low.id}, ${high.id}, ${signature}, ${same})
-            on conflict (low_id, high_id) do update set signature = excluded.signature, same = excluded.same, checked_at = now()`);
-          if (same) confirmed.push(candidate);
         }),
       );
     }
@@ -353,12 +395,13 @@ export const mergeStories = async (
     return +a.createdAt < +b.createdAt || (+a.createdAt === +b.createdAt && a.id < b.id) ? x : y;
   };
   const used = new Set<number>();
-  const moves: { from: number; into: number }[] = [];
+  const moves: { from: number; into: number; signature: string }[] = [];
   for (const pair of [...confirmed].sort((x, y) => y.score - x.score)) {
     if (used.has(pair.a.id) || used.has(pair.b.id)) continue;
     used.add(pair.a.id).add(pair.b.id);
     const into = older(pair.a.id, pair.b.id);
-    moves.push({ from: into === pair.a.id ? pair.b.id : pair.a.id, into });
+    const [low, high] = pair.a.id < pair.b.id ? [pair.a, pair.b] : [pair.b, pair.a];
+    moves.push({ from: into === pair.a.id ? pair.b.id : pair.a.id, into, signature: signatureOf(low.articles.map((a) => a.id), high.articles.map((a) => a.id)) });
   }
 
   const into = new Set<number>();
@@ -366,8 +409,13 @@ export const mergeStories = async (
     await db.transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext('assign_stories'))`);
       for (const move of moves) {
-        const present = await tx.execute<{ n: number }>(sql`select count(*)::int as n from stories where id in (${move.from}, ${move.into})`);
-        if (present.rows[0]?.n !== 2) continue;
+        // Joined only as the model saw them: skipped if either story changed since (a split, a hide,
+        // a new article). The next run asks again about them as they are.
+        const now = await tx.execute<{ story_id: number; id: number }>(sql`
+          select story_id, id from articles where hidden_at is null and story_id in (${move.from}, ${move.into})`);
+        const idsOf = (story: number) => now.rows.filter((r) => r.story_id === story).map((r) => r.id);
+        const [low, high] = move.from < move.into ? [move.from, move.into] : [move.into, move.from];
+        if (idsOf(low).length === 0 || idsOf(high).length === 0 || signatureOf(idsOf(low), idsOf(high)) !== move.signature) continue;
         await moveStory(tx, move.from, move.into);
         into.add(move.into);
       }

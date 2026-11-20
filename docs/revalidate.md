@@ -34,7 +34,7 @@ Content-Type: application/json
 | `parliament` | initiatives, votes, deputies, parties' parliament data | the parliament sync |
 | `government` | government, President, people's links | the government sync |
 | `budget` | `/budget` and everything under it | the Budget sync (hourly, `:35`), only when the parliament's file changed |
-| `blog` | `/editorial` lists and posts | a post going live, changing or coming off through the publish API, the import script, and a deploy that changed a post in `content/editorial` |
+| `blog` | `/editorial` lists and posts | a post going live, changing or coming off through the publish API or the admin (publish, unpublish, feature, unfeature, editing a live post), the import script, and a deploy that changed a post in `content/editorial` |
 
 Tag the site's `fetch` calls with these names (`next: { tags: ["news"] }`). The site's own
 timer can stay as a fallback.

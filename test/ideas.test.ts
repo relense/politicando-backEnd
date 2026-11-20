@@ -169,6 +169,42 @@ describe("team replies and reply votes", () => {
   });
 });
 
+describe("paging replies", () => {
+  it("pages replies in every order with nextCursor, and keeps `after` for oldest first", async () => {
+    const [ana, rui, eva] = [await register("ana"), await register("rui"), await register("eva")];
+    const idea = await openIdea(ana, "Modo escuro");
+    const replies: number[] = [];
+    for (let i = 0; i < 5; i++) replies.push((await call("POST", `/forums/threads/${idea}/posts`, { body: `Resposta ${i}` }, ana)).body.id);
+    // Scores: r3 = 2, r1 = 1, the rest 0.
+    await call("POST", `/forums/posts/${replies[3]}/vote`, undefined, rui);
+    await call("POST", `/forums/posts/${replies[3]}/vote`, undefined, eva);
+    await call("POST", `/forums/posts/${replies[1]}/vote`, undefined, rui);
+
+    const all = async (sort: string) => {
+      const seen: number[] = [];
+      let cursor: string | null = null;
+      do {
+        const page: { body: { posts: { id: number }[]; hasMore: boolean; nextCursor: string | null } } = await call(
+          "GET", `/forums/threads/${idea}?sort=${sort}&limit=2${cursor ? `&cursor=${cursor}` : ""}`,
+        );
+        seen.push(...page.body.posts.map((p) => p.id));
+        expect(page.body.nextCursor === null).toBe(!page.body.hasMore);
+        cursor = page.body.nextCursor;
+      } while (cursor);
+      return seen;
+    };
+    const [r0, r1, r2, r3, r4] = replies as [number, number, number, number, number];
+    expect(await all("old")).toEqual([r0, r1, r2, r3, r4]);
+    expect(await all("new")).toEqual([r4, r3, r2, r1, r0]);
+    expect(await all("top")).toEqual([r3, r1, r0, r2, r4]);
+    expect((await call("GET", `/forums/threads/${idea}?after=${r2}`)).body.posts.map((p: { id: number }) => p.id)).toEqual([r3, r4]);
+
+    const newCursor = (await call("GET", `/forums/threads/${idea}?sort=new&limit=2`)).body.nextCursor;
+    expect((await call("GET", `/forums/threads/${idea}?sort=top&cursor=${newCursor}`)).body.error.code).toBe("invalid_cursor");
+    expect((await call("GET", `/forums/threads/${idea}?cursor=nope`)).body.error.code).toBe("invalid_cursor");
+  });
+});
+
 describe("duplicates", () => {
   it("points a duplicate to its original, whose score counts each voter once, and gives the votes back when unmarked", async () => {
     const [ana, rui, eva] = [await register("ana"), await register("rui"), await register("eva")];
@@ -199,5 +235,23 @@ describe("duplicates", () => {
     await setStatus(copy, { status: "declined" });
     expect(await score(original)).toBe(1);
     expect((await call("GET", `/forums/threads/${copy}`)).body.thread.duplicateOf).toBeNull();
+  });
+
+  it("keeps a reader's own vote on the original when the duplicate they also voted on is unmarked", async () => {
+    const [ana, rui] = [await register("ana"), await register("rui")];
+    const original = await openIdea(ana, "Modo escuro");
+    const copy = await openIdea(ana, "Tema escuro");
+    await setStatus(copy, { status: "duplicate", duplicateOf: original });
+    const score = async (id: number) => (await call("GET", `/forums/threads/${id}`)).body.thread.score as number;
+
+    // rui votes on the duplicate (carried to the original), then on the original itself.
+    await call("POST", `/forums/threads/${copy}/vote`, undefined, rui);
+    expect((await call("GET", "/me/state", undefined, rui)).body.votes.forum).toEqual([copy]);
+    expect((await call("POST", `/forums/threads/${original}/vote`, undefined, rui)).body).toEqual({ score: 1 });
+    expect((await call("GET", "/me/state", undefined, rui)).body.votes.forum.sort()).toEqual([original, copy].sort());
+
+    await setStatus(copy, { status: "declined" });
+    expect(await score(original)).toBe(1);
+    expect((await call("GET", "/me/state", undefined, rui)).body.votes.forum.sort()).toEqual([original, copy].sort());
   });
 });

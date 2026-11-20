@@ -41,11 +41,14 @@ const intArray = (ids: number[]) => sql`${`{${ids.join(",")}}`}::integer[]`;
 /**
  * Moves these articles out of their story into a new one, kept apart from the old one. Earlier
  * joins whose articles all moved go with them, so their old ids answer as the new story.
- * Throws when an article isn't in the story or nothing would be left.
+ * Throws when an article isn't in the story, nothing visible would be left, or nothing visible
+ * would move.
  */
 export const splitStory = async (tx: Tx, storyId: number, articleIds: number[], reason: "model" | "manual") => {
   const ids = [...new Set(articleIds)];
   if (ids.length === 0) throw new Error("No articles to split off");
+  // Articles before the story row, as everywhere (see moveStory), so a hide meanwhile can't deadlock.
+  await tx.execute(sql`select id from articles where story_id = ${storyId} order by id for update`);
   const inStory = await tx.execute<{ n: number; first: Date | null }>(
     sql`select count(*)::int as n, min(published_at) as first from articles where story_id = ${storyId} and id = any(${intArray(ids)})`,
   );
@@ -54,6 +57,10 @@ export const splitStory = async (tx: Tx, storyId: number, articleIds: number[], 
     sql`select count(*)::int as n from articles where story_id = ${storyId} and hidden_at is null and not (id = any(${intArray(ids)}))`,
   );
   if (left.rows[0]!.n === 0) throw new Error(`Story ${storyId} would have no visible articles left`);
+  const visible = await tx.execute<{ n: number }>(
+    sql`select count(*)::int as n from articles where id = any(${intArray(ids)}) and hidden_at is null`,
+  );
+  if (visible.rows[0]!.n === 0) throw new Error("Every one of those articles is hidden: the new story would show nothing");
 
   const [created] = (
     await tx.execute<{ id: number }>(sql`insert into stories (created_at) values (${new Date(inStory.rows[0]!.first!).toISOString()}::timestamptz) returning id`)
@@ -128,16 +135,21 @@ export const detachStrays = async (
     where article_id = any(${intArray(strays.map((s) => s.article.id))})`);
   const answers = new Map(cached.rows.map((r) => [`${r.story_id}:${r.article_id}`, r]));
 
-  const out: Stray[] = [];
+  // A story's odd ones are judged together: all of them answered, or none acted on. Otherwise a
+  // story that is mostly strays could lose a few of them before the guard below sees the rest.
+  const byStory = new Map<number, Stray[]>();
+  for (const stray of strays) byStory.set(stray.story.id, [...(byStory.get(stray.story.id) ?? []), stray]);
+  const verdict = new Map<Stray, boolean>();
   const toAsk: Stray[] = [];
-  for (const stray of strays) {
-    const answer = answers.get(`${stray.story.id}:${stray.article.id}`);
-    // Kept until the story doubles: by then it may have drifted further, or back.
-    if (answer && stray.story.articles.length < answer.story_size * 2) {
-      if (!answer.belongs) out.push(stray);
-    } else if (toAsk.length < maxChecks) {
-      toAsk.push(stray);
+  for (const list of byStory.values()) {
+    const unanswered: Stray[] = [];
+    for (const stray of list) {
+      const answer = answers.get(`${stray.story.id}:${stray.article.id}`);
+      // Kept until the story doubles: by then it may have drifted further, or back.
+      if (answer && stray.story.articles.length < answer.story_size * 2) verdict.set(stray, answer.belongs);
+      else unanswered.push(stray);
     }
+    if (toAsk.length + unanswered.length <= maxChecks) toAsk.push(...unanswered);
   }
 
   let checked = 0;
@@ -146,41 +158,48 @@ export const detachStrays = async (
     await Promise.all(
       toAsk.slice(i, i + CONCURRENCY).map(async (stray) => {
         const { story, article } = stray;
-        let same: boolean | null;
         try {
           checked++;
-          same = await judge(briefOf({ ...story, articles: story.articles.filter((a) => a.id !== article.id) }), briefOf({ ...story, articles: [article] }));
+          const same = await judge(briefOf({ ...story, articles: story.articles.filter((a) => a.id !== article.id) }), briefOf({ ...story, articles: [article] }));
+          if (same === null) return;
+          verdict.set(stray, same);
+          await db.execute(sql`
+            insert into story_article_checks (story_id, article_id, story_size, belongs)
+            values (${story.id}, ${article.id}, ${story.articles.length}, ${same})
+            on conflict (story_id, article_id) do update set story_size = excluded.story_size, belongs = excluded.belongs, checked_at = now()`);
         } catch (error) {
+          // The model, or the story gone meanwhile (merged by another run): this one waits.
           failures++;
           log.error("Story article check failed:", error instanceof Error ? error.message : error);
-          return;
         }
-        if (same === null) return;
-        await db.execute(sql`
-          insert into story_article_checks (story_id, article_id, story_size, belongs)
-          values (${story.id}, ${article.id}, ${story.articles.length}, ${same})
-          on conflict (story_id, article_id) do update set story_size = excluded.story_size, belongs = excluded.belongs, checked_at = now()`);
-        if (!same) out.push(stray);
       }),
     );
   }
 
-  // A story the model says is mostly strays is left as it is: that's a doubt, not a fix.
-  const byStory = new Map<number, Stray[]>();
-  for (const stray of out) byStory.set(stray.story.id, [...(byStory.get(stray.story.id) ?? []), stray]);
+  // Only stories whose odd ones were all answered, and where fewer than half the articles are
+  // "no": a story the model says is mostly strays is left as it is, a doubt, not a fix.
+  const moves = [...byStory.values()]
+    .filter((list) => list.every((stray) => verdict.has(stray)))
+    .map((list) => list.filter((stray) => verdict.get(stray) === false))
+    .filter((out) => out.length > 0 && out.length * 2 < out[0]!.story.articles.length);
   let detached = 0;
-  const moves = [...byStory.values()].filter((list) => list.length * 2 < list[0]!.story.articles.length);
   if (moves.length) {
     await db.transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext('assign_stories'))`);
-      for (const list of moves) {
-        for (const { story, article } of list) {
-          // Moved since it was read (a merge, a hand split): skip it, the next run sees it as it is.
-          const still = await tx.execute<{ n: number }>(sql`
-            select count(*)::int as n from articles where id = ${article.id} and story_id = ${story.id} and hidden_at is null`);
-          if (still.rows[0]!.n !== 1) continue;
-          await splitStory(tx, story.id, [article.id], "model");
-          detached++;
+      for (const out of moves) {
+        const story = out[0]!.story;
+        // Each story on its own (a savepoint), as it is now: if it changed since it was read (a
+        // merge, a hide, a hand split), it's skipped and the next run looks at it again.
+        try {
+          detached += await tx.transaction(async (sp) => {
+            const now = await sp.execute<{ id: number }>(sql`select id from articles where story_id = ${story.id} and hidden_at is null`);
+            const ids = new Set(now.rows.map((r) => r.id));
+            if (ids.size !== story.articles.length || story.articles.some((a) => !ids.has(a.id))) return 0;
+            for (const { article } of out) await splitStory(sp, story.id, [article.id], "model");
+            return out.length;
+          });
+        } catch (error) {
+          log.error(`Taking strays out of story ${story.id} failed:`, error instanceof Error ? error.message : error);
         }
       }
     });

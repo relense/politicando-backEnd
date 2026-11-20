@@ -9,6 +9,7 @@ import { editorialPosts, editorialViews, editorialVotes } from "../../db/schema.
 import { parseMedia, slugify } from "../../editorial/media.js";
 import { ApiError, notFound } from "../../errors.js";
 import { postVoterKey } from "../../forums/identity.js";
+import type { Revalidate } from "../../revalidate.js";
 import { errorSchema } from "../shared.js";
 
 const kindSchema = z.enum(["article", "opinion", "podcast", "interview", "video"]);
@@ -117,9 +118,14 @@ export const createReadDedupe = (max = 200_000) => {
 };
 const errors = { 400: errorSchema, 401: errorSchema, 403: errorSchema, 404: errorSchema };
 
+/** Room for the longest body (every character up to 4 bytes of UTF-8) plus the other fields. */
+const EDITORIAL_BODY_LIMIT = 100_000 * 4 + 64 * 1024;
+
 export const editorialRoutes =
-  (db: Db, { voteSecret }: { voteSecret: string }): FastifyPluginAsyncZod =>
+  (db: Db, { voteSecret, revalidate = async () => {} }: { voteSecret: string; revalidate?: Revalidate }): FastifyPluginAsyncZod =>
   async (app) => {
+    /** Tells the website the blog changed. Not awaited: the site refreshing never slows or fails the write. */
+    const refreshBlog = () => void revalidate(["blog"]).catch(() => {});
     const requireAdmin = adminGuard(db);
 
     // Public.
@@ -351,6 +357,7 @@ export const editorialRoutes =
     app.post(
       "/admin/editorial",
       {
+        bodyLimit: EDITORIAL_BODY_LIMIT,
         schema: { tags: ["admin"], summary: "Write a new post (a draft)", body: editorialInputSchema, response: { 201: adminPostSchema, 409: errorSchema, ...errors } },
       },
       async (request, reply) => {
@@ -364,6 +371,7 @@ export const editorialRoutes =
     app.put(
       "/admin/editorial/:id",
       {
+        bodyLimit: EDITORIAL_BODY_LIMIT,
         schema: {
           tags: ["admin"],
           summary: "Replace a post's content (it keeps its status)",
@@ -381,6 +389,7 @@ export const editorialRoutes =
           .where(eq(editorialPosts.id, before.id))
           .returning();
         await audit(db, me.id, "editorial.update", "editorial", before.id, presentAdmin(before), presentAdmin(after!));
+        if (after!.status === "published") refreshBlog();
         return presentAdmin(after!);
       },
     );
@@ -414,6 +423,8 @@ export const editorialRoutes =
             .where(eq(editorialPosts.id, before.id))
             .returning();
           await audit(db, me.id, `editorial.${t.name}`, "editorial", before.id);
+          // Unpublishing a draft changes nothing on the site; everything else here does.
+          if (before.status === "published" || after!.status === "published") refreshBlog();
           return presentAdmin(after!);
         },
       );

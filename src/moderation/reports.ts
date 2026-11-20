@@ -6,15 +6,15 @@ import { articles, comments, forumPosts, forumThreads, reports } from "../db/sch
 /*
  * Moderation without anyone watching the queue, 4chan style: rudeness stays up, so reports of
  * "insult" or "other" only go to the queue. What's hidden on its own is what's illegal
- * (hate, personal data, anything else illegal) and spam, once enough different readers say
- * so. A moderator (or `npm run moderation -- restore`) can bring it back, and an item that
+ * (hate, personal data, anything else illegal) and spam, once enough different signed-in
+ * readers say so (anonymous reports only go to the queue). A moderator (or `npm run moderation -- restore`) can bring it back, and an item that
  * was brought back needs twice as many reports next time, so a group can't keep hiding
  * something that was found fine.
  */
 
 export type ReportKind = "thread" | "post" | "comment" | "article";
 
-/** Illegal content: 2 different readers saying so (in any mix of these reasons) hide it. */
+/** Illegal content: 2 different accounts saying so (in any mix of these reasons) hide it. */
 const ILLEGAL = ["hate", "personal_data", "illegal"];
 export const HIDE_AFTER_ILLEGAL = 2;
 /** Spam: 3 readers. "insult" and "other" never hide anything. */
@@ -28,18 +28,22 @@ export const tableOf = (kind: ReportKind) =>
 
 /** Hides the item if its open reports reach the limit. Returns whether it was hidden now. */
 export const autoModerate = async (db: Db, kind: ReportKind, targetId: number): Promise<boolean> => {
-  const rows = (
-    await db.execute<{ reason: string; resolution: string | null; open: number }>(sql`
-      select reason, resolution, count(*) filter (where resolved_at is null)::int as open
-      from reports where kind = ${kind} and target_id = ${targetId} group by reason, resolution`)
+  // Only signed-in readers count, each account once: anonymous reports (an IP each, no
+  // captcha) still reach the queue, but are too cheap to hide anything on their own.
+  const accounts = (reasons: string[]) =>
+    sql`count(distinct user_id) filter (where resolved_at is null and user_id is not null and reason in (${sql.join(reasons.map((r) => sql`${r}`), sql`, `)}))::int`;
+  const [row] = (
+    await db.execute<{ dismissed: boolean; illegal: number; spam: number; article: number }>(sql`
+      select coalesce(bool_or(resolution = 'dismissed'), false) as dismissed, ${accounts(ILLEGAL)} as illegal, ${accounts(["spam"])} as spam,
+        ${accounts(ARTICLE_REASONS)} as article
+      from reports where kind = ${kind} and target_id = ${targetId}`)
   ).rows;
-  if (rows.length === 0) return false;
-  const factor = rows.some((r) => r.resolution === "dismissed") ? 2 : 1;
-  const open = (reasons: string[]) => rows.filter((r) => reasons.includes(r.reason)).reduce((n, r) => n + r.open, 0);
+  if (!row) return false;
+  const factor = row.dismissed ? 2 : 1;
   const reached =
     kind === "article"
-      ? open(ARTICLE_REASONS) >= HIDE_AFTER_ARTICLE * factor
-      : open(ILLEGAL) >= HIDE_AFTER_ILLEGAL * factor || open(["spam"]) >= HIDE_AFTER_SPAM * factor;
+      ? row.article >= HIDE_AFTER_ARTICLE * factor
+      : row.illegal >= HIDE_AFTER_ILLEGAL * factor || row.spam >= HIDE_AFTER_SPAM * factor;
   if (!reached) return false;
 
   const table = tableOf(kind);

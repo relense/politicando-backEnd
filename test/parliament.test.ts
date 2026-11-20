@@ -7,7 +7,7 @@ import { SEATS } from "../src/parliament/seatMap.js";
 import { rowOfSeat, seatsFrontToBack } from "../src/parliament/seating.js";
 import { syncParliament } from "../src/parliament/sync.js";
 import { createTestDb, insertArticle, resetDb } from "./helpers.js";
-import { chamber, event, initiative, initiativesFile, loaderFor } from "./parliamentFixtures.js";
+import { chamber, event, initiative, initiativesFile, loaderFor, vote } from "./parliamentFixtures.js";
 
 const { db, pool } = createTestDb();
 const app = await buildApp({ db, corsOrigins: [], verifyRecaptcha: async () => true });
@@ -170,6 +170,41 @@ describe("GET /deputies/:id/votes", () => {
     expect((await get("/deputies/9001/votes")).body.items).toEqual([]);
     expect((await get("/deputies/1/votes")).status).toBe(404);
     expect((await get("/deputies/817/votes?cursor=nope")).status).toBe(400);
+  });
+
+  it("matches each vote against the group they sat for that day", async () => {
+    const deputiesFile = chamber();
+    const cesar = deputiesFile.Deputados.find((d) => d.DepCadId === 7341)!;
+    cesar.DepGP = [
+      { gpSigla: "PCP", gpDtInicio: "2025-06-03", gpDtFim: "2025-09-30" },
+      { gpSigla: "PS", gpDtInicio: "2025-10-01", gpDtFim: null },
+    ] as typeof cesar.DepGP;
+    const named = initiative(6, "Votada com exceções", [
+      event("Entrada", "2025-07-05"),
+      event("Votação na generalidade", "2025-09-15", [vote("v6", "Aprovado", "A Favor: <I>PSD</I>, <I> Francisco César (PCP)</I><BR>Contra:<I>PCP</I>")]),
+    ]);
+    await syncParliament(db, loaderFor({ deputies: deputiesFile, initiatives: [...initiativesFile(), named] }));
+
+    const { body } = await get("/deputies/7341/votes");
+    expect(body.items.map((i: { vote: { id: string }; position: string | null; basis: string }) => [i.vote.id, i.position, i.basis])).toEqual([
+      ["v2", null, "unknown"], // PS, as before.
+      ["v6", "favor", "named"], // Named as "(PCP)" while in PCP.
+      ["v4", "favor", "unanimous"],
+      ["v3", "favor", "group"], // PCP voted for as a whole.
+      ["v1", null, "unknown"],
+    ]);
+    expect(body.summary).toEqual({ favor: 3, against: 0, abstention: 0, absent: 0, unknown: 2, brokeRanks: 1 });
+  });
+
+  it("shows new votes after a sync, from the kept copy otherwise", async () => {
+    expect((await get("/deputies/817/votes")).body.items).toHaveLength(4);
+    expect((await get("/parties/pcp/votes")).body.total).toBe(4);
+    const extra = initiative(7, "Mais uma", [event("Entrada", "2025-07-06"), event("Votação na generalidade", "2025-10-02", [vote("v7", "Aprovado", "A Favor: <I>PCP</I>")])]);
+    await syncParliament(db, loaderFor({ initiatives: [...initiativesFile(), extra] }));
+    expect((await get("/deputies/817/votes")).body.items[0]).toMatchObject({ vote: { id: "v7" }, position: "favor", basis: "group" });
+    const party = (await get("/parties/pcp/votes")).body;
+    expect(party.total).toBe(5);
+    expect(party.items[0]).toMatchObject({ vote: { id: "v7" }, position: "favor" });
   });
 });
 

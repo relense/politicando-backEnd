@@ -24,7 +24,7 @@ parliament. A short "what does the President do" explainer on the page will help
   },
   "legislation": {                     // parliament decrees only, during his term
     "promulgated": 92,
-    "vetoed": 2,                       // includes laws parliament later passed again
+    "vetoed": 2,                       // each veto: a law vetoed twice counts twice; includes laws parliament later passed again
     "pending": 1,                      // waiting for his decision right now
     "latestVetoes": [ /* initiative summaries, as in /initiatives */ ],
     "latestPromulgated": [ /* … */ ],
@@ -36,6 +36,11 @@ parliament. A short "what does the President do" explainer on the page will help
 }
 ```
 
+- `legislation.vetoed` and `promulgated` are counted the same way as `allTime.byPresident`
+  for him, so the two always agree. Since 2026-11 `vetoed` counts **each veto** in his term
+  (it used to count initiatives whose latest veto was in his term): a decree vetoed twice
+  counts 2, and a law split into several decrees counts each vetoed decree. `latestVetoes`
+  still lists initiatives.
 - Every initiative has a `presidency` object (see `docs/parliament-api.md`), and
   `GET /initiatives?presidency=vetoed|promulgated|pending` lists them.
 - Government decrees aren't covered yet: they aren't in the parliament's data. They're

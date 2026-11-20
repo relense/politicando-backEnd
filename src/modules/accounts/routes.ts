@@ -1,4 +1,4 @@
-import { RESERVED } from "../../accounts/reserved.js";
+import { RESERVED, looksLikeTeam } from "../../accounts/reserved.js";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
@@ -40,6 +40,7 @@ import {
 import { ApiError } from "../../errors.js";
 import { assertPublishable } from "../../moderation/screen.js";
 import { followsOf } from "../../notifications/index.js";
+import { resolveStoryId, resolveStoryIds, withStory } from "../../stories/merge.js";
 import type { RecaptchaVerifier } from "../comments/recaptcha.js";
 import { errorSchema } from "../shared.js";
 
@@ -167,9 +168,14 @@ export const accountRoutes =
       if (!human) throw new ApiError(403, "recaptcha_failed", "reCAPTCHA verification failed");
     };
 
-    /** The newsletter for the account's email: subscribed, waiting for the email's confirmation, or not. */
-    const newsletterOf = async (email: string | null): Promise<"none" | "pending" | "confirmed"> => {
-      if (!email) return "none";
+    /**
+     * The newsletter for the account's email: subscribed, waiting for the newsletter's own
+     * confirmation, or not. Only for a confirmed email: anyone can type someone else's address,
+     * and the account mustn't learn whether that person reads the newsletter.
+     */
+    const newsletterOf = async (email: string | null, emailConfirmedAt: Date | null, wanted: boolean): Promise<"none" | "pending" | "confirmed"> => {
+      // Unconfirmed: only the account's own wish, never the address's state.
+      if (!email || !emailConfirmedAt) return email && wanted ? "pending" : "none";
       const [row] = await db.select({ confirmedAt: newsletterSubscribers.confirmedAt }).from(newsletterSubscribers).where(eq(newsletterSubscribers.email, email));
       return !row ? "none" : row.confirmedAt ? "confirmed" : "pending";
     };
@@ -181,7 +187,7 @@ export const accountRoutes =
       email: u.email,
       emailConfirmed: u.emailConfirmedAt !== null,
       askForEmail: u.emailConfirmedAt === null && (u.emailRemindedAt === null || Date.now() - u.emailRemindedAt.getTime() > REMIND_AFTER_DAYS * 86_400_000),
-      newsletter: await newsletterOf(u.email),
+      newsletter: await newsletterOf(u.email, u.emailConfirmedAt, u.newsletterWanted),
     });
 
     // --- Account emails ---------------------------------------------------------------
@@ -193,7 +199,7 @@ export const accountRoutes =
       return mail;
     };
 
-    /** Emails the link that confirms the address (and, when asked, the newsletter with it). False when it couldn't be sent. */
+    /** Emails the link that confirms the address; `newsletter` only changes its text (the account's choice decides). False when it couldn't be sent. */
     const sendVerification = async (request: FastifyRequest, user: { id: number; username: string }, email: string, newsletter: boolean) => {
       const settings = requireMail();
       try {
@@ -207,7 +213,7 @@ export const accountRoutes =
             newsletter ? "Ao confirmares, ficas também inscrito na newsletter semanal." : "",
             "Para confirmar, abre esta ligação e carrega em «Confirmar»:",
             "",
-            sitePage("/conta/confirmar-email", verifyToken(settings.secret, user.id, email)),
+            sitePage("/conta/confirmar-email", verifyToken(settings.secret, user.id, email, Date.now(), newsletter)),
             "",
             `A ligação é válida durante ${VERIFY_TTL_HOURS / 24} dias. Com o email confirmado, podes recuperar a conta se te esqueceres da palavra-passe.`,
             "Se não foste tu, ignora este email: sem confirmação, não acontece nada.",
@@ -222,9 +228,16 @@ export const accountRoutes =
       }
     };
 
-    /** Pending until the account's email is confirmed, which confirms it too (one email for both). */
-    const wantNewsletter = (email: string) => db.insert(newsletterSubscribers).values({ email }).onConflictDoNothing();
+    /** Subscribes a confirmed address (or confirms its pending sign-up). */
+    const subscribeConfirmed = (email: string) =>
+      db
+        .insert(newsletterSubscribers)
+        .values({ email, confirmedAt: new Date() })
+        .onConflictDoUpdate({ target: newsletterSubscribers.email, set: { confirmedAt: sql`coalesce(${newsletterSubscribers.confirmedAt}, now())` } });
     const lastReset = new Map<number, number>();
+    /** When PUT /me/newsletter last sent a confirmation, per account (id and creation time) and address. */
+    const lastVerification = new Map<string, number>();
+    const RESEND_MINUTES = 10;
 
     /** Keeps the newest `cap` rows of one list. */
     const trim = async (table: "user_saves" | "user_hidden" | "user_mutes" | "user_reads", userId: number, cap: number, kind?: string) => {
@@ -248,6 +261,8 @@ export const accountRoutes =
           .where(eq(editorialVotes.userId, userId)),
         db.select({ id: storyVotes.storyId }).from(storyVotes).where(eq(storyVotes.userId, userId)),
         db.select({ id: commentLikes.commentId }).from(commentLikes).where(eq(commentLikes.userId, userId)),
+        // The reader's own votes only: one carried from a duplicate isn't shown on the original, so
+        // they can still vote there themselves (which makes it theirs, kept if the duplicate is unmarked).
         db.select({ id: forumVotes.threadId }).from(forumVotes).where(and(eq(forumVotes.userId, userId), isNull(forumVotes.fromThreadId))),
         db.select({ id: forumPostVotes.postId }).from(forumPostVotes).where(eq(forumPostVotes.userId, userId)),
       ]);
@@ -291,7 +306,7 @@ export const accountRoutes =
             201: z.object({
               user: userSchema,
               emailSent: z.boolean().optional().describe("Present when an email was given: whether the confirmation went out"),
-              newsletter: z.literal("pending").optional().describe("Subscribed, pending the email's confirmation"),
+              newsletter: z.literal("pending").optional().describe("Asked for: subscribed once the email is confirmed"),
             }),
             400: errorSchema,
             403: errorSchema,
@@ -303,7 +318,8 @@ export const accountRoutes =
       },
       async (request, reply) => {
         const { username, password, recaptchaToken, newsletter } = request.body;
-        if (RESERVED.has(username.toLowerCase())) throw new ApiError(409, "username_taken", "That username is taken");
+        // The team's names, and anything that reads like the team ("Admin_PT", "EquipaPoliticando").
+        if (RESERVED.has(username.toLowerCase()) || looksLikeTeam(username)) throw new ApiError(409, "username_taken", "That username is taken");
         assertPublishable(username);
         const given = request.body.email?.trim() ? normalEmail(request.body.email) : null;
         if ((request.body.email?.trim() && !given) || (newsletter && !given)) throw new ApiError(400, "invalid_email", "That is not a valid email address");
@@ -311,14 +327,16 @@ export const accountRoutes =
         await checkHuman(recaptchaToken, request);
         let created;
         try {
-          [created] = await db.insert(users).values({ username, passwordHash: await hashPassword(password), lastLoginAt: new Date(), email: given }).returning();
+          [created] = await db
+            .insert(users)
+            .values({ username, passwordHash: await hashPassword(password), lastLoginAt: new Date(), email: given, newsletterWanted: newsletter && given !== null })
+            .returning();
         } catch (error) {
           if (pgCode(error) === "23505") throw new ApiError(409, "username_taken", "That username is taken");
           throw error;
         }
         await startSession(reply, created!.id);
         if (!given) return reply.status(201).send({ user: (await publicUser(created!)) });
-        if (newsletter) await wantNewsletter(given);
         const emailSent = await sendVerification(request, created!, given, newsletter);
         return reply.status(201).send({ user: (await publicUser(created!)), emailSent, ...(newsletter && { newsletter: "pending" as const }) });
       },
@@ -399,12 +417,16 @@ export const accountRoutes =
         }
         // No row: the account changed its email since, or is gone.
         if (!confirmed) throw new ApiError(400, "invalid_token", "The link is no longer valid");
-        const [subscribed] = await db
-          .update(newsletterSubscribers)
-          .set({ confirmedAt: sql`coalesce(${newsletterSubscribers.confirmedAt}, now())` })
-          .where(eq(newsletterSubscribers.email, read.email))
-          .returning({ email: newsletterSubscribers.email });
-        return { status: "confirmed" as const, newsletter: subscribed !== undefined };
+        // The newsletter if the account wants it now (its latest choice, whichever link this is).
+        // Taken and cleared in one statement, for this same address, so a change made meanwhile isn't lost.
+        const [wanted] = await db
+          .update(users)
+          .set({ newsletterWanted: false })
+          .where(and(eq(users.id, read.userId), eq(users.email, read.email), eq(users.newsletterWanted, true)))
+          .returning({ id: users.id });
+        const subscribed = wanted !== undefined;
+        if (subscribed) await subscribeConfirmed(read.email);
+        return { status: "confirmed" as const, newsletter: subscribed };
       },
     );
 
@@ -508,7 +530,13 @@ export const accountRoutes =
           tags: ["accounts"],
           summary: "Add or change the account's email: stored unconfirmed and a confirmation link is emailed",
           description: "The same confirmed address again changes nothing. `newsletter: true` also subscribes it, once confirmed.",
-          body: z.strictObject({ email: z.string().max(320), newsletter: z.boolean().default(false) }),
+          body: z.strictObject({
+            email: z.string().max(320),
+            newsletter: z
+              .boolean()
+              .optional()
+              .describe("Subscribe this address too, once confirmed. Left out: kept as chosen before for the same address (\"Reenviar\"), off for a new one"),
+          }),
           response: { 200: z.object({ user: userSchema, emailSent: z.boolean() }), ...errors, 429: errorSchema, 503: errorSchema },
         },
       },
@@ -520,15 +548,14 @@ export const accountRoutes =
         reply.header("Cache-Control", "private, no-store");
         const [current] = await db.select().from(users).where(eq(users.id, reader.id));
         if (current!.email === email && current!.emailConfirmedAt) {
-          if (request.body.newsletter) {
-            await wantNewsletter(email);
-            await db.update(newsletterSubscribers).set({ confirmedAt: sql`coalesce(${newsletterSubscribers.confirmedAt}, now())` }).where(eq(newsletterSubscribers.email, email));
-          }
+          if (request.body.newsletter) await subscribeConfirmed(email);
           return { user: (await publicUser(current!)), emailSent: false };
         }
-        const [updated] = await db.update(users).set({ email, emailConfirmedAt: null }).where(eq(users.id, reader.id)).returning();
-        if (request.body.newsletter) await wantNewsletter(email);
-        return { user: (await publicUser(updated!)), emailSent: await sendVerification(request, updated!, email, request.body.newsletter) };
+        // The wish for the newsletter: as given; left out, kept for the same address (a resend) and
+        // off for a new one.
+        const wanted = request.body.newsletter ?? (current!.email === email ? current!.newsletterWanted : false);
+        const [updated] = await db.update(users).set({ email, emailConfirmedAt: null, newsletterWanted: wanted }).where(eq(users.id, reader.id)).returning();
+        return { user: (await publicUser(updated!)), emailSent: await sendVerification(request, updated!, email, wanted) };
       },
     );
 
@@ -543,7 +570,7 @@ export const accountRoutes =
       },
       async (request, reply) => {
         const reader = requireReader(request);
-        await db.update(users).set({ email: null, emailConfirmedAt: null }).where(eq(users.id, reader.id));
+        await db.update(users).set({ email: null, emailConfirmedAt: null, newsletterWanted: false }).where(eq(users.id, reader.id));
         return reply.status(204).send(null);
       },
     );
@@ -572,7 +599,7 @@ export const accountRoutes =
           tags: ["accounts"],
           summary: "The profile's newsletter switch, on: subscribes the account's email",
           description:
-            "With a confirmed email it's subscribed at once (confirmed). With an unconfirmed one it's pending, and the confirmation email is sent again: confirming the email confirms both. 409 no_email without an email (ask for one first).",
+            "With a confirmed email it's subscribed at once (confirmed). With an unconfirmed one it's pending (GET /me says so too), and the confirmation email is sent again (at most every 10 minutes): confirming the email subscribes it. 409 no_email without an email (ask for one first).",
           response: { 200: z.object({ newsletter: z.enum(["pending", "confirmed"]), emailSent: z.boolean() }), ...errors, 409: errorSchema, 429: errorSchema, 503: errorSchema },
         },
       },
@@ -581,17 +608,22 @@ export const accountRoutes =
         const [user] = await db.select().from(users).where(eq(users.id, reader.id));
         if (!user!.email) throw new ApiError(409, "no_email", "Add an email to the account first");
         if (user!.emailConfirmedAt) {
-          await db
-            .insert(newsletterSubscribers)
-            .values({ email: user!.email, confirmedAt: new Date() })
-            .onConflictDoUpdate({ target: newsletterSubscribers.email, set: { confirmedAt: sql`coalesce(${newsletterSubscribers.confirmedAt}, now())` } });
+          await subscribeConfirmed(user!.email);
           return { newsletter: "confirmed" as const, emailSent: false };
         }
-        if ((await newsletterOf(user!.email)) === "confirmed") return { newsletter: "confirmed" as const, emailSent: false };
+        // Unconfirmed: the wish is kept on the account and applied when the email is confirmed; the
+        // address's own subscription (it may be someone else's) is never read or touched.
         requireMail();
-        const added = await wantNewsletter(user!.email).returning({ email: newsletterSubscribers.email });
-        // Newly asked: the confirmation goes again (it now says it confirms the newsletter too).
-        const emailSent = added.length > 0 ? await sendVerification(request, user!, user!.email, true) : false;
+        await db.update(users).set({ newsletterWanted: true }).where(eq(users.id, user!.id));
+        // The confirmation goes again (it now mentions the newsletter), at most every RESEND_MINUTES.
+        const throttleKey = `${user!.id}:${+user!.createdAt}:${user!.email.toLowerCase()}`;
+        const last = lastVerification.get(throttleKey) ?? 0;
+        if (Date.now() - last < RESEND_MINUTES * 60_000) return { newsletter: "pending" as const, emailSent: false };
+        const emailSent = await sendVerification(request, user!, user!.email, true);
+        if (emailSent) {
+          if (lastVerification.size > 10_000) lastVerification.clear();
+          lastVerification.set(throttleKey, Date.now());
+        }
         return { newsletter: "pending" as const, emailSent };
       },
     );
@@ -602,13 +634,16 @@ export const accountRoutes =
         schema: {
           tags: ["accounts"],
           summary: "The profile's newsletter switch, off: unsubscribes the account's email",
+          description: "With a confirmed email, unsubscribes it. With an unconfirmed one, cancels the wish, so confirming the email later doesn't subscribe it (the address's own subscription, maybe someone else's, is left alone).",
           response: { 204: z.null(), 401: errorSchema },
         },
       },
       async (request, reply) => {
         const reader = requireReader(request);
-        const [user] = await db.select({ email: users.email }).from(users).where(eq(users.id, reader.id));
-        if (user?.email) await db.delete(newsletterSubscribers).where(eq(newsletterSubscribers.email, user.email));
+        const [user] = await db.select({ email: users.email, emailConfirmedAt: users.emailConfirmedAt }).from(users).where(eq(users.id, reader.id));
+        // The wish goes either way; only a confirmed address (proven the reader's) is unsubscribed.
+        await db.update(users).set({ newsletterWanted: false }).where(eq(users.id, reader.id));
+        if (user?.email && user.emailConfirmedAt) await db.delete(newsletterSubscribers).where(eq(newsletterSubscribers.email, user.email));
         return reply.status(204).send(null);
       },
     );
@@ -653,7 +688,10 @@ export const accountRoutes =
       },
       async (request) => {
         const { id: userId } = requireReader(request);
-        const { saved, hidden, muted, read } = request.body;
+        const { saved, hidden, muted } = request.body;
+        // Stories merged since the browser kept them live on under the story they went into.
+        saved.stories = await resolveStoryIds(db, saved.stories);
+        const read = await resolveStoryIds(db, request.body.read);
         // The browser's lists are newest first: keep that order in the stored dates.
         const at = (index: number) => new Date(Date.now() - index * 1000);
         const saves = SAVE_KINDS.flatMap((kind) => saved[SAVED_LISTS[kind]].map((targetId, i) => ({ userId, kind, targetId, createdAt: at(i) })));
@@ -698,9 +736,19 @@ export const accountRoutes =
       },
       async (request, reply) => {
         const { id: userId } = requireReader(request);
-        const { kind, id } = request.params;
-        if ((await db.execute(visible(kind, id))).rows.length === 0) throw new ApiError(404, "not_found", "Nothing to save there");
-        await db.insert(userSaves).values({ userId, kind, targetId: id }).onConflictDoNothing();
+        const { kind } = request.params;
+        if (kind === "story") {
+          // A merged story's old id stands for the story it went into; held so a merge can't
+          // delete it between the check and the save.
+          const done = await withStory(db, request.params.id, async (tx, id) => {
+            await tx.insert(userSaves).values({ userId, kind, targetId: id }).onConflictDoNothing();
+          });
+          if (!done) throw new ApiError(404, "not_found", "Nothing to save there");
+        } else {
+          const id = request.params.id;
+          if ((await db.execute(visible(kind, id))).rows.length === 0) throw new ApiError(404, "not_found", "Nothing to save there");
+          await db.insert(userSaves).values({ userId, kind, targetId: id }).onConflictDoNothing();
+        }
         await trim("user_saves", userId, CAPS.saved, kind);
         return reply.status(204).send(null);
       },
@@ -710,7 +758,8 @@ export const accountRoutes =
       { schema: { tags: ["accounts"], summary: "Unsave", params: savedParams, response: { 204: z.null(), ...errors } } },
       async (request, reply) => {
         const { id: userId } = requireReader(request);
-        const { kind, id } = request.params;
+        const { kind } = request.params;
+        const id = kind === "story" ? await resolveStoryId(db, request.params.id) : request.params.id;
         await db.delete(userSaves).where(and(eq(userSaves.userId, userId), eq(userSaves.kind, kind), eq(userSaves.targetId, id)));
         return reply.status(204).send(null);
       },
@@ -840,10 +889,15 @@ export const accountRoutes =
       { schema: { tags: ["accounts"], summary: "Mark a story read", params: articleParams, response: { 204: z.null(), ...errors } } },
       async (request, reply) => {
         const { id: userId } = requireReader(request);
-        await db
-          .insert(userReads)
-          .values({ userId, storyId: request.params.id })
-          .onConflictDoUpdate({ target: [userReads.userId, userReads.storyId], set: { createdAt: sql`now()` } });
+        // A merged story's old id stands for the story it went into. Unknown ids are kept as
+        // before (a story may be grouped after the reader saw it): only a story being merged is held.
+        const write = (runner: Pick<Db, "insert">, storyId: number) =>
+          runner
+            .insert(userReads)
+            .values({ userId, storyId })
+            .onConflictDoUpdate({ target: [userReads.userId, userReads.storyId], set: { createdAt: sql`now()` } });
+        const done = await withStory(db, request.params.id, (tx, id) => write(tx, id));
+        if (!done) await write(db, request.params.id);
         await trim("user_reads", userId, CAPS.read);
         return reply.status(204).send(null);
       },
@@ -954,6 +1008,9 @@ export const accountRoutes =
 /** Removes an account: its votes come off the totals, its comments and replies go, its threads are blanked. */
 export const deleteAccount = (db: Db, userId: number) =>
   db.transaction(async (tx) => {
+    // After the hourly story jobs (they hold story rows while locking articles): its recounts lock
+    // articles then stories, and could otherwise deadlock with them.
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('assign_stories'))`);
     const ids = async <T extends { id: number }>(rows: Promise<T[]>) => [...new Set((await rows).map((r) => r.id))];
     const votedArticles = await ids(tx.delete(articleVotes).where(eq(articleVotes.userId, userId)).returning({ id: articleVotes.articleId }));
     const votedPosts = await ids(tx.delete(editorialVotes).where(eq(editorialVotes.userId, userId)).returning({ id: editorialVotes.postId }));
