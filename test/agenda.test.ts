@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { hashPassword } from "../src/admin/password.js";
 import { parseEuroparlMeetings } from "../src/agenda/europarl.js";
-import { parseParliamentAgenda, plenaryTitle } from "../src/agenda/parliament.js";
+import { hearingId, parseParliamentAgenda, plenaryTitle } from "../src/agenda/parliament.js";
 import { parsePresidentAgenda } from "../src/agenda/president.js";
 import { type AgendaInput, syncAgendaSource } from "../src/agenda/store.js";
 import { syncAgenda } from "../src/agenda/sync.js";
@@ -48,7 +48,7 @@ describe("parliament agenda", () => {
     expect(events.map((e) => [e.id, e.kind, e.title, e.startTime, e.endTime, e.attend.open])).toEqual([
       ["ar-1", "parliament", "Debate na especialidade do Orçamento", "10:00", null, true],
       ["ar-2", "committee", "Comissão de Saúde", "14:30", null, true],
-      ["ar-3-1", "party", "Audiência do PCP: Sindicato", "10:30", null, false],
+      [hearingId("ar-3", { time: "10:30", who: "Sindicato" }), "party", "Audiência do PCP: Sindicato", "10:30", null, false],
       ["ar-5", "parliament", "Conferência de Líderes", "15:00", "16:00", false],
     ]);
     expect(events[0]).toMatchObject({ online: { label: "Canal Parlamento" }, place: { district: "Lisboa", address: "Palácio de São Bento, Lisboa" } });
@@ -65,12 +65,27 @@ describe("parliament agenda", () => {
       arItem({ Id: 8, Section: "Grupos Parlamentares / Partidos / DURP / Ninsc", Title: "Audiências do Grupo Parlamentar do CH", EventStartTime: null, InternetText: "Durante a tarde" }),
     ]);
     expect(events.map((e) => [e.id, e.title, e.startTime, e.allDay, e.partySlugs])).toEqual([
-      ["ar-7-1", "Audiência do PS: Comissão de Utentes do Litoral Alentejano", "14:30", false, ["ps"]],
-      ["ar-7-2", "Audiência do PS: Liga Portuguesa de Ambulâncias (LPA)", "15:30", false, ["ps"]],
-      ["ar-7-3", "Audiência do PS: ANEM", "09:00", false, ["ps"]],
+      [expect.stringMatching(/^ar-7-1430-[0-9a-f]{8}$/), "Audiência do PS: Comissão de Utentes do Litoral Alentejano", "14:30", false, ["ps"]],
+      [expect.stringMatching(/^ar-7-1530-[0-9a-f]{8}$/), "Audiência do PS: Liga Portuguesa de Ambulâncias (LPA)", "15:30", false, ["ps"]],
+      [expect.stringMatching(/^ar-7-0900-[0-9a-f]{8}$/), "Audiência do PS: ANEM", "09:00", false, ["ps"]],
       // No times: the day stays one event.
       ["ar-8", "Audiências do Grupo Parlamentar do CH", null, true, ["chega"]],
     ]);
+  });
+
+  it("keeps each hearing's id when another is added above it, and tells same-time namesakes apart", () => {
+    const hearings = (text: string) =>
+      parseParliamentAgenda([
+        arItem({ Id: 7, Section: "Grupos Parlamentares / Partidos / DURP / Ninsc", Title: "Audiências do Grupo Parlamentar do PS", EventStartTime: null, InternetText: text }),
+      ]).map((e) => [e.id, e.startTime]);
+    const before = hearings("14h30 - Comissão de Utentes<br>15h30 - ANEM");
+    const after = hearings("10h - Sindicato<br>14h30 - Comissão de Utentes<br>15h30 – ANEM");
+    expect(after.slice(1)).toEqual(before);
+    expect(new Set(after.map(([id]) => id)).size).toBe(3);
+    // Accents and case don't change it; a repeated line gets its own id.
+    expect(hearings("14h30 - COMISSAO de utentes")[0]).toEqual(before[0]);
+    const twice = hearings("9h - ANEM<br>9h - ANEM");
+    expect(twice[1]![0]).toBe(`${twice[0]![0]}-2`);
   });
 
   it("skips one item with an odd date or link, not the whole agenda", () => {

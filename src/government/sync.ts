@@ -88,6 +88,13 @@ export const syncGovernment = async (db: Db, source: GovernmentSource) => {
       continue;
     }
     government ??= parsed.government;
+    if (parsed.positions.length === 0) {
+      // Every post has had a holder: an empty list is a page that didn't load properly, and
+      // trusting it would delete the people it lists.
+      failedPages += 1;
+      warnings.push(`Could not read ${page.path}: the page lists no one`);
+      continue;
+    }
     positions.push(...parsed.positions);
     for (const member of parsed.members) {
       const current = parsed.positions.some((p) => p.memberId === member.id && p.endDate === null);

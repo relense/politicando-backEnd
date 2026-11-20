@@ -68,7 +68,15 @@ export const stories = pgTable("stories", {
   /** Events and topics it's about (src/stories/tags.ts), refreshed as versions join. Null until computed. */
   tags: jsonb().$type<{ slug: string; label: string; name: string; kind: "event" | "topic" }[]>(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+  /*
+   * Over its visible articles, kept by a trigger on articles (migration 0049), so every way an
+   * article joins, leaves, hides or shows updates them, and lists don't regroup every article.
+   */
+  articleCount: integer("article_count").notNull().default(0),
+  sourceCount: integer("source_count").notNull().default(0),
+  firstAt: timestamp("first_at", { withTimezone: true }),
+  lastAt: timestamp("last_at", { withTimezone: true }),
+}, (table) => [index("stories_last_at_idx").on(table.lastAt.desc(), table.id.desc())]);
 
 /**
  * Stories joined into another after the fact (src/stories/merge.ts): the same news grouped apart
@@ -262,6 +270,14 @@ export const seenSourceUris = pgTable("seen_source_uris", {
 // --- Parliament (Assembleia da República open data) ---
 
 /** One per person, keyed by the parliament's own ID (cadastro), which never changes. */
+/**
+ * The accent folding of `translate(upper(name), …)` (after upper, so capitals only), for
+ * matching names written in capitals. Queries must use exactly this expression to hit the
+ * indexes built on it.
+ */
+export const FOLD_ARGS = "'ÁÀÂÃÄÉÈÊËÍÌÎÏÓÒÔÕÖÚÙÛÜÇÑ', 'AAAAAEEEEIIIIOOOOOUUUUCN'";
+export const folded = (column: AnyPgColumn | ReturnType<typeof sql>) => sql`translate(upper(${column}), ${sql.raw(FOLD_ARGS)})`;
+
 export const deputies = pgTable(
   "deputies",
   {
@@ -279,6 +295,11 @@ export const deputies = pgTable(
     active: boolean().notNull(),
     /** When they sat this legislature; `to` is null while still sitting. */
     sittingPeriods: jsonb("sitting_periods").$type<{ from: string; to: string | null }[]>().notNull().default([]),
+    /**
+     * Their parliamentary group over time ("PS" from…, then "CH" from…), oldest first; `to` is
+     * null for the current one. Votes are matched against the group they sat for that day.
+     */
+    groupPeriods: jsonb("group_periods").$type<{ group: string; from: string; to: string | null }[]>().notNull().default([]),
     /** Seat number on the official map. See src/parliament/seating.ts. */
     seat: smallint(),
     /** True when the seat is estimated (by importance within the party), not known. */
@@ -304,7 +325,11 @@ export const deputies = pgTable(
     wikidataLinks: jsonb("wikidata_links").$type<{ network: string; url: string }[]>().notNull().default([]),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index("deputies_party_idx").on(table.partyId)],
+  (table) => [
+    index("deputies_party_idx").on(table.partyId),
+    // Mayors' pages look deputies up by full name, folded (src/modules/localOfficials/routes.ts).
+    index("deputies_full_name_folded_idx").on(sql`translate(upper(${table.fullName}), ${sql.raw(FOLD_ARGS)})`),
+  ],
 );
 
 export type InitiativeStatus = "approved" | "rejected" | "in_progress" | "withdrawn";
@@ -770,6 +795,8 @@ export const electionCandidates = pgTable(
   (table) => [
     primaryKey({ columns: [table.electionId, table.placeKey, table.list, table.kind, table.position] }),
     index("election_candidates_deputy_idx").on(table.deputyId),
+    // Mayors' pages look candidacies up by name, folded (src/modules/localOfficials/routes.ts).
+    index("election_candidates_name_folded_idx").on(sql`translate(upper(${table.name}), ${sql.raw(FOLD_ARGS)})`),
   ],
 );
 
@@ -1389,6 +1416,12 @@ export const users = pgTable(
     /** Optional, private (never shown to anyone else), stored lowercase. Only once confirmed does it reset the password. */
     email: text(),
     emailConfirmedAt: timestamp("email_confirmed_at", { withTimezone: true }),
+    /**
+     * The reader asked for the newsletter while their email is unconfirmed: applied when it's
+     * confirmed. Kept here, not as a pending subscriber row, which the public form, the weekly
+     * purge or another account typing the same address could change.
+     */
+    newsletterWanted: boolean("newsletter_wanted").notNull().default(false),
     /** When they last said "not now" to adding an email (the reminder comes back after a while). */
     emailRemindedAt: timestamp("email_reminded_at", { withTimezone: true }),
   },

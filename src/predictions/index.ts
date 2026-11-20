@@ -2,7 +2,7 @@ import { and, eq, isNull, sql } from "drizzle-orm";
 import { lisbonDay } from "../agenda/time.js";
 import type { Db } from "../db/client.js";
 import { type VoteRecord, predictions } from "../db/schema.js";
-import { notify } from "../notifications/index.js";
+import { notifySafely } from "../notifications/index.js";
 import { DECIDING_VOTES } from "../parliament/parse.js";
 import { STAGE_GROUP_SQL } from "../parliament/plain.js";
 
@@ -57,7 +57,7 @@ export const nextVoteLabel = (type: string, votes: VoteRecord[]) => {
 };
 
 /** Settles what the latest parliament sync decided and tells each reader. Run after the sync. */
-export const resolvePredictions = async (db: Db) => {
+export const resolvePredictions = async (db: Db, log: { error: (obj: unknown, msg: string) => void } = { error: (obj, msg) => console.error(msg, obj) }) => {
   const pending = (
     await db.execute<{ user_id: number; initiative_id: number; pick: "pass" | "fail"; updated_at: Date | string; votes: VoteRecord[]; open: boolean }>(sql`
       select p.user_id, p.initiative_id, p.pick, p.updated_at, initiatives.votes, ${OPEN_FOR_PREDICTION} as open
@@ -75,7 +75,8 @@ export const resolvePredictions = async (db: Db) => {
       .returning({ userId: predictions.userId });
     if (!updated) continue;
     counts[result.outcome]++;
-    if (result.outcome !== "void") await notify(db, { userIds: [row.user_id], kind: "prediction_result", targetId: row.initiative_id });
+    // Best effort: the prediction is settled either way, and the rest of the run goes on.
+    if (result.outcome !== "void") await notifySafely(db, log, { userIds: [row.user_id], kind: "prediction_result", targetId: row.initiative_id });
   }
   return counts;
 };

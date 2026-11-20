@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { hashPassword } from "../src/admin/password.js";
 import { buildApp } from "../src/app.js";
 import { admins, comments, editorialPosts, editorialViews } from "../src/db/schema.js";
@@ -31,10 +31,12 @@ describe("media and slugs", () => {
 });
 
 const { db, pool } = createTestDb();
-const app = await buildApp({ db, corsOrigins: [], verifyRecaptcha: async () => true, loginLimitPerMinute: 1000 });
+const revalidate = vi.fn(async () => {});
+const app = await buildApp({ db, corsOrigins: [], verifyRecaptcha: async () => true, loginLimitPerMinute: 1000, revalidate });
 
 beforeEach(async () => {
   await resetDb(db);
+  revalidate.mockClear();
   const passwordHash = await hashPassword("correct horse battery");
   await db.insert(admins).values([
     { email: "ana@example.pt", name: "Ana", role: "author", passwordHash },
@@ -113,6 +115,43 @@ describe("editorial", () => {
     expect((await call("DELETE", `/admin/editorial/${body.id}`, ana)).body.error.code).toBe("published");
     await call("POST", `/admin/editorial/${body.id}/unpublish`, ana);
     expect((await call("DELETE", `/admin/editorial/${body.id}`, ana)).status).toBe(204);
+  });
+
+  it("tells the site to refresh the blog when a change shows there, and never lets it be cached", async () => {
+    const ana = await login("ana@example.pt");
+    const mod = await login("mod@example.pt");
+    const { body } = await call("POST", "/admin/editorial", ana, post());
+    await call("PUT", `/admin/editorial/${body.id}`, ana, post({ subtitle: "Ainda rascunho" }));
+    expect(revalidate).not.toHaveBeenCalled();
+    for (const [step, who] of [["publish", ana], ["feature", mod], ["unfeature", mod]] as const) {
+      revalidate.mockClear();
+      await call("POST", `/admin/editorial/${body.id}/${step}`, who);
+      expect(revalidate).toHaveBeenCalledWith(["blog"]);
+    }
+    revalidate.mockClear();
+    await call("PUT", `/admin/editorial/${body.id}`, ana, post({ subtitle: "Corrigido" }));
+    expect(revalidate).toHaveBeenCalledWith(["blog"]);
+    revalidate.mockClear();
+    await call("POST", `/admin/editorial/${body.id}/unpublish`, ana);
+    expect(revalidate).toHaveBeenCalledWith(["blog"]);
+    revalidate.mockClear();
+    await call("POST", `/admin/editorial/${body.id}/unpublish`, ana);
+    expect(revalidate).not.toHaveBeenCalled();
+
+    for (const url of ["/admin/editorial", `/admin/editorial/${body.id}`, "/admin/audit"]) {
+      const response = await app.inject({ method: "GET", url: `/api/v2${url}`, headers: { cookie: mod } });
+      expect(response.statusCode).toBe(200);
+      expect(response.headers["cache-control"]).toBe("private, no-store");
+    }
+    expect((await app.inject({ method: "GET", url: "/api/v2/admin/editorial" })).headers["cache-control"]).toBe("private, no-store");
+  });
+
+  it("takes a body as long as its limit in multibyte text", async () => {
+    const ana = await login("ana@example.pt");
+    // 100,000 characters of up to 3 bytes: far past the API's general 64 KB.
+    const long = await call("POST", "/admin/editorial", ana, post({ body: "ação€".repeat(20_000) }));
+    expect(long.status).toBe(201);
+    expect((await call("PUT", `/admin/editorial/${long.body.id}`, ana, post({ body: "€".repeat(100_000) }))).status).toBe(200);
   });
 });
 

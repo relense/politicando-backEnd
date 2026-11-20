@@ -7,6 +7,7 @@ import { properName } from "../../elections/candidates.js";
 import { dhondt } from "../../elections/dhondt.js";
 import { UPCOMING_ELECTIONS } from "../../elections/upcoming.js";
 import { ApiError, notFound } from "../../errors.js";
+import { createVersionedCache } from "../contracts/cache.js";
 import { errorSchema } from "../shared.js";
 
 const levelSchema = z.enum(["global", "national", "foreign", "district", "municipality", "parish"]);
@@ -205,6 +206,89 @@ export const electionRoutes =
       };
     };
 
+    /**
+     * Every election with its whole-country turnout and winner, in three queries whatever the
+     * number of elections. The top place is GLOBAL-990000 (with votes abroad) when there is one.
+     */
+    const electionSummaries = async (type: z.infer<typeof electionSummarySchema.shape.type> | undefined) => {
+      const rows = await db
+        .select({
+          id: elections.id,
+          type: elections.type,
+          name: elections.name,
+          date: elections.date,
+          organs: elections.organs,
+          sourceUrl: elections.sourceUrl,
+          importedAt: elections.importedAt,
+        })
+        .from(elections)
+        .where(type ? eq(elections.type, type) : undefined)
+        .orderBy(desc(elections.date));
+      const tops = await db.execute<{
+        election_id: string; registered: number | null; voters: number; turnout_pct: number | null; blank: number; null: number;
+        total_mandates: number | null; list: string | null; name: string | null; party_slugs: string[] | null; coalition: boolean | null;
+        citizens: boolean | null; votes: number | null; pct: number | null; valid_pct: number | null; mandates: number | null; presidents: number | null;
+      }>(sql`
+        with top as (
+          select distinct on (t.election_id) t.*
+          from election_turnout t join elections e on e.id = t.election_id and t.organ = e.organs[1]
+          where t.place_key in (${sql.join(TOP_PLACES.map((k) => sql`${k}`), sql`, `)}) ${type ? sql`and e.type = ${type}` : sql``}
+          order by t.election_id, array_position(array[${sql.join(TOP_PLACES.map((k) => sql`${k}`), sql`, `)}]::text[], t.place_key)
+        )
+        select top.election_id, top.registered, top.voters, top.turnout_pct, top.blank, top.null, top.total_mandates,
+          w.list, w.name, w.party_slugs, w.coalition, w.citizens, w.votes, w.pct, w.valid_pct, w.mandates, w.presidents
+        from top
+        left join lateral (
+          select r.list, coalesce(r.label, l.name) as name, coalesce(l.party_slugs, '{}') as party_slugs,
+            coalesce(l.coalition, false) as coalition, coalesce(l.citizens, false) as citizens,
+            r.votes, r.pct, r.valid_pct, r.mandates, r.presidents
+          from election_results r
+          left join election_lists l on l.election_id = r.election_id and l.list = r.list
+          where r.election_id = top.election_id and r.organ = top.organ and r.place_key = top.place_key
+          order by r.votes desc, r.list asc limit 1
+        ) w on true`);
+      const top = new Map(tops.rows.map((r) => [r.election_id, r]));
+      const levels = await db.execute<{ election_id: string; levels: string[] }>(sql`
+        select t.election_id, array_agg(distinct p.level) as levels
+        from election_turnout t join places p on p.key = t.place_key
+        group by t.election_id`);
+      const DEPTH = ["parish", "municipality", "district"] as const;
+      const deepest = new Map<string, (typeof DEPTH)[number] | "country" | null>(
+        levels.rows.map((r) => [r.election_id, DEPTH.find((level) => r.levels.includes(level)) ?? (r.levels.length ? "country" : null)]),
+      );
+      return rows.map(({ importedAt, ...election }) => {
+        const t = top.get(election.id);
+        return {
+          ...election,
+          turnout: t
+            ? { registered: t.registered, voters: t.voters, turnoutPct: t.turnout_pct, blank: t.blank, null: t.null, totalMandates: t.total_mandates }
+            : null,
+          winner:
+            t?.list != null
+              ? {
+                  list: t.list, name: t.name, partySlugs: t.party_slugs ?? [], coalition: t.coalition ?? false, citizens: t.citizens ?? false,
+                  votes: t.votes!, pct: t.pct!, validPct: t.valid_pct, mandates: t.mandates, presidents: t.presidents,
+                }
+              : null,
+          imported: importedAt !== null,
+          deepestLevel: deepest.get(election.id) ?? null,
+          // Second rounds get ids ending in "-2a-volta".
+          round: election.type === "presidenciais" ? (/-2a-volta$/.test(election.id) ? 2 : 1) : null,
+        };
+      });
+    };
+    // Results only change when an election is imported, which always writes its elections row.
+    const summaries = createVersionedCache<Awaited<ReturnType<typeof electionSummaries>>>({
+      version: async () =>
+        (
+          await db.execute<{ v: string }>(sql`
+            select count(*) || ':' || coalesce(max(imported_at)::text, '') || ':' || coalesce(max(xmin::text::bigint), 0) as v
+            from elections`)
+        ).rows[0]?.v ?? "none",
+      max: 20,
+      checkEveryMs: 0,
+    });
+
     app.get(
       "/elections",
       {
@@ -245,43 +329,7 @@ export const electionRoutes =
         },
       },
       async (request) => {
-        const rows = await db
-          .select({
-            id: elections.id,
-            type: elections.type,
-            name: elections.name,
-            date: elections.date,
-            organs: elections.organs,
-            sourceUrl: elections.sourceUrl,
-            importedAt: elections.importedAt,
-          })
-          .from(elections)
-          .where(request.query.type ? eq(elections.type, request.query.type) : undefined)
-          .orderBy(desc(elections.date));
-        const levels = await db.execute<{ election_id: string; levels: string[] }>(sql`
-          select t.election_id, array_agg(distinct p.level) as levels
-          from election_turnout t join places p on p.key = t.place_key
-          group by t.election_id`);
-        const DEPTH = ["parish", "municipality", "district"] as const;
-        const deepest = new Map<string, (typeof DEPTH)[number] | "country" | null>(
-          levels.rows.map((r) => [r.election_id, DEPTH.find((level) => r.levels.includes(level)) ?? (r.levels.length ? "country" : null)]),
-        );
-        const items = await Promise.all(
-          rows.map(async ({ importedAt, ...election }) => {
-            const organ = election.organs[0]!;
-            const key = await topPlace(election.id, organ);
-            const lists = key ? await listRows(election.id, organ, key) : [];
-            return {
-              ...election,
-              turnout: key ? await turnoutOf(election.id, organ, key) : null,
-              winner: lists[0] ?? null,
-              imported: importedAt !== null,
-              deepestLevel: deepest.get(election.id) ?? null,
-              // Second rounds get ids ending in "-2a-volta".
-              round: election.type === "presidenciais" ? (/-2a-volta$/.test(election.id) ? 2 : 1) : null,
-            };
-          }),
-        );
+        const items = await summaries.get(request.query.type ?? "", () => electionSummaries(request.query.type));
         const upcoming = UPCOMING_ELECTIONS.filter((e) => !request.query.type || e.type === request.query.type).map((e) => ({
           ...e,
           imported: false as const,

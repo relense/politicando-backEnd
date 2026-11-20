@@ -39,6 +39,29 @@ describe("publishing by API key", () => {
   it("needs one of the keys", async () => {
     expect((await publish({ markdown: article() }, null)).statusCode).toBe(401);
     expect((await publish({ markdown: article() }, "x".repeat(40))).json().error.code).toBe("invalid_key");
+    // Checked before the body is read or validated: no key, no 400 nor 413.
+    expect((await publish({ nonsense: true }, null)).json().error.code).toBe("invalid_key");
+    expect((await publish({ markdown: "x".repeat(1_000_000) }, null)).json().error.code).toBe("invalid_key");
+    const missing = await app.inject({ method: "GET", url: "/api/v2/publish/budget/missing?limit=0" });
+    expect(missing.statusCode).toBe(401);
+  });
+
+  it("takes the longest article.md even in multibyte text, and answers payload_too_large past it", async () => {
+    // 90,000 two- and three-byte characters (a post's body holds 100,000): 225 KB, well past the API's general 64 KB.
+    const long = await publish({ markdown: article("ç€".repeat(45_000)) });
+    expect(long.statusCode).toBe(200);
+    const huge = await publish({ markdown: "€".repeat(400_000) });
+    expect(huge.statusCode).toBe(413);
+    expect(huge.json().error.code).toBe("payload_too_large");
+    // Elsewhere the general limit applies, with the same code.
+    const elsewhere = await app.inject({ method: "POST", url: "/api/v2/reports", payload: { kind: "thread", id: 1, reason: "x".repeat(70_000) } });
+    expect(elsewhere.json().error.code).toBe("payload_too_large");
+  });
+
+  it("is never cached by anyone else", async () => {
+    const missing = await app.inject({ method: "GET", url: "/api/v2/publish/budget/missing", headers: { authorization: `Bearer ${KEY}` } });
+    expect(missing.statusCode).toBe(200);
+    expect(missing.headers["cache-control"]).toBe("private, no-store");
   });
 
   it("publishes an article.md, updates it by slug, and says when nothing changed", async () => {

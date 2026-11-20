@@ -18,7 +18,7 @@ const BATCH = 500;
 export interface ContractStats {
   read: number;
   imported: number;
-  /** Records without an id, date, price, object or procedure. */
+  /** Records without an id, a real publication date, price, object or procedure. */
   invalid: number;
   /** Contracts with places in Portugal we could not match to a municipality or district. */
   unplaced: number;

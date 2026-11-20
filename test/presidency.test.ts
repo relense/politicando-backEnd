@@ -135,6 +135,36 @@ describe("GET /president", () => {
     const filtered = await get("/articles?president=antonio-jose-seguro");
     expect(filtered.body.items.map((a: { id: number }) => a.id)).toEqual([article.id]);
   });
+
+  it("counts each veto in his term the way the all-time tally does", async () => {
+    const once = initiative(10, "Vetada uma vez", [
+      event("Entrada", "2026-03-01"),
+      event("Envio para promulgação", "2026-04-05"),
+      event("Veto (Receção)", "2026-04-20"),
+    ]);
+    const twice = initiative(12, "Vetada duas vezes", [
+      event("Entrada", "2026-03-01"),
+      event("Envio para promulgação", "2026-04-05"),
+      event("Veto (Receção)", "2026-04-20"),
+      event("Envio para promulgação", "2026-05-10"),
+      event("Veto (Receção)", "2026-06-01"),
+    ]);
+    const decree = (fase: string, date: string, n: number) => ({ ...event(fase, date), ObsFase: `Decreto n.º ${n}/XVII` });
+    const split = initiative(13, "Dois decretos, um vetado", [
+      event("Entrada", "2026-03-01"),
+      decree("Envio para promulgação", "2026-05-01", 48),
+      decree("Envio para promulgação", "2026-05-01", 49),
+      decree("Promulgação", "2026-05-10", 48),
+      decree("Veto (Receção)", "2026-05-12", 49),
+    ]);
+    await syncParliament(db, loaderFor({ initiatives: [...initiativesFile(), once, twice, split] }));
+    await syncPresidency(db, sourceFor(biographyPage()));
+
+    const { legislation } = (await get("/president")).body;
+    expect(legislation).toMatchObject({ promulgated: 1, vetoed: 4, pending: 0 });
+    expect(legislation.allTime.byPresident.find((p: { id: string }) => p.id === "antonio-jose-seguro")).toMatchObject({ promulgated: 1, vetoed: 4 });
+    expect(legislation.latestVetoes.map((i: { id: number }) => i.id)).toEqual([12, 13, 10]);
+  });
 });
 
 describe("biographyFacts", () => {

@@ -4,11 +4,12 @@ import { z } from "zod";
 import type { Db } from "../../db/client.js";
 import { governmentMembers, initiatives, parties } from "../../db/schema.js";
 import { notFound } from "../../errors.js";
-import { curatedPartiesSql } from "../../government/parties.js";
+import { curatedParty } from "../../government/parties.js";
 import { DECIDING_VOTES } from "../../parliament/parse.js";
 import { partyVote } from "../../parliament/partyVotes.js";
 import { LEADERS_AS_OF, PARTY_LEADERS_LIST } from "../../parties/leaders.js";
 import { initiativeColumns, initiativeSummarySchema, photoUrl, withPlain } from "../parliament/routes.js";
+import { fromVotes, votedInitiatives } from "../parliament/votesCache.js";
 import { errorSchema } from "../shared.js";
 
 const lastElectionSchema = z
@@ -84,16 +85,20 @@ export const partyRoutes =
           .orderBy(asc(parties.name));
 
         // Deputies' parties first, then the curated list for members who aren't deputies.
-        const government = await db.execute<{ party_id: number; members: number }>(sql`
-          select coalesce(d.party_id, cp.id) as party_id, count(distinct m.id)::int as members
+        // Deputies' parties first, then the curated list (matched by name key, as /government
+        // and /people do) for members who aren't deputies.
+        const government = await db.execute<{ id: string; name: string; party_id: number | null }>(sql`
+          select distinct m.id, m.name, d.party_id
           from government_members m
           join government_positions p on p.member_id = m.id and p.end_date is null
-          left join deputies d on d.id = m.deputy_id
-          left join ${curatedPartiesSql()} on d.party_id is null and curated.name = m.name
-          left join parties cp on cp.slug = curated.slug
-          where coalesce(d.party_id, cp.id) is not null
-          group by 1`);
-        const members = new Map(government.rows.map((r) => [r.party_id, r.members]));
+          left join deputies d on d.id = m.deputy_id`);
+        const idBySlug = new Map(rows.map((r) => [r.slug, r.id]));
+        const members = new Map<number, number>();
+        for (const m of government.rows) {
+          const curated = m.party_id === null ? curatedParty(m.name) : null;
+          const partyId = m.party_id ?? (curated ? idBySlug.get(curated) : undefined);
+          if (partyId !== undefined) members.set(partyId, (members.get(partyId) ?? 0) + 1);
+        }
 
         // The whole-country total: with votes abroad if the site has it.
         const votes = await db.execute<{
@@ -236,35 +241,36 @@ export const partyRoutes =
         const [party] = await db.select({ slug: parties.slug, acronym: parties.acronym, name: parties.name }).from(parties).where(eq(parties.slug, slug));
         if (!party) throw notFound("Party");
 
-        const rows = await db
-          .select({ id: initiatives.id, legislature: initiatives.legislature, votes: initiatives.votes })
-          .from(initiatives)
-          .where(gt(sql`jsonb_array_length(${initiatives.votes})`, 0));
-        const votes = rows
-          .flatMap((r) => r.votes.filter((v) => phase === "all" || DECIDING_VOTES.has(v.phase)).map((v) => ({ initiative: r.id, legislature: r.legislature, v })))
-          // A total order, so page N is the same page on every request.
-          .sort((a, b) => b.v.date.localeCompare(a.v.date) || String(b.v.id).localeCompare(String(a.v.id), "en", { numeric: true }) || b.initiative - a.initiative);
-
-        const summary = { total: votes.length, favor: 0, against: 0, abstention: 0, absent: 0, unknown: 0, split: 0 };
         const others = (await db.select({ slug: parties.slug, acronym: parties.acronym }).from(parties).where(gt(parties.assemblySeats, 0)).orderBy(desc(parties.assemblySeats)))
           .filter((p) => p.slug !== slug);
-        const agreement = new Map(others.map((p) => [p.slug, { party: p, compared: 0, same: 0 }]));
+        // Worked out once per party, phase and set of other parties, until the votes change.
+        const { votes, summary, agreement, mine } = await fromVotes(db, `party:${slug}:${phase}:${others.map((p) => `${p.slug}=${p.acronym}`).join(",")}`, async () => {
+          const rows = await votedInitiatives(db);
+          const votes = rows
+            .flatMap((r) => r.votes.filter((v) => phase === "all" || DECIDING_VOTES.has(v.phase)).map((v) => ({ initiative: r.id, legislature: r.legislature, v })))
+            // A total order, so page N is the same page on every request.
+            .sort((a, b) => b.v.date.localeCompare(a.v.date) || String(b.v.id).localeCompare(String(a.v.id), "en", { numeric: true }) || b.initiative - a.initiative);
 
-        const mine = votes.map((item) => {
-          const result = partyVote(item.v, slug);
-          if (result.position) summary[result.position]++;
-          else summary[result.basis === "absent" ? "absent" : "unknown"]++;
-          if (result.split) summary.split++;
-          if (result.position && result.basis === "group") {
-            for (const other of agreement.values()) {
-              const theirs = partyVote(item.v, other.party.slug);
-              if (theirs.position && theirs.basis === "group") {
-                other.compared++;
-                if (theirs.position === result.position) other.same++;
+          const summary = { total: votes.length, favor: 0, against: 0, abstention: 0, absent: 0, unknown: 0, split: 0 };
+          const agreement = new Map(others.map((p) => [p.slug, { party: p, compared: 0, same: 0 }]));
+
+          const mine = votes.map((item) => {
+            const result = partyVote(item.v, slug);
+            if (result.position) summary[result.position]++;
+            else summary[result.basis === "absent" ? "absent" : "unknown"]++;
+            if (result.split) summary.split++;
+            if (result.position && result.basis === "group") {
+              for (const other of agreement.values()) {
+                const theirs = partyVote(item.v, other.party.slug);
+                if (theirs.position && theirs.basis === "group") {
+                  other.compared++;
+                  if (theirs.position === result.position) other.same++;
+                }
               }
             }
-          }
-          return { ...item, result };
+            return { ...item, result };
+          });
+          return { votes, summary, agreement, mine };
         });
 
         const matching = mine.filter(({ result }) =>

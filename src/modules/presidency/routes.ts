@@ -37,7 +37,7 @@ export const presidencyRoutes =
               legislation: z
                 .object({
                   promulgated: z.number(),
-                  vetoed: z.number().describe("Vetoes in his term, including laws parliament later passed again"),
+                  vetoed: z.number().describe("Vetoes in his term (each time: a law can be vetoed twice), including laws parliament later passed again"),
                   pending: z.number().describe("Decrees waiting for his decision now"),
                   latestVetoes: z.array(initiativeSummarySchema),
                   latestPromulgated: z.array(initiativeSummarySchema),
@@ -72,13 +72,6 @@ export const presidencyRoutes =
             ? sql`coalesce((initiatives.presidency->>'promulgatedAt')::date, case when initiatives.presidency->>'status' = 'promulgated' then initiatives.published_at end)`
             : sql`(initiatives.presidency->>${field})::date`;
         const inTerm = (field: string) => sql`${dateOf(field)} >= ${president.termStart}::date`;
-        const [counts] = await db
-          .select({
-            promulgated: sql<number>`count(*) filter (where ${inTerm("promulgatedAt")})::int`,
-            vetoed: sql<number>`count(*) filter (where ${inTerm("vetoedAt")})::int`,
-            pending: sql<number>`count(*) filter (where initiatives.presidency->>'status' = 'pending')::int`,
-          })
-          .from(initiatives);
         const list = (where: ReturnType<typeof sql>, field: string) =>
           db
             .select(initiativeColumns)
@@ -105,20 +98,29 @@ export const presidencyRoutes =
           tally.set(who.id, entry);
         };
         const allTime = { since: null as string | null, promulgated: 0, vetoed: 0, vetoedUnconstitutional: 0, pending: 0 };
+        // His term, counted the same way as allTime: each veto (a decree vetoed twice counts twice,
+        // each vetoed decree of a split law counts), and each law promulgated.
+        const counts = { promulgated: 0, vetoed: 0, pending: 0 };
+        const mine = (date: string | null) => date !== null && date >= president.termStart;
         for (const { presidency: p, publishedAt } of decided) {
           if (!p) continue;
           if (p.sentAt && (!allTime.since || p.sentAt < allTime.since)) allTime.since = p.sentAt;
-          if (p.status === "pending") allTime.pending++;
+          if (p.status === "pending") {
+            allTime.pending++;
+            counts.pending++;
+          }
           // A law split in several decrees can be partly promulgated and partly vetoed.
           if (p.status === "promulgated" || p.promulgatedAt) {
             allTime.promulgated++;
             add(p.promulgatedAt ?? publishedAt, "promulgated");
+            if (mine(p.promulgatedAt ?? publishedAt)) counts.promulgated++;
           }
           const vetoes = p.vetoes ?? (p.vetoedAt ? [{ date: p.vetoedAt, kind: p.vetoKind ?? "political" }] : []);
           for (const veto of vetoes) {
             allTime.vetoed++;
             if (veto.kind === "unconstitutionality") allTime.vetoedUnconstitutional++;
             add(veto.date, "vetoed");
+            if (mine(veto.date)) counts.vetoed++;
           }
         }
         const byPresident = [...tally.values()].sort((a, b) => b.promulgated + b.vetoed - (a.promulgated + a.vetoed));
@@ -151,7 +153,7 @@ export const presidencyRoutes =
             photoUrl: president.photoUrl,
             url: "https://www.presidencia.pt/presidente-da-republica/o-presidente/biografia/",
           },
-          legislation: { ...counts!, latestVetoes, latestPromulgated, pendingNow, allTime: { ...allTime, byPresident } },
+          legislation: { ...counts, latestVetoes, latestPromulgated, pendingNow, allTime: { ...allTime, byPresident } },
           articles: news.map((a) => ({ ...a, publishedAt: a.publishedAt.toISOString() })),
           former: former.reverse(),
         };

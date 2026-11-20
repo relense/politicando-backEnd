@@ -2,7 +2,7 @@ import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { buildApp } from "../src/app.js";
 import { articles, comments, notifications, stories, storyMergeChecks, storyMerges, storyVotes, userFollows, userReads, userSaves, users } from "../src/db/schema.js";
-import { briefOf, candidates, mergeStories, type MergeJudge, type MergeStory, type StoryBrief } from "../src/stories/merge.js";
+import { briefOf, candidates, mergeStories, signatureOf, type MergeJudge, type MergeStory, type StoryBrief } from "../src/stories/merge.js";
 import { rarity, termsOf } from "../src/stories/similarity.js";
 import { createTestDb, insertArticle, resetDb } from "./helpers.js";
 
@@ -147,8 +147,10 @@ describe("joining stories that are the same news", () => {
     expect((await mergeStories(db, { judge })).merged).toBe(0);
     await mergeStories(db, { judge });
     expect(asked).toHaveLength(1);
+    // The answer is tied to the articles both stories had.
+    const ids = async (story: number) => (await db.select({ id: articles.id }).from(articles).where(eq(articles.storyId, story))).map((r) => r.id);
     expect(await db.select({ same: storyMergeChecks.same, signature: storyMergeChecks.signature }).from(storyMergeChecks)).toEqual([
-      { same: false, signature: "1:1" },
+      { same: false, signature: signatureOf(await ids(older), await ids(newer)) },
     ]);
 
     await insertArticle(
@@ -223,5 +225,58 @@ describe("which pairs are worth asking about", () => {
     const brief = briefOf(mk(1, montenegro, 3, []));
     expect(brief.headlines).toEqual([{ title: montenegro, source: "s1.pt", at: expect.stringMatching(/^\d\d\/\d\d, \d\d:\d\d$/) }]);
     expect(brief.excerpt).toContain("IVA zero");
+  });
+});
+
+describe("joining stories safely", () => {
+  it("doesn't join stories that changed after the model was asked", async () => {
+    await background();
+    const { older, newer } = await reaction();
+    // While the model answers, another run moves an article into one of the stories.
+    let moved = false;
+    const judge: MergeJudge = async () => {
+      if (moved) return true;
+      moved = true;
+      await insertArticle(
+        db,
+        { title: "Outra coisa", excerpt: "Nada a ver.", source: "dn.pt", sourceUri: "late", url: "https://dn.pt/late", publishedAt: new Date(Date.now() - HOUR), storyId: newer },
+        [],
+      );
+      return true;
+    };
+    expect((await mergeStories(db, { judge })).merged).toBe(0);
+    expect(await db.select({ id: stories.id }).from(stories).where(sql`${stories.id} in (${older}, ${newer})`)).toHaveLength(2);
+  });
+
+  it("a logged-in reader who marked both stories counts once after they're joined", async () => {
+    await background();
+    const { older, newer } = await reaction();
+    const [user] = await db.insert(users).values({ username: "rui", passwordHash: "x" }).returning({ id: users.id });
+    await db.insert(storyVotes).values([
+      { storyId: older, voter: "k-older", userId: user!.id },
+      { storyId: newer, voter: "k-newer", userId: user!.id },
+      { storyId: newer, voter: "k-anon" },
+    ]);
+    await mergeStories(db, { judge: async () => true });
+    expect((await db.select({ voter: storyVotes.voter }).from(storyVotes).where(eq(storyVotes.storyId, older))).map((r) => r.voter).sort()).toEqual(["k-anon", "k-older"]);
+    expect((await db.select({ importa: stories.importa }).from(stories).where(eq(stories.id, older)))[0]!.importa).toBe(2);
+  });
+
+  it("taking back an Importa on the story a mark was joined into removes the mark, and marking again counts once", async () => {
+    await background();
+    const { older, newer } = await reaction();
+    const mark = (id: number, value: 0 | 1) =>
+      app.inject({ method: "POST", url: `/api/v2/stories/${id}/vote`, payload: { value }, remoteAddress: "203.0.113.9" });
+    expect((await mark(newer, 1)).json()).toMatchObject({ importa: 1 });
+    await mergeStories(db, { judge: async () => true });
+
+    // Marking the joined story again doesn't count the reader twice.
+    expect((await mark(older, 1)).json()).toMatchObject({ importa: 1 });
+    // Taking it back on the new id removes the mark that came from the old one.
+    expect((await mark(older, 0)).json()).toMatchObject({ importa: 0 });
+    expect(await db.select().from(storyVotes)).toEqual([]);
+    // And the old id still works, acting on the story it went into.
+    expect((await mark(newer, 1)).json()).toMatchObject({ importa: 1 });
+    expect((await db.select({ storyId: storyVotes.storyId }).from(storyVotes)).map((r) => r.storyId)).toEqual([older]);
   });
 });

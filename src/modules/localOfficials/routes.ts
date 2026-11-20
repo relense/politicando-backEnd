@@ -2,7 +2,7 @@ import { desc, eq, sql } from "drizzle-orm";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
 import type { Db } from "../../db/client.js";
-import { articleLocalOfficials, articles } from "../../db/schema.js";
+import { articleLocalOfficials, articles, folded } from "../../db/schema.js";
 import { partiesInList } from "../../elections/mai.js";
 import { notFound } from "../../errors.js";
 import { shortName } from "../../places/localOfficials.js";
@@ -81,17 +81,16 @@ export const localOfficialRoutes =
         const o = found.rows[0];
         if (!o) throw notFound("Local official");
 
-        // Same full name, ignoring case and accents: candidate lists are often in capitals.
-        const key = sql`translate(upper(${o.name}), 'ÁÀÂÃÄÉÈÊËÍÌÎÏÓÒÔÕÖÚÙÛÜÇÑ', 'AAAAAEEEEIIIIOOOOOUUUUCN')`;
-        const folded = (column: string) =>
-          sql`translate(upper(${sql.raw(column)}), 'ÁÀÂÃÄÉÈÊËÍÌÎÏÓÒÔÕÖÚÙÛÜÇÑ', 'AAAAAEEEEIIIIOOOOOUUUUCN')`;
+        // Same full name, ignoring case and accents: candidate lists are often in capitals. Both
+        // sides use the indexed expression (deputies_full_name_folded_idx, election_candidates_name_folded_idx).
+        const key = folded(sql`${o.name}::text`);
         const [deputyRows, candidacyRows, news] = await Promise.all([
           db.execute<{ id: number; gender: string | null; active: boolean; constituency: string }>(sql`
-            select id, gender, active, constituency from deputies where ${folded("full_name")} = ${key}`),
+            select id, gender, active, constituency from deputies where ${folded(sql`full_name`)} = ${key}`),
           db.execute<{ election_id: string; election_name: string; date: string; place: string; list: string; kind: string; position: number; elected: boolean }>(sql`
             select c.election_id, e.name as election_name, e.date::text as date, p.name as place, c.list, c.kind, c.position, c.elected
             from election_candidates c join elections e on e.id = c.election_id join places p on p.key = c.place_key
-            where ${folded("c.name")} = ${key} and not (c.election_id = ${o.election_id} and c.place_key = ${o.place_key})
+            where ${folded(sql`c.name`)} = ${key} and not (c.election_id = ${o.election_id} and c.place_key = ${o.place_key})
             order by e.date desc`),
           db
             .select(articleColumns)

@@ -1,7 +1,8 @@
 import { eq } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { buildApp } from "../src/app.js";
-import { articles, auditLog, comments, forumThreads } from "../src/db/schema.js";
+import { READER_COOKIE, createReaderSession } from "../src/accounts/sessions.js";
+import { articles, auditLog, comments, forumThreads, reports, users } from "../src/db/schema.js";
 import { restore } from "../src/moderation/reports.js";
 import { screenText } from "../src/moderation/screen.js";
 import { createTestDb, insertArticle, resetDb } from "./helpers.js";
@@ -13,18 +14,31 @@ const app = await buildApp({
 
 beforeEach(async () => {
   await resetDb(db);
+  accountCookies.clear();
 });
 afterAll(async () => {
   await app.close();
   await pool.end();
 });
 
-const call = async (method: "GET" | "POST", url: string, payload?: object, ip = "10.0.0.1") => {
-  const response = await app.inject({ method, url: `/api/v2${url}`, ...(payload && { payload }), remoteAddress: ip });
+const call = async (method: "GET" | "POST", url: string, payload?: object, ip = "10.0.0.1", cookie?: string) => {
+  const response = await app.inject({ method, url: `/api/v2${url}`, ...(payload && { payload }), remoteAddress: ip, ...(cookie && { headers: { cookie } }) });
   return { status: response.statusCode, body: response.body ? response.json() : null };
 };
 let n = 0;
-const report = (kind: string, id: number, reason: string, ip: string) => call("POST", "/reports", { kind, id, reason }, ip);
+/** A signed-in reader per address (made on first use): only accounts' reports hide anything. */
+const accountCookies = new Map<string, string>();
+const accountAt = async (ip: string) => {
+  let cookie = accountCookies.get(ip);
+  if (!cookie) {
+    const [user] = await db.insert(users).values({ username: `r${++n}`, passwordHash: "x" }).returning();
+    cookie = `${READER_COOKIE}=${(await createReaderSession(db, user!.id)).token}`;
+    accountCookies.set(ip, cookie);
+  }
+  return cookie;
+};
+const report = async (kind: string, id: number, reason: string, ip: string) => call("POST", "/reports", { kind, id, reason }, ip, await accountAt(ip));
+const anonymousReport = (kind: string, id: number, reason: string, ip: string) => call("POST", "/reports", { kind, id, reason }, ip);
 const commentHidden = async (id: number) => (await db.select().from(comments).where(eq(comments.id, id)))[0]!.hiddenAt !== null;
 
 describe("screening what readers write", () => {
@@ -85,6 +99,39 @@ describe("hiding what readers report", () => {
     expect((await db.select().from(forumThreads))[0]!.hiddenAt).toBeNull();
     await report("thread", thread!.id, "spam", "3.3.3.3");
     expect((await db.select().from(forumThreads))[0]!.hiddenAt).not.toBeNull();
+  });
+
+  it("never hides on anonymous reports alone, but queues them, and counts each account once", async () => {
+    const id = await comment();
+    for (const ip of ["1.1.1.1", "2.2.2.2", "3.3.3.3", "4.4.4.4"]) expect((await anonymousReport("comment", id, "hate", ip)).status).toBe(202);
+    for (const ip of ["5.5.5.5", "6.6.6.6", "7.7.7.7"]) await anonymousReport("comment", id, "spam", ip);
+    expect(await commentHidden(id)).toBe(false);
+    expect(await db.select().from(reports)).toHaveLength(7);
+
+    // One account reporting from two connections is still one account.
+    const cookie = await accountAt("8.8.8.8");
+    await call("POST", "/reports", { kind: "comment", id, reason: "hate" }, "8.8.8.8", cookie);
+    await call("POST", "/reports", { kind: "comment", id, reason: "illegal" }, "9.9.9.9", cookie);
+    expect(await commentHidden(id)).toBe(false);
+
+    // Reported logged out, then again logged in from the same connection: the account counts.
+    await anonymousReport("comment", id, "hate", "10.1.1.1");
+    expect(await commentHidden(id)).toBe(false);
+    await report("comment", id, "hate", "10.1.1.1");
+    expect(await commentHidden(id)).toBe(true);
+  });
+
+  it("keeps an account's report apart from an anonymous one sent from the same connection", async () => {
+    const id = await comment();
+    // Someone else on a shared connection (a phone network, a household) reported it as only rude.
+    await call("POST", "/reports", { kind: "comment", id, reason: "insult", details: "de outra pessoa" }, "10.2.2.2");
+    const cookie = await accountAt("10.2.2.2");
+    await call("POST", "/reports", { kind: "comment", id, reason: "hate" }, "10.2.2.2", cookie);
+    const rows = await db.select({ reason: reports.reason, details: reports.details, userId: reports.userId }).from(reports).orderBy(reports.id);
+    expect(rows).toEqual([
+      { reason: "insult", details: "de outra pessoa", userId: null },
+      { reason: "hate", details: null, userId: expect.any(Number) },
+    ]);
   });
 
   it("needs twice as many reports once an item was restored", async () => {

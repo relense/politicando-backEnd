@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildInitiativeIndex, matchInitiatives, termsOf } from "../src/matching/matchInitiatives.js";
 import { matchArticle, matchDeputies } from "../src/matching/matchParties.js";
 import { Readable } from "node:stream";
-import { deputyVote, wasSitting } from "../src/parliament/deputyVotes.js";
+import { deputyVote, groupOn, wasSitting } from "../src/parliament/deputyVotes.js";
 import { findFolderLink, findJsonLink, streamJsonArray } from "../src/parliament/openData.js";
 import { parseDeputies, parseInitiatives, parseVoteDetail, presidencyOf } from "../src/parliament/parse.js";
 import { SEATS } from "../src/parliament/seatMap.js";
@@ -73,6 +73,70 @@ describe("parseDeputies", () => {
     });
     const [rita] = parseDeputies({ Deputados: [moved, old] }, []);
     expect(rita).toMatchObject({ parliamentaryGroup: "L", partySlug: "livre", active: true });
+    // The sitting record's period covers the old one's, so only it stays; every group with its dates.
+    expect(rita!.sittingPeriods).toEqual([{ from: "2025-06-03", to: null }]);
+    expect(rita!.groupPeriods).toEqual([
+      { group: "PS", from: "2025-06-03", to: "2026-01-01" },
+      { group: "L", from: "2026-01-01", to: null },
+    ]);
+  });
+
+  it("merges the sitting periods of a person listed twice, whichever record comes first", () => {
+    const left = deputyEntry(6, "Rui Volta", "PS", "Renunciou", {
+      DepSituacao: [
+        { sioDes: "Efetivo", sioDtInicio: "2025-06-03", sioDtFim: "2025-08-01" },
+        { sioDes: "Renunciou", sioDtInicio: "2025-08-01", sioDtFim: null },
+      ],
+      DepCPDes: "Porto",
+    });
+    const back = deputyEntry(6, "Rui Volta", "PS", "Efetivo", {
+      DepSituacao: [{ sioDes: "Efetivo", sioDtInicio: "2025-10-01", sioDtFim: null }],
+    });
+    for (const order of [[left, back], [back, left]]) {
+      const [rui] = parseDeputies({ Deputados: order }, []);
+      expect(rui).toMatchObject({
+        active: true,
+        constituency: "Lisboa",
+        sittingPeriods: [
+          { from: "2025-06-03", to: "2025-08-01" },
+          { from: "2025-10-01", to: null },
+        ],
+      });
+    }
+  });
+
+  it("doesn't keep a stale open period that the current record has closed", () => {
+    const current = deputyEntry(7, "Ana Saiu", "PS", "Renunciou", {
+      DepSituacao: [
+        { sioDes: "Efetivo", sioDtInicio: "2025-06-03", sioDtFim: "2025-09-01" },
+        { sioDes: "Renunciou", sioDtInicio: "2025-09-01", sioDtFim: null },
+      ],
+    });
+    const stale = deputyEntry(7, "Ana Saiu", "PS", "Renunciou", {
+      DepSituacao: [{ sioDes: "Efetivo", sioDtInicio: "2025-06-03", sioDtFim: null }],
+    });
+    const [ana] = parseDeputies({ Deputados: [stale, current] }, []);
+    expect(ana!.sittingPeriods).toEqual([{ from: "2025-06-03", to: "2025-09-01" }]);
+  });
+
+  it("keeps an old record's spell that ends the day the kept record's starts", () => {
+    const current = deputyEntry(8, "Luís Mudou", "L", "Efetivo", {
+      DepGP: [{ gpSigla: "L", gpDtInicio: "2026-01-01", gpDtFim: null }],
+      DepSituacao: [{ sioDes: "Efetivo", sioDtInicio: "2026-01-01", sioDtFim: null }],
+    });
+    const old = deputyEntry(8, "Luís Mudou", "PS", "Efetivo", {
+      DepGP: [{ gpSigla: "PS", gpDtInicio: "2025-06-03", gpDtFim: "2026-01-01" }],
+      DepSituacao: [{ sioDes: "Efetivo", sioDtInicio: "2025-06-03", sioDtFim: "2026-01-01" }],
+    });
+    const [luis] = parseDeputies({ Deputados: [old, current] }, []);
+    expect(luis!.groupPeriods).toEqual([
+      { group: "PS", from: "2025-06-03", to: "2026-01-01" },
+      { group: "L", from: "2026-01-01", to: null },
+    ]);
+    expect(luis!.sittingPeriods).toEqual([
+      { from: "2025-06-03", to: "2026-01-01" },
+      { from: "2026-01-01", to: null },
+    ]);
   });
 
   it("survives empty or foreign files", () => {
@@ -245,6 +309,10 @@ describe("deputyVote", () => {
 
   it("checks sitting periods, end date exclusive", () => {
     const periods = [{ from: "2025-06-03", to: "2025-09-01" }, { from: "2026-01-01", to: null }];
+    const moved = [{ group: "PS", from: "2025-06-03", to: "2026-01-01" }, { group: "L", from: "2026-01-01", to: null }];
+    expect(groupOn(moved, "2025-12-31")).toBe("PS");
+    expect(groupOn(moved, "2026-01-01")).toBe("L");
+    expect(groupOn(moved, "2025-01-01")).toBeNull();
     expect(wasSitting(periods, "2025-06-03")).toBe(true);
     expect(wasSitting(periods, "2025-09-01")).toBe(false);
     expect(wasSitting(periods, "2026-05-05")).toBe(true);

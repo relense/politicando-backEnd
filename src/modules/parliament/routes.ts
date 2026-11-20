@@ -1,16 +1,17 @@
-import { and, asc, count, desc, eq, gt, max, sql, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, max, sql, type SQL } from "drizzle-orm";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { STAGE_GROUP, STAGE_GROUP_SQL, STAGE_GROUPS, TOPICS, plainStatus, plainTitle, plainType, type PlainStatusInput } from "../../parliament/plain.js";
 import type { Db } from "../../db/client.js";
 import { articles, deputies, initiatives, parties } from "../../db/schema.js";
 import { ApiError, notFound } from "../../errors.js";
-import { deputyVote, wasSitting } from "../../parliament/deputyVotes.js";
+import { deputyVote, groupOn, wasSitting } from "../../parliament/deputyVotes.js";
 import { partySlugForGroup } from "../../parliament/groups.js";
 import { PRESIDENTS } from "../../presidency/presidents.js";
 import { SEAT_MAP_HEIGHT, SEAT_MAP_LEGISLATURE, SEAT_MAP_SOURCE, SEATS } from "../../parliament/seatMap.js";
 import { articleColumns, articleSchema } from "../articles/routes.js";
 import { errorSchema } from "../shared.js";
+import { votedInitiatives } from "./votesCache.js";
 
 const MAX_POSTGRES_INT = 2_147_483_647;
 const idParams = z.object({ id: z.coerce.number().int().positive().max(MAX_POSTGRES_INT) });
@@ -524,30 +525,29 @@ export const parliamentRoutes =
             group: deputies.parliamentaryGroup,
             party: parties.slug,
             periods: deputies.sittingPeriods,
+            groups: deputies.groupPeriods,
           })
           .from(deputies)
           .leftJoin(parties, eq(parties.id, deputies.partyId))
           .where(eq(deputies.id, id));
         if (!deputy) throw notFound("Deputy");
         const group = deputy.group ?? "";
-        const who = { name: deputy.name, group, party: deputy.party ?? group };
+        const current = { name: deputy.name, group, party: deputy.party ?? group };
+        // Someone who changed group is matched, for each vote, against the group they sat for then.
+        const whoOn = (date: string) => {
+          const then = groupOn(deputy.groups, date);
+          return then === null || then === group ? current : { name: deputy.name, group: then, party: partySlugForGroup(then) ?? then };
+        };
 
-        const rows = await db
-          .select({
-            id: initiatives.id, type: initiatives.type, number: initiatives.number,
-            title: initiatives.title, status: initiatives.status, votes: initiatives.votes,
-          })
-          .from(initiatives)
-          .where(gt(sql`jsonb_array_length(${initiatives.votes})`, 0));
-
+        const rows = await votedInitiatives(db);
         const all = rows
-          .flatMap(({ votes, ...initiative }) =>
+          .flatMap(({ votes, legislature: _legislature, ...initiative }) =>
             votes
               .filter((vote) => wasSitting(deputy.periods, vote.date))
               .map((vote) => ({
                 initiative,
                 vote: { id: vote.id, date: vote.date, phase: vote.phase, result: vote.result },
-                ...deputyVote(vote, who),
+                ...deputyVote(vote, whoOn(vote.date)),
               })),
           )
           // A total order (the same vote can be recorded under several initiatives), so pages never repeat.

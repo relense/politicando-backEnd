@@ -306,6 +306,11 @@ their group"):
 - `absent`: their group was recorded as absent (`position: null`).
 - `unknown`: their group split without naming who voted which way (`position: null`).
 
+A deputy who changed group during the legislature is matched, for each vote, against the
+group they sat for on that day (from the parliament's group history), so a "Nome (PCP)"
+exception from before a move to PS still counts as `named`. The vote lists for deputies and
+parties are kept in memory between parliament syncs.
+
 ## News about a deputy
 
 - Every article in `/articles` now has `deputies: [{ id, name, party }]`, next to `parties`.

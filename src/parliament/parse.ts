@@ -35,6 +35,8 @@ export interface ParsedDeputy {
   situation: string;
   active: boolean;
   sittingPeriods: { from: string; to: string | null }[];
+  /** Every group they sat for this legislature, oldest first. */
+  groupPeriods: { group: string; from: string; to: string | null }[];
   parliamentRole: string | null;
   gender: string | null;
   birthDate: string | null;
@@ -49,6 +51,23 @@ export interface ParsedDeputy {
 const current = (entries: Json[], start: string, end: string) =>
   entries.find((entry) => !str(entry[end])) ??
   [...entries].sort((a, b) => String(a[start] ?? "").localeCompare(String(b[start] ?? ""))).at(-1);
+
+/** Both lists' periods, once each, oldest first. */
+const mergePeriods = <T extends { from: string; to: string | null }>(a: T[], b: T[]): T[] =>
+  [...new Map([...a, ...b].map((p) => [JSON.stringify(p), p])).values()].sort(
+    (x, y) => x.from.localeCompare(y.from) || (x.to ?? "9999").localeCompare(y.to ?? "9999"),
+  );
+
+/**
+ * The kept record's periods (groups, or sitting), plus the other record's that don't clash with them: an old
+ * record can still show a group spell as open that the current one has closed.
+ */
+const mergeGroups = <T extends { from: string; to: string | null }>(kept: T[], other: T[]): T[] =>
+  mergePeriods(
+    kept,
+    // End dates are exclusive (one spell ends the day the next starts): touching isn't clashing.
+    other.filter((p) => !kept.some((k) => k.from < (p.to ?? "9999") && p.from < (k.to ?? "9999"))),
+  );
 
 /** Committee roles come as codes. Unknown codes are kept as they are. */
 const COMMITTEE_ROLES: Record<string, string> = {
@@ -82,9 +101,7 @@ export const parseDeputies = (base: unknown, biographies: unknown): ParsedDeputy
 
     const situation = str(current(situations, "sioDtInicio", "sioDtFim")?.sioDes) ?? "Desconhecida";
     const active = situation.startsWith("Efetivo");
-    // A person can be listed more than once. Keep the record where they are sitting.
     const existing = byId.get(id);
-    if (existing?.active && !active) continue;
 
     const group = str(current(asArray(entry.DepGP), "gpDtInicio", "gpDtFim")?.gpSigla);
     const role = current(asArray(entry.DepCargo), "carDtInicio", "carDtFim");
@@ -92,7 +109,7 @@ export const parseDeputies = (base: unknown, biographies: unknown): ParsedDeputy
     const activity = (bio.CadActividadeOrgaos ?? {}) as Json;
     const legislature = str(entry.LegDes);
 
-    byId.set(id, {
+    const parsed: ParsedDeputy = {
       id,
       name,
       fullName: str(entry.DepNomeCompleto) ?? str(bio.CadNomeCompleto) ?? name,
@@ -106,6 +123,13 @@ export const parseDeputies = (base: unknown, biographies: unknown): ParsedDeputy
         .flatMap((s) => {
           const from = isoDate(s.sioDtInicio);
           return from ? [{ from, to: isoDate(s.sioDtFim) }] : [];
+        })
+        .sort((a, b) => a.from.localeCompare(b.from)),
+      groupPeriods: asArray(entry.DepGP)
+        .flatMap((g) => {
+          const sigla = str(g.gpSigla);
+          const from = isoDate(g.gpDtInicio);
+          return sigla && from ? [{ group: sigla, from, to: isoDate(g.gpDtFim) }] : [];
         })
         .sort((a, b) => a.from.localeCompare(b.from)),
       parliamentRole: role && !str(role.carDtFim) ? str(role.carDes) : null,
@@ -142,7 +166,23 @@ export const parseDeputies = (base: unknown, biographies: unknown): ParsedDeputy
             .filter((l): l is string => l !== null && l !== legislature),
         ),
       ],
-    });
+    };
+    // A person can be listed more than once: keep the most recent record (the one with the
+    // latest date; when equal, the one where they are sitting, else the later one), with the
+    // other's periods where they don't clash: an old record can still show a spell as open.
+    if (!existing) byId.set(id, parsed);
+    else {
+      const latest = (d: typeof parsed) =>
+        [...d.sittingPeriods, ...d.groupPeriods].flatMap((p) => [p.from, p.to ?? ""]).reduce((a, b) => (b > a ? b : a), "");
+      const [le, lp] = [latest(existing), latest(parsed)];
+      const keepExisting = le > lp || (le === lp && existing.active && !active);
+      const [kept, other] = keepExisting ? [existing, parsed] : [parsed, existing];
+      byId.set(id, {
+        ...kept,
+        sittingPeriods: mergeGroups(kept.sittingPeriods, other.sittingPeriods),
+        groupPeriods: mergeGroups(kept.groupPeriods, other.groupPeriods),
+      });
+    }
   }
   return [...byId.values()];
 };

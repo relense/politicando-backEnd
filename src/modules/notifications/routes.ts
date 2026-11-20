@@ -7,6 +7,7 @@ import type { Db } from "../../db/client.js";
 import { NOTIFICATION_KINDS } from "../../db/schema.js";
 import { ApiError } from "../../errors.js";
 import { type FollowKind, follow, inbox, markRead, unfollow, unreadCount } from "../../notifications/index.js";
+import { resolveStoryId, withStory } from "../../stories/merge.js";
 import { IDEA_STATUSES } from "../forums/routes.js";
 import { errorSchema } from "../shared.js";
 
@@ -119,12 +120,12 @@ export const notificationRoutes =
     );
 
     const followParams = z.object({ kind: z.enum(["story", "thread"]), id: idSchema });
-    const exists = async (kind: FollowKind, id: number) => {
+    const exists = async (kind: FollowKind, id: number, runner: Pick<Db, "execute"> = db) => {
       const query =
         kind === "story"
           ? sql`select 1 from articles where story_id = ${id} and hidden_at is null limit 1`
           : sql`select 1 from forum_threads where id = ${id} and hidden_at is null`;
-      return (await db.execute(query)).rows.length > 0;
+      return (await runner.execute(query)).rows.length > 0;
     };
 
     app.put(
@@ -140,8 +141,20 @@ export const notificationRoutes =
       },
       async (request, reply) => {
         const reader = requireReader(request);
-        const { kind, id } = request.params;
-        if (!(await exists(kind, id))) throw new ApiError(404, "not_found", kind === "story" ? "Story not found" : "Thread not found");
+        const { kind } = request.params;
+        if (kind === "story") {
+          // A merged story's old id stands for the story it went into; held so a merge can't
+          // delete it between the check and the follow.
+          const done = await withStory(db, request.params.id, async (tx, id) => {
+            if (!(await exists(kind, id, tx))) return false;
+            await follow(tx, reader.id, kind, id);
+            return true;
+          });
+          if (!done?.result) throw new ApiError(404, "not_found", "Story not found");
+          return reply.status(204).send(null);
+        }
+        const id = request.params.id;
+        if (!(await exists(kind, id))) throw new ApiError(404, "not_found", "Thread not found");
         await follow(db, reader.id, kind, id);
         return reply.status(204).send(null);
       },
@@ -152,7 +165,9 @@ export const notificationRoutes =
       { schema: { tags: ["accounts"], summary: "Stop following", params: followParams, response: { 204: z.null(), ...errors } } },
       async (request, reply) => {
         const reader = requireReader(request);
-        await unfollow(db, reader.id, request.params.kind, request.params.id);
+        const { kind } = request.params;
+        const id = kind === "story" ? await resolveStoryId(db, request.params.id) : request.params.id;
+        await unfollow(db, reader.id, kind, id);
         return reply.status(204).send(null);
       },
     );

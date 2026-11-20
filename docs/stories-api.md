@@ -42,7 +42,10 @@ When something slips through, it's fixed by hand with `npm run story:split` (see
 The joined story's old id keeps working: `GET /stories/:id` (and its comments, Importa,
 `?ids=`, `?exclude=`) answers as the story it went into. So **check `id` in the response**: if it
 differs from the id you asked for, redirect to the new one (`/historias/688` → `/historias/659`).
-Every card (lists and detail) lists the ids joined into it in `mergedFrom`. If the reader saved or hid an old id,
+Every card (lists and detail) lists the ids joined into it in `mergedFrom`. Importa, follows and
+saves on an old id act on the story it went into, and taking back an Importa on the new id also
+removes a mark the reader made on the old one: a reader is counted once, and nothing comes back
+from the old id at the next login. If the reader saved or hid an old id,
 it still matches. Stories with no recent versions (36 hours) aren't joined. Every article has `storyId`, which
 is `null` for the few minutes between it being found and grouped. An article with no other
 version is a story of one.

@@ -10,7 +10,8 @@ import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 export const VERIFY_TTL_HOURS = 7 * 24;
 export const RESET_TTL_HOURS = 1;
 
-type Payload = { p: "verify"; u: number; e: string; t: number } | { p: "reset"; u: number; h: string; t: number };
+/** `n`: whether the link was sent mentioning the newsletter (informational; the account's stored choice decides). */
+type Payload = { p: "verify"; u: number; e: string; t: number; n?: boolean } | { p: "reset"; u: number; h: string; t: number };
 
 const key = (secret: string) => createHmac("sha256", secret).update("account-email").digest();
 const sign = (secret: string, data: string) => createHmac("sha256", key(secret)).update(data).digest("base64url");
@@ -40,12 +41,14 @@ const decode = (secret: string, token: string, now: number): Payload | null => {
   }
 };
 
-export const verifyToken = (secret: string, userId: number, email: string, now = Date.now()) =>
-  encode(secret, { p: "verify", u: userId, e: email, t: seconds(now) });
+export const verifyToken = (secret: string, userId: number, email: string, now = Date.now(), newsletter?: boolean) =>
+  encode(secret, { p: "verify", u: userId, e: email, t: seconds(now), ...(newsletter !== undefined && { n: newsletter }) });
 
 export const readVerifyToken = (secret: string, token: string, now = Date.now()) => {
   const payload = decode(secret, token, now);
-  return payload?.p === "verify" && typeof payload.e === "string" ? { userId: payload.u, email: payload.e } : null;
+  return payload?.p === "verify" && typeof payload.e === "string"
+    ? { userId: payload.u, email: payload.e, newsletter: typeof payload.n === "boolean" ? payload.n : null }
+    : null;
 };
 
 export const resetToken = (secret: string, userId: number, passwordHash: string, now = Date.now()) =>

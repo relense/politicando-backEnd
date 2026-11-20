@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import { partySlugForGroup } from "../parliament/groups.js";
 import type { AgendaInput } from "./store.js";
@@ -77,6 +78,17 @@ export const hearingsIn = (text: string) =>
       return [{ time: `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`, who: match[3]!.trim(), line }];
     });
 
+/** "ar-7" and 14:30 "Liga Portuguesa…" → "ar-7-1430-3f9a1c2b": the same hearing keeps its id. */
+export const hearingId = (itemId: string, hearing: { time: string; who: string }) => {
+  const who = hearing.who
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+  return `${itemId}-${hearing.time.replace(":", "")}-${createHash("sha1").update(who).digest("hex").slice(0, 8)}`;
+};
+
 export const parseParliamentAgenda = (raw: unknown): AgendaInput[] => {
   const items = z.array(z.unknown()).parse(raw);
   const events: AgendaInput[] = [];
@@ -151,10 +163,16 @@ export const parseParliamentAgenda = (raw: unknown): AgendaInput[] => {
       if (hearings.length === 0) {
         events.push({ ...party, title: item.Title?.trim() || "Audiências de grupo parlamentar" });
       } else {
-        hearings.forEach((hearing, i) => {
+        const used = new Set<string>();
+        hearings.forEach((hearing) => {
+          // From the hearing itself, not its line number: a hearing added above another mustn't
+          // move the editors' hidden/featured flags onto a different event.
+          let id = hearingId(base.id, hearing);
+          for (let n = 2; used.has(id); n++) id = `${hearingId(base.id, hearing)}-${n}`;
+          used.add(id);
           events.push({
             ...party,
-            id: `${base.id}-${i + 1}`,
+            id,
             title: truncate(`Audiência do ${group ?? "grupo parlamentar"}: ${hearing.who}`, 140),
             summary: hearing.line,
             allDay: false,

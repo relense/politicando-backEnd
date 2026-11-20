@@ -30,6 +30,12 @@ Base path: `/api/v2/admin`. Errors use the usual `{ error: { code, message } }`.
 | 401 | `invalid_credentials` | Wrong email or password |
 | 403 | `forbidden` | Signed in, but the role can't do this: hide the action |
 
+Every `/admin/*` response is `Cache-Control: private, no-store` (as are `/me/*`, `/publish/*`
+and any response that sets a cookie). Editorial posts' bodies can be up to 100,000 characters
+(`POST`/`PUT /admin/editorial` take bodies up to about 450 KB); past that, 413 `payload_too_large`.
+Publishing, unpublishing, featuring or editing a live post tells the site to refresh the blog
+(`docs/revalidate.md`).
+
 ## Roles
 
 | role | can |
@@ -72,9 +78,10 @@ Readers report threads, replies, comments and news articles (`POST /reports`, se
 `docs/forums-api.md`). `kind` is `thread`, `post`, `comment` or `article`.
 
 **Most of it runs on its own, 4chan style: only what's illegal or spam is hidden.** Items
-reported by 2 different readers as `hate`, `personal_data` or `illegal`, or by 3 as `spam`,
-are hidden automatically; `insult` and `other` never hide anything. For news, 3 reports of
-`duplicate`, `broken_link` or `not_politics`. Hidden items' reports show as resolved with
+reported by 2 different signed-in accounts as `hate`, `personal_data` or `illegal`, or by 3
+as `spam`, are hidden automatically; `insult` and `other` never hide anything. For news, 3
+accounts reporting `duplicate`, `broken_link` or `not_politics`. Anonymous reports (no
+account, no captcha) only ever reach the queue: they never count toward hiding. Hidden items' reports show as resolved with
 `resolution: "hidden"`, and the audit log has `report.auto_hide` with no admin. The queue
 holds the rest. Unhiding an item (any of the unhide endpoints) dismisses its reports, and then
 it takes twice as many new reports to hide it again.

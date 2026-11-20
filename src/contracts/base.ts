@@ -149,9 +149,12 @@ const days = (value: unknown) => {
   const n = num(value);
   return n === null || n < 0 || n > 2_147_483_647 ? null : Math.round(n);
 };
-const isoDate = (value: unknown) => {
+/** A real calendar day, as Postgres will read it: "2019-02-29" would make it reject the whole batch. */
+export const isoDate = (value: unknown) => {
   const s = str(value);
-  return s && /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+  if (!s || !/^\d{4}-\d{2}-\d{2}$/.test(s) || s < "0001-01-01") return null;
+  const day = new Date(`${s}T00:00:00Z`);
+  return !Number.isNaN(day.getTime()) && day.toISOString().slice(0, 10) === s ? s : null;
 };
 const array = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
 const yesNo = (value: unknown) => (value === "Sim" ? true : value === "Não" ? false : null);
@@ -175,7 +178,10 @@ const partiesOf = (value: unknown, role: ContractParty["role"]): ContractParty[]
   return parties;
 };
 
-/** One record of a BASE contracts file; null when it lacks what every contract has (id, date, price, object). */
+/**
+ * One record of a BASE contracts file; null when it lacks what every contract has (id, a real
+ * publication date, price, object). Other impossible dates are left empty.
+ */
 export const parseContract = (value: unknown): ParsedContract | null => {
   if (!value || typeof value !== "object") return null;
   const r = value as Raw;

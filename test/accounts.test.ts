@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { hashPassword } from "../src/admin/password.js";
 import { buildApp } from "../src/app.js";
-import { admins, articleVotes, articles, comments, editorialPosts, forumPosts, forumThreads, stories, users } from "../src/db/schema.js";
+import { admins, articleVotes, articles, comments, editorialPosts, forumPosts, forumThreads, stories, storyMerges, userSessions, users } from "../src/db/schema.js";
 import { createTestDb, insertArticle, resetDb } from "./helpers.js";
 
 const { db, pool } = createTestDb();
@@ -61,6 +61,32 @@ describe("accounts", () => {
     expect((await call("GET", "/me/saved")).statusCode).toBe(401);
   });
 
+  it("renews a session on any page, and then that page is private, never cached publicly", async () => {
+    const { cookie } = await register();
+    const page = await call("GET", "/budget", { cookie });
+    expect(page.headers["cache-control"]).toBe("public, max-age=300");
+    expect(page.headers["set-cookie"]).toBeUndefined();
+    // Under 15 days left: the session is extended, and the new cookie rides on this response.
+    await db.update(userSessions).set({ expiresAt: new Date(Date.now() + 86_400_000) });
+    const renewed = await call("GET", "/budget", { cookie });
+    expect(renewed.statusCode).toBe(200);
+    expect(renewed.headers["set-cookie"]).toBeDefined();
+    expect(renewed.headers["cache-control"]).toBe("private, no-store");
+  });
+
+  it("saves, unsaves and merges a merged story under the story it went into", async () => {
+    const { cookie } = await register();
+    const [into] = await db.insert(stories).values({}).returning();
+    await db.insert(storyMerges).values({ fromId: 999_001, intoId: into!.id, reason: "model" });
+    expect((await call("PUT", "/me/saved/story/999001", { cookie })).statusCode).toBe(204);
+    expect((await call("GET", "/me/state", { cookie })).json().saved.stories).toEqual([into!.id]);
+    expect((await call("DELETE", "/me/saved/story/999001", { cookie })).statusCode).toBe(204);
+    expect((await call("GET", "/me/state", { cookie })).json().saved.stories).toEqual([]);
+
+    const merged = await call("POST", "/me/merge", { cookie, payload: { saved: { stories: [999_001, into!.id] }, read: [999_001] } });
+    expect(merged.json()).toMatchObject({ saved: { stories: [into!.id] }, read: [into!.id] });
+  });
+
   it("registers and logs in with a username and password, by an httpOnly cookie on /api/v2", async () => {
     const { response, cookie, session } = await register("Ana_Silva");
     expect(response.statusCode).toBe(201);
@@ -72,6 +98,11 @@ describe("accounts", () => {
     // Unique ignoring case; reserved and malformed names refused.
     expect((await register("ana_silva")).response.json().error.code).toBe("username_taken");
     expect((await register("Admin")).response.statusCode).toBe(409);
+    // Names that read like the team, as anonymous nicknames can't either.
+    for (const name of ["Admin_PT", "EquipaPoliticando", "moderador2", "Staff_Oficial", "mod1"]) {
+      expect((await register(name)).response.json().error.code).toBe("username_taken");
+    }
+    expect((await register("Modesto")).response.statusCode).toBe(201);
     expect((await register("a")).response.statusCode).toBe(400);
     expect((await register("nome com espaços")).response.statusCode).toBe(400);
     expect((await register("curta", "1234567")).response.statusCode).toBe(400);

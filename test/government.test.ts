@@ -223,6 +223,18 @@ describe("syncGovernment", () => {
     await syncGovernment(db, sourceFor(removed));
     expect((await get("/government")).body.ministries.find((m: { area: string }) => m.area === "financas").secretaries).toHaveLength(0);
   });
+
+  it("treats a page that loads but lists no one as unread, keeping its people", async () => {
+    await syncGovernment(db, sourceFor(portal()));
+    const empty = portal();
+    empty["/pt/gc25/area-de-governo/financas/secretarios-de-estado/assuntos-fiscais"] = page(
+      { governmentAreaTitle: "Finanças" },
+      { fields: { GovernmentPreposition: value("dos"), GovernmentTitle: value("Assuntos Fiscais"), OfficialsHistory: [] } },
+    );
+    const stats = await syncGovernment(db, sourceFor(empty));
+    expect(stats.warnings).toEqual([expect.stringMatching(/assuntos-fiscais: the page lists no one/)]);
+    expect((await get("/government")).body.ministries.find((m: { area: string }) => m.area === "financas").secretaries).toHaveLength(1);
+  });
 });
 
 describe("GET /government", () => {

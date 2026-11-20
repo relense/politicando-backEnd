@@ -15,7 +15,8 @@ cache them.
 
 ### `GET /me/notifications?cursor=`
 
-Newest first, 30 a page, with `nextCursor` for the next page (null at the end).
+Newest first, 30 a page, with `nextCursor` for the next page (null at the end). Pass it back
+exactly as given: anything else is 400 `invalid_cursor` (it used to be ignored and gave the first page).
 
 ```json
 {
@@ -63,6 +64,9 @@ doesn't mark anything by itself, so call this when the reader opens the inbox, o
 | `PUT /me/follows/story/:id` | Follow a story: told when new outlets cover it (checked after each hourly news run) |
 | `PUT /me/follows/thread/:id` | Follow a forum thread: told about new replies |
 | `DELETE /me/follows/{story\|thread}/:id` | Stop following |
+
+A story id that was merged into another (see `mergedFrom` in stories-api.md) stands for the story
+it went into: following or unfollowing the old id acts on the new one, and `/me/state` lists the new id.
 
 - Calls return 204, or 404 for something missing or hidden.
 - **Followed already:** opening a thread, replying in one, and commenting on a story follow it automatically. Show the "A seguir" state so readers can unfollow.
