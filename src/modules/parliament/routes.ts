@@ -72,6 +72,19 @@ export const initiativeSummarySchema = z.object({
       constitutionalCourt: z
         .array(z.object({ ruling: z.string().describe('e.g. "1133/2025"'), url: z.string() }))
         .describe("Constitutional Court rulings behind the latest veto"),
+      decrees: z
+        .array(
+          z.object({
+            number: z.string().describe('e.g. "48/XVII"'),
+            status: z.enum(["pending", "promulgated", "vetoed"]),
+            sentAt: z.string().nullable(),
+            promulgatedAt: z.string().nullable(),
+            vetoedAt: z.string().nullable(),
+          }),
+        )
+        .optional()
+        .describe("Only when the initiative became several decrees: each one's own decision. status is then promulgated if any was"),
+      partial: z.boolean().optional().describe("With decrees: they ended differently (e.g. one promulgated, one vetoed)"),
       vetoes: z
         .array(
           z.object({

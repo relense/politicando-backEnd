@@ -322,6 +322,51 @@ describe("presidencyOf", () => {
     });
   });
 
+  it("decides each decree on its own when an initiative became several, ignoring versions passed again", () => {
+    // As initiative 315160 (Lei da Nacionalidade): decrees 17 and 18 vetoed, passed again as 48 and 49;
+    // 48 promulgated and published, 49 vetoed.
+    const d = (Fase: string, DataFase: string, ObsFase: string) => ({ Fase, DataFase, ObsFase });
+    const events = [
+      d("Envio para promulgação", "2025-11-11", "Decreto n.º 17/XVII"),
+      d("Envio para promulgação", "2025-11-11", "Decreto n.º 18/XVII"),
+      d("Veto (Receção)", "2025-12-19", "Decreto n.º 17/XVII - Acórdão do Tribunal Constitucional n.º 1133/2025"),
+      d("Veto (Receção)", "2025-12-19", "Decreto n.º 18/XVII - Acórdão do Tribunal Constitucional n.º 1134/2025"),
+      d("Envio para promulgação (2ª versão)", "2026-04-13", "Decreto n.º 48/XVII"),
+      d("Envio para promulgação (2ª versão)", "2026-04-13", "Decreto n.º 49/XVII"),
+      d("Promulgação (2ª versão)", "2026-05-03", "Decreto n.º 48/XVII"),
+      d("Veto (Receção)", "2026-05-13", "Decreto n.º 49/XVII"),
+      d("Veto (Publicação)", "2026-05-14", "Decreto n.º 49/XVII"),
+      d("Lei (Publicação DR)", "2026-05-18", "Lei Orgânica n.º 1/2026"),
+      d("Confirmação do decreto", "2026-07-03", "Decreto da Assembleia da República n.º 49/XVII/1.ª"),
+    ];
+    expect(presidencyOf(events)).toMatchObject({
+      status: "promulgated", promulgatedAt: "2026-05-03", vetoedAt: "2026-05-13", partial: true,
+      decrees: [
+        { number: "48/XVII", status: "promulgated", sentAt: "2026-04-13", promulgatedAt: "2026-05-03", vetoedAt: null },
+        { number: "49/XVII", status: "vetoed", sentAt: "2026-04-13", promulgatedAt: null, vetoedAt: "2026-05-13" },
+      ],
+    });
+    expect(presidencyOf(events)!.vetoes).toHaveLength(2);
+
+    // Vetoed and passed again under a new number: one current decree, so nothing partial.
+    const again = presidencyOf([
+      d("Envio para promulgação", "2026-01-10", "Decreto n.º 10/XVII"),
+      d("Veto (Receção)", "2026-02-01", "Decreto n.º 10/XVII"),
+      d("Envio para promulgação (2ª versão)", "2026-03-01", "Decreto n.º 25/XVII"),
+      d("Promulgação (2ª versão)", "2026-03-10", "Decreto n.º 25/XVII"),
+    ]);
+    expect(again).toMatchObject({ status: "promulgated", promulgatedAt: "2026-03-10", vetoedAt: "2026-02-01" });
+    expect(again).not.toHaveProperty("decrees");
+    expect(again).not.toHaveProperty("partial");
+
+    // Two decrees both still in Belém after one was promulgated: promulgated, partly.
+    expect(presidencyOf([
+      d("Envio para promulgação", "2026-01-10", "Decreto n.º 30/XVII"),
+      d("Envio para promulgação", "2026-01-10", "Decreto n.º 31/XVII"),
+      d("Promulgação", "2026-01-20", "Decreto n.º 30/XVII"),
+    ])).toMatchObject({ status: "promulgated", partial: true });
+  });
+
   it("infers a promulgation the record skips from the law's publication", () => {
     const sent = [ev("Envio para promulgação", "2026-07-31"), ev("Lei (Publicação DR)", "2026-08-19")];
     expect(presidencyOf(sent)).toMatchObject({ status: "promulgated", promulgatedAt: null, promulgationRecorded: false });
