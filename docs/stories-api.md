@@ -29,10 +29,20 @@ cards, but two different stories should not show as one.
    so a big story grows step by step, and the model sees its latest headlines each time. Its id stays, and it gains the other's
    versions, Importa marks, comments, follows, saves and reads.
 
+**Taking out articles that drifted in.** A roundup of two votes ("IVA zero sim, rendas
+moderadas não") matches both, so a story can slowly drift from one vote to the other, leaving
+its first articles behind. After each scan, articles that fewer than a third of their story
+match are shown to the same model, against the rest of the story. Any it says don't belong move
+into a story of their own, which is never joined back to the old one (it can still join the
+story it does belong to). Articles that came in through a join are left alone. The story's id
+stays with the articles that remain.
+
+When something slips through, it's fixed by hand with `npm run story:split` (see the README).
+
 The joined story's old id keeps working: `GET /stories/:id` (and its comments, Importa,
 `?ids=`, `?exclude=`) answers as the story it went into. So **check `id` in the response**: if it
 differs from the id you asked for, redirect to the new one (`/historias/688` → `/historias/659`).
-The story lists the ids joined into it in `mergedFrom`. If the reader saved or hid an old id,
+Every card (lists and detail) lists the ids joined into it in `mergedFrom`. If the reader saved or hid an old id,
 it still matches. Stories with no recent versions (36 hours) aren't joined. Every article has `storyId`, which
 is `null` for the few minutes between it being found and grouped. An article with no other
 version is a story of one.
@@ -81,6 +91,8 @@ The feed as stories. Returns `{ items, nextCursor, total }`, paged like `/articl
   often first, same shape as on articles (`{ kind, id, name }`); link the names. Use them for the context strip (below).
 - `importa` and `importance`: see [Importa](#importa).
 - `commentCount`: visible comments on the story, including older ones made on its articles.
+- `mergedFrom`: ids of stories joined into this one (`[]` usually). Asking for one of them
+  returns this story. Use it to recognise an old id the reader saved or linked to.
 - `debate`: `{ agree, disagree }`, the most liked comment that agrees and the one that
   disagrees ("A favor" / "Contra"), each `{ id, username, body, likes, createdAt }` or
   `null`. Each needs at least one like. **Show the pair only when both exist**: one side
@@ -137,8 +149,6 @@ those stories.
 
 The card plus:
 
-- `mergedFrom`: ids of stories joined into this one (`[]` usually). Asking for one of them
-  returns this story.
 - `context`, for the **"Contexto"** box:
   - `explainers` (**Explica**): up to 3 of our published blog posts whose tags match the
     story's (e.g. a post tagged "orçamento" or "oe2027" for #OE2027; "habitação" for

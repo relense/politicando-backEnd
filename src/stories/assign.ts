@@ -9,7 +9,8 @@ import {
   type StoryArticle,
 } from "./similarity.js";
 import { mergeStories, type MergeJudge } from "./merge.js";
-import { storyTagsOf } from "./tags.js";
+import { detachStrays } from "./split.js";
+import { refreshStoryTags as refreshTags } from "./tags.js";
 
 /** Articles this far back are compared with, and measure how rare words are. */
 const CONTEXT_DAYS = 7;
@@ -52,6 +53,13 @@ export const assignStories = async (db: Db, { judge = null }: { judge?: MergeJud
       console.error("Story notification failed:", error);
     }
   }
+  // Articles that drifted into a story they don't belong in get one of their own (src/stories/split.ts).
+  let strays = { suspects: 0, checked: 0, detached: 0 };
+  try {
+    strays = await detachStrays(db, { judge });
+  } catch (error) {
+    console.error("Checking stories for strays failed:", error);
+  }
   // Then stories that turned out to be the same news are joined (src/stories/merge.ts).
   let merges: { candidates: number; checked: number; merged: number } = { candidates: 0, checked: 0, merged: 0 };
   try {
@@ -62,39 +70,10 @@ export const assignStories = async (db: Db, { judge = null }: { judge?: MergeJud
     console.error("Merging stories failed:", error);
   }
   const { touched: _touched, ...counts } = result;
-  return { ...counts, notified, merges };
+  return { ...counts, notified, strays, merges };
 };
 
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
-
-/** Recomputes the tags of the stories that changed, and of any never tagged. */
-const refreshTags = async (tx: Tx, touched: Set<number>) => {
-  const missing = (
-    await tx.execute<{ id: number }>(
-      sql`select id from stories where tags is null`,
-    )
-  ).rows.map((r) => r.id);
-  const ids = [...new Set([...touched, ...missing])];
-  if (ids.length === 0) return 0;
-  const rows = (
-    await tx.execute<{ story_id: number; title: string; excerpt: string }>(sql`
-      select story_id, title, excerpt from articles
-      where hidden_at is null and story_id in (${sql.join(
-        ids.map((id) => sql`${id}`),
-        sql`, `,
-      )})`)
-  ).rows;
-  const versions = new Map<number, { title: string; excerpt: string }[]>(
-    ids.map((id) => [id, []]),
-  );
-  for (const r of rows) versions.get(r.story_id)!.push(r);
-  for (const [id, list] of versions) {
-    await tx.execute(
-      sql`update stories set tags = ${JSON.stringify(storyTagsOf(list))}::jsonb where id = ${id}`,
-    );
-  }
-  return ids.length;
-};
 
 const group = async (tx: Tx, touched: Set<number>, createdIds: Set<number>) => {
   const [first] = (

@@ -108,6 +108,47 @@ export const storyMergeChecks = pgTable(
   (table) => [primaryKey({ columns: [table.lowId, table.highId] })],
 );
 
+/**
+ * Stories that must never be joined (src/stories/split.ts): one was split off the other, by the
+ * model or by hand. A merge keeps the pair pointing at the story that remains.
+ */
+export const storyApart = pgTable(
+  "story_apart",
+  {
+    lowId: integer("low_id")
+      .notNull()
+      .references(() => stories.id, { onDelete: "cascade" }),
+    highId: integer("high_id")
+      .notNull()
+      .references(() => stories.id, { onDelete: "cascade" }),
+    /** "model" (an article judged not to belong) or "manual" (npm run story:split). */
+    reason: text().$type<"model" | "manual">().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.lowId, table.highId] })],
+);
+
+/**
+ * The model's answer to "does this article belong in its story?" (src/stories/split.ts), asked
+ * about articles that few others in the story match. Asked again once the story doubles.
+ */
+export const storyArticleChecks = pgTable(
+  "story_article_checks",
+  {
+    storyId: integer("story_id")
+      .notNull()
+      .references(() => stories.id, { onDelete: "cascade" }),
+    articleId: integer("article_id")
+      .notNull()
+      .references(() => articles.id, { onDelete: "cascade" }),
+    /** The story's visible articles when asked. */
+    storySize: integer("story_size").notNull(),
+    belongs: boolean().notNull(),
+    checkedAt: timestamp("checked_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.storyId, table.articleId] })],
+);
+
 /** One "Importa" per reader per story; `voter` is a keyed hash of the IP, never the IP. */
 export const storyVotes = pgTable(
   "story_votes",
