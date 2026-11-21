@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { hashPassword, verifyPassword } from "../src/admin/password.js";
 import { buildApp } from "../src/app.js";
-import { admins, comments } from "../src/db/schema.js";
+import { admins, comments, editorialPosts, notifications, users } from "../src/db/schema.js";
 import { createRecaptchaVerifier } from "../src/modules/comments/recaptcha.js";
 import { createTestDb, insertArticle, resetDb } from "./helpers.js";
 
@@ -140,6 +140,52 @@ describe("comment moderation", () => {
     const log = await call("GET", `/admin/audit?entity=comment&entityId=${comment!.id}`, cookie);
     expect(log.body.items.map((i: { action: string }) => i.action)).toEqual(["comment.unhide", "comment.hide"]);
     expect(log.body.items[1].after).toEqual({ reason: "Spam" });
+  });
+});
+
+describe("answering comments as the team", () => {
+  it("replies under any comment, on its page, signed «Politicando», and tells the author", async () => {
+    await addAdmin("mod@example.pt", "moderator");
+    const cookie = (await login("mod@example.pt")).cookie;
+    const [reader] = await db.insert(users).values({ username: "rita", passwordHash: "x" }).returning();
+    const [post] = await db
+      .insert(editorialPosts)
+      .values({ slug: "orcamento", title: "Orçamento", kind: "article", body: "Texto", authorName: "Ana", status: "published", publishedAt: new Date() })
+      .returning();
+    const [question] = await db.insert(comments).values({ editorialPostId: post!.id, body: "Porquê?", username: "rita", userId: reader!.id }).returning();
+
+    const answered = await call("POST", `/admin/comments/${question!.id}/reply`, cookie, { body: "  Porque sim.  " });
+    expect(answered.status).toBe(201);
+    const page = (await call("GET", "/editorial/orcamento/comments")).body;
+    expect(page).toEqual([
+      expect.objectContaining({ id: question!.id, team: false, account: true }),
+      expect.objectContaining({ id: answered.body.id, parentId: question!.id, parentUsername: "rita", username: "Politicando", team: true, account: false, body: "Porque sim." }),
+    ]);
+    expect(await db.select({ userId: notifications.userId, kind: notifications.kind }).from(notifications)).toEqual([{ userId: reader!.id, kind: "comment_reply" }]);
+    expect((await call("GET", "/admin/comments", cookie)).body.items[0]).toMatchObject({ id: answered.body.id, team: true, postSlug: "orcamento" });
+    const log = await call("GET", `/admin/audit?entity=comment&entityId=${answered.body.id}`, cookie);
+    expect(log.body.items[0]).toMatchObject({ action: "comment.team_reply" });
+
+    // News and stories too; an anonymous comment just gets no notification.
+    const article = await insertArticle(db);
+    const [onNews] = await db.insert(comments).values({ articleId: article.id, body: "E então?" }).returning();
+    expect((await call("POST", `/admin/comments/${onNews!.id}/reply`, cookie, { body: "Vê o artigo." })).status).toBe(201);
+    expect((await call("GET", `/articles/${article.id}/comments`)).body[1]).toMatchObject({ team: true, parentId: onNews!.id });
+  });
+
+  it("refuses hidden or missing comments, empty or illegal text, and authors", async () => {
+    await addAdmin("mod@example.pt", "moderator");
+    await addAdmin("autor@example.pt", "author");
+    const cookie = (await login("mod@example.pt")).cookie;
+    const article = await insertArticle(db);
+    const [hidden] = await db.insert(comments).values({ articleId: article.id, body: "x", hiddenAt: new Date() }).returning();
+    const [shown] = await db.insert(comments).values({ articleId: article.id, body: "y" }).returning();
+    expect((await call("POST", `/admin/comments/${hidden!.id}/reply`, cookie, { body: "Olá" })).body.error.code).toBe("comment_hidden");
+    expect((await call("POST", "/admin/comments/999/reply", cookie, { body: "Olá" })).status).toBe(404);
+    expect((await call("POST", `/admin/comments/${shown!.id}/reply`, cookie, { body: "   " })).status).toBe(400);
+    expect((await call("POST", `/admin/comments/${shown!.id}/reply`, cookie, { body: "Liga para 912345678" })).body.error.code).toBe("personal_data");
+    expect((await call("POST", `/admin/comments/${shown!.id}/reply`, (await login("autor@example.pt")).cookie, { body: "Olá" })).status).toBe(403);
+    expect((await call("POST", `/admin/comments/${shown!.id}/reply`, undefined, { body: "Olá" })).status).toBe(401);
   });
 });
 

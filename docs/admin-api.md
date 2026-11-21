@@ -60,7 +60,7 @@ The very first admin is created on the server: `npm run admin:create -- <email> 
 
 - `GET /admin/comments?status=visible|hidden|all&articleId=&storyId=&postId=&before=&limit=` (default
   `visible`, 50, newest first) returns
-  `{ items: [{ id, articleId, articleTitle, storyId, storyTitle, postId, postSlug, postTitle, parentId, username, body, stance, likes, createdAt, hiddenAt }] }`.
+  `{ items: [{ id, articleId, articleTitle, storyId, storyTitle, postId, postSlug, postTitle, parentId, username, body, stance, likes, team, createdAt, hiddenAt }] }`. `team` marks the team's own replies.
   A comment is on a news article (`articleId`, `articleTitle`), a story (`storyId`,
   `storyTitle`; link to `/stories/:id`) or one of our editorial posts (`postId`, `postSlug`,
   `postTitle`); the others are null. `stance` is the side the commenter picked, if any.
@@ -70,6 +70,13 @@ The very first admin is created on the server: `npm run admin:create -- <email> 
   comment disappears from the public comments (news or editorial). Its replies stay; show them as replies
   to a removed comment.
 - `POST /admin/comments/:id/unhide` returns 204.
+- `POST /admin/comments/:id/reply` with `{ "body": "…" }` (1–2000 characters) answers any visible
+  comment (news, story or editorial post) as the team: 201 `{ id }`. The reply goes under that comment on
+  the same page, signed `"Politicando"` with `team: true`, and the comment's author (if they have an
+  account) gets a `comment_reply` notification. It's in the audit log as `comment.team_reply`. A hidden
+  comment is 400 `comment_hidden`; contact details, threats or hate are refused like readers' comments
+  (400 `personal_data`, `threat`, `hate`). Use it from this list ("Responder"); the reply then appears
+  at the top, marked `team`.
 - Hiding something already hidden is a no-op 204. An unknown id is a 404.
 
 ## Reports queue (role moderator)
