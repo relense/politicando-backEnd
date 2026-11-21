@@ -4,6 +4,7 @@ import { z } from "zod";
 import { PROPOSAL_RESULTS, VOTE_RESULTS } from "../../budget/parse.js";
 import { BUDGET_DATASET_PAGE } from "../../budget/sync.js";
 import type { Db } from "../../db/client.js";
+import { budgetNewsFor } from "../../budget/news.js";
 import { agendaEvents, budgetBills, budgetProposals, budgetSources, budgetSummaries, budgetVotes, parties, type BudgetVoteEntry } from "../../db/schema.js";
 import { ApiError, notFound } from "../../errors.js";
 import { PARTY_DEFINITIONS } from "../../matching/parties.js";
@@ -72,6 +73,25 @@ const proposalSchema = z.object({
   documentUrl: z.string().nullable().describe("The proposal's official text (PDF)"),
   sourceUrl: z.string().describe("The parliament's open-data page this comes from"),
   votes: z.array(voteSchema).describe("Oldest first; a proposal voted in parts has one per part"),
+});
+
+const proposalDetailSchema = proposalSchema.extend({
+  news: z
+    .array(z.object({ id: z.number(), title: z.string(), source: z.string(), url: z.string(), publishedAt: z.string() }))
+    .describe("News articles about this proposal (found and checked automatically), newest first; link to /article/:id"),
+  statements: z
+    .array(
+      z.object({
+        party: partySchema.nullable().describe("The party it's attributed to, when known"),
+        speaker: z.string().nullable().describe("The person, as the article names them; null when it's the party's"),
+        text: z.string().describe("What they said about it, as the article reports it (a short quote or a faithful paraphrase)"),
+        articleId: z.number(),
+        articleTitle: z.string(),
+        source: z.string(),
+        publishedAt: z.string(),
+      }),
+    )
+    .describe("What parties and politicians said about it, according to the news (never the parliament's record); newest first"),
 });
 
 const billSchema = z.object({
@@ -333,7 +353,7 @@ export const budgetRoutes =
           tags: ["budget"],
           summary: "One amendment proposal, with every vote on it",
           params: yearParams.extend({ id: z.coerce.number().int().min(1).max(2_147_483_647) }),
-          response: { 200: proposalSchema, 404: errorSchema },
+          response: { 200: proposalDetailSchema, 404: errorSchema },
         },
       },
       async (request, reply) => {
@@ -343,8 +363,17 @@ export const budgetRoutes =
           .where(and(eq(budgetProposals.year, request.params.year), eq(budgetProposals.id, request.params.id)));
         const [item] = await hydrate(rows);
         if (!item) throw notFound("Proposal");
+        const map = await partyMap();
+        const found = await budgetNewsFor(db, [item.id]);
         reply.header("Cache-Control", PUBLIC);
-        return item;
+        return {
+          ...item,
+          news: (found.news.get(item.id) ?? []).map((n) => ({ ...n, publishedAt: n.publishedAt.toISOString() })),
+          statements: (found.statements.get(item.id) ?? []).map((st) => ({
+            party: st.party ? party(map, st.party) : null, speaker: st.speaker, text: st.text,
+            articleId: st.articleId, articleTitle: st.articleTitle, source: st.source, publishedAt: st.publishedAt.toISOString(),
+          })),
+        };
       },
     );
 

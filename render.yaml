@@ -127,6 +127,9 @@ services:
     envVars:
       - key: DATABASE_URL
         fromDatabase: { name: politicando-db, property: connectionString }
+      # Proposals' summaries ("O que muda"), news and statements (src/budget/enrich.ts); without it they're skipped.
+      - key: ANTHROPIC_API_KEY
+        sync: false
       - key: FRONTEND_REVALIDATE_URL
         sync: false
       - key: REVALIDATE_SECRET

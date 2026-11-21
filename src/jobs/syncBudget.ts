@@ -1,5 +1,7 @@
 import { importPastBudgetBills, syncCurrentBudgetBills } from "../budget/bills.js";
+import { enrichBudget } from "../budget/enrich.js";
 import { syncBudget } from "../budget/sync.js";
+import { createPoliteClient } from "../ingestion/politeClient.js";
 import { PAST_LEGISLATURES } from "../parliament/pastLegislatures.js";
 import { createOpenDataClient } from "../parliament/openData.js";
 import { loadParliamentConfig } from "../config.js";
@@ -35,7 +37,18 @@ try {
       }
     }
   }
-  if (results.some((r) => r.changed) || bills > 0) await createRevalidator()(["budget"]);
+  // Then summaries, news and statements for proposals that lack them (src/budget/enrich.ts). Its
+  // own step: a failure there (the model, a PDF) never fails the sync above.
+  let enriched = false;
+  try {
+    const enrichment = await enrichBudget(db, { client: createPoliteClient() });
+    console.log(JSON.stringify({ enrichment }));
+    enriched = !("skipped" in enrichment) && enrichment.summaries.summarized + enrichment.news.linked > 0;
+  } catch (error) {
+    console.error("Budget summaries:", error instanceof Error ? error.message : error);
+    process.exitCode = 1;
+  }
+  if (results.some((r) => r.changed) || bills > 0 || enriched) await createRevalidator()(["budget"]);
   if (results.length === 0) process.exitCode = 1;
 } catch (error) {
   console.error("Budget sync failed:", error);

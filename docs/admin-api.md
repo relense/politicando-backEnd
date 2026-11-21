@@ -109,7 +109,7 @@ text, and `npm run moderation -- restore comment 42` brings an item back.
   ```
 
   `target` is what was reported, so you can judge without leaving the queue. Link to the
-  thread (`threadId`), news article (`articleId`) or editorial post (`postId`). It is null if the thing no longer exists.
+  thread (`threadId`), news article (`articleId`), story (`storyId`) or editorial post (`postId`, with `postSlug` to link to the post). It is null if the thing no longer exists.
 - `POST /admin/reports/resolve` with `{ "kind": "thread", "targetId": 7, "action": "hide" | "dismiss" }`
   returns `{ resolved: 2 }`, closing every open report on that item. `hide` also hides it.
   For an article, `target.text` is its title, excerpt and link. Hiding is right for
