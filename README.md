@@ -33,6 +33,7 @@ The API docs are at `/docs` and the OpenAPI spec is at `/docs/json`.
 | `npm run admin:create -- <email> "<name>" admin` | Create the first admin (prints a one-time password) |
 | `npm run contracts:import` | Import public contracts from BASE for this year and last (weekly; `-- --from=2012` for history) |
 | `npm run story:split -- <storyId> <articleId…>` | Move articles that don't belong out of a story, into a new one that's never joined back (`--merge <oldId>` instead of article ids undoes a wrong join). Shows what it would do; add `--apply` to save. On Render's Shell: `node dist/jobs/splitStory.js <same arguments>` |
+| `node dist/jobs/budgetSummaries.js [--summaries=N] [--news=N]` | Budget proposals' summaries, news and statements (docs/budget-api.md). The hourly `politicando-budget` cron already does 200 summaries and 150 news checks a run; use this for the backlog. Needs `ANTHROPIC_API_KEY` |
 | `npm run parliament:link-news` | Link stored articles to deputies and initiatives. Add `-- --replace` after changing matching rules |
 | `npm run places:shapes -- <folder>` | Rebuild `data/municipalities.json` (for `/places/locate`) from the CAOP GeoPackages, only when CAOP changes |
 | `npm run db:generate` | Create a migration after changing `src/db/schema.ts` |

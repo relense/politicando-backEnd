@@ -29,8 +29,8 @@ export const decodeBody = (bytes: Uint8Array, contentType: string | null) => {
   }
 };
 
-export type FetchResult =
-  | { status: "ok"; body: string }
+export type FetchResult<Ok = { status: "ok"; body: string }> =
+  | Ok
   /** robots.txt or the site refused us. Final: never retried or worked around. */
   | { status: "blocked"; reason: string }
   /** Network or server trouble. Worth trying on a later run. */
@@ -87,7 +87,7 @@ export const createPoliteClient = ({
     const location = response.status >= 300 && response.status < 400 ? response.headers.get("location") : null;
     if (location !== null) {
       await response.body?.cancel();
-      return { status: response.status, body: "", location: new URL(location, url).toString() };
+      return { status: response.status, bytes: new Uint8Array(0), contentType: null, location: new URL(location, url).toString() };
     }
     if (Number(response.headers.get("content-length") ?? 0) > MAX_RESPONSE_BYTES) {
       await response.body?.cancel();
@@ -115,7 +115,7 @@ export const createPoliteClient = ({
       bytes.set(chunk, at);
       at += chunk.length;
     }
-    return { status: response.status, body: decodeBody(bytes, response.headers.get("content-type")), location: null };
+    return { status: response.status, bytes, contentType: response.headers.get("content-type"), location: null };
   };
 
   /** One request at a time per host, spaced by that host's delay. */
@@ -150,7 +150,8 @@ export const createPoliteClient = ({
           fetched = await request(at);
         }
         if (fetched.location !== null) return denyAll;
-        const { status, body } = fetched;
+        const { status } = fetched;
+        const body = decodeBody(fetched.bytes, fetched.contentType);
         // 401/403 and server errors mean we can't tell what's allowed, so stay out.
         if (status === 401 || status === 403 || status >= 500) return denyAll;
         const parsed = robotsParser(robotsUrl, status === 200 ? body : "");
@@ -170,7 +171,8 @@ export const createPoliteClient = ({
     return loaded;
   };
 
-  const get = async (url: string, hops = 0): Promise<FetchResult> => {
+  type Raw = { status: "ok"; bytes: Uint8Array; contentType: string | null };
+  const fetchRaw = async (url: string, hops = 0): Promise<FetchResult<Raw>> => {
     let parsed: URL;
     try {
       parsed = new URL(url);
@@ -190,11 +192,11 @@ export const createPoliteClient = ({
     if (robots.isAllowed(url, USER_AGENT) === false) {
       return { status: "blocked", reason: "robots.txt" };
     }
-    const result = await inHostQueue(host, () => robots.delayMs, async (): Promise<FetchResult | { status: "redirect"; to: string }> => {
+    const result = await inHostQueue(host, () => robots.delayMs, async (): Promise<FetchResult<Raw> | { status: "redirect"; to: string }> => {
       try {
-        const { status, body, location } = await request(url);
+        const { status, bytes, contentType, location } = await request(url);
         if (location !== null) return { status: "redirect", to: location };
-        if (status >= 200 && status < 300) return { status: "ok", body };
+        if (status >= 200 && status < 300) return { status: "ok", bytes, contentType };
         if (status === 429 || status >= 500) {
           return { status: "unavailable", reason: `HTTP ${status}` };
         }
@@ -206,10 +208,18 @@ export const createPoliteClient = ({
     if (result.status !== "redirect") return result;
     if (hops >= MAX_REDIRECTS) return { status: "unavailable", reason: "too many redirects" };
     // Each hop is a request of its own: its host's robots.txt, queue and delay.
-    return get(result.to, hops + 1);
+    return fetchRaw(result.to, hops + 1);
   };
 
-  return { get: (url: string) => get(url) };
+  return {
+    /** A page as text. */
+    get: async (url: string): Promise<FetchResult> => {
+      const result = await fetchRaw(url);
+      return result.status === "ok" ? { status: "ok", body: decodeBody(result.bytes, result.contentType) } : result;
+    },
+    /** A file as bytes (a PDF), with the same checks. */
+    getBytes: (url: string) => fetchRaw(url),
+  };
 };
 
 export type PoliteClient = ReturnType<typeof createPoliteClient>;

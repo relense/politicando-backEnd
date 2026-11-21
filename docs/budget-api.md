@@ -27,9 +27,21 @@ weeks. We read it every hour (`:35`), and only an unchanged file is skipped.
   `/initiatives`. Bills go back to OE1983 (only some old ones have votes recorded). Parliament's
   files have no bill for OE2016 or OE2020, so those years have only their proposals.
 - **Plain summaries ("O que muda"):** the source has only a title (usually the article it
-  changes), a topic and the official PDF (`documentUrl`). The research studio reads the PDFs and
-  sends a one- or two-sentence summary through the publish key; it appears as `plain`, null until
-  written. Summaries arrive gradually, latest votes first.
+  changes), a topic and the official PDF (`documentUrl`). After each hourly sync, a model (Claude
+  Haiku) reads the PDFs of up to 200 proposals without a summary, latest votes first, and writes one
+  or two neutral sentences (`plain`, `automatic: true`). A summary sent by a person through the
+  publish key (`automatic: false`) is never replaced. A PDF that can't be read is tried again later,
+  less often each time. The backlog is cleared in a few hours, or at once with
+  `node dist/jobs/budgetSummaries.js --summaries=3000`.
+- **News and statements:** with each summary the model also gives the words the press would use for
+  the measure. The same step looks for articles we collected around the proposal's dates (a week
+  before it was submitted to a month after its last vote) that use those words and read like Budget
+  news, then has the model read each one (the full page, or the excerpt when it's closed). It decides
+  whether the article is about **this** measure, and lists what the article reports parties or
+  politicians saying about it. Each pair is judged once. A statement is only ever what an article
+  says, always kept with that article. The article's text isn't stored. This is automatic and
+  approximate: it favours a missing link over a wrong one. Needs `ANTHROPIC_API_KEY` on the
+  `politicando-budget` cron; without it, this step is skipped.
 
 ## GET /budget
 
@@ -140,7 +152,32 @@ Each item:
 
 ## GET /budget/:year/proposals/:id
 
-One item, as above. 404 for an unknown id, or one from another year.
+One item, as above, plus its news and statements. 404 for an unknown id, or one from another year.
+
+```jsonc
+{
+  …,                                   // every field of a list item
+  "news": [
+    { "id": 51234, "title": "Parlamento aprova PNAES 2.0", "source": "publico.pt", "url": "https://…", "publishedAt": "2026-11-19T15:00:00.000Z" }
+  ],
+  "statements": [
+    {
+      "party": { "slug": "pan", "acronym": "PAN", "name": "Pessoas–Animais–Natureza" },
+      "speaker": "Inês de Sousa Real",  // null when it's the party's
+      "text": "Diz que o plano é «urgente» para os estudantes deslocados.",
+      "articleId": 51234, "articleTitle": "Parlamento aprova PNAES 2.0", "source": "publico.pt", "publishedAt": "…"
+    }
+  ]
+}
+```
+
+- `news`: articles about this proposal, newest first (link to `/article/:id`). Often empty: most
+  proposals never make the news. Hide the section when it's empty.
+- `statements`: what parties and politicians said about it **according to the news**, newest first.
+  `text` is a short quote (in «» or quotes, as the article has it) or a faithful paraphrase. Always
+  show the source next to it ("segundo publico.pt", linking the article) and say these come from the
+  news, not from the parliament's record. `party` is null when the article names no party, or one we
+  can't tell apart (a coalition). Hide the section when it's empty.
 
 ## GET /budget/:year/summary
 

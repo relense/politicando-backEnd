@@ -1700,5 +1700,53 @@ export const budgetSummaries = pgTable("budget_summaries", {
   summary: text().notNull(),
   /** True when a model wrote it (shown as an automatic summary); false when a person did. */
   automatic: boolean().notNull().default(true),
+  /** Words the press would use for it ("propinas", "IRS Jovem"), written with an automatic summary: they find its news. */
+  terms: text().array().notNull().default(sql`'{}'::text[]`),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/*
+ * Like budget_summaries, the tables below key on the proposal's id without a foreign key: the
+ * sync replaces a year's proposals whenever the parliament's file changes (src/budget/sync.ts),
+ * and the ids stay the same, so what was found about them must survive that.
+ */
+
+/** Proposals whose PDF couldn't be summarised yet: tried again later, less often each time. */
+export const budgetSummaryAttempts = pgTable("budget_summary_attempts", {
+  proposalId: integer("proposal_id").primaryKey(),
+  tries: smallint().notNull().default(1),
+  lastError: text("last_error").notNull(),
+  triedAt: timestamp("tried_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * News articles checked against a proposal (src/budget/news.ts): `about` is the model's answer,
+ * kept so a pair is judged once. The ones about it are the proposal's news.
+ */
+export const budgetNews = pgTable(
+  "budget_news",
+  {
+    proposalId: integer("proposal_id").notNull(),
+    articleId: integer("article_id").notNull().references(() => articles.id, { onDelete: "cascade" }),
+    about: boolean().notNull(),
+    checkedAt: timestamp("checked_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.proposalId, table.articleId] }), index("budget_news_article_idx").on(table.articleId)],
+);
+
+/** What a party or deputy said about a proposal, as a news article reports it (never invented: always with its article). */
+export const budgetStatements = pgTable(
+  "budget_statements",
+  {
+    id: integer().primaryKey().generatedAlwaysAsIdentity(),
+    proposalId: integer("proposal_id").notNull(),
+    articleId: integer("article_id").notNull().references(() => articles.id, { onDelete: "cascade" }),
+    /** A party's slug (parties.slug), when it's the party's or one of its deputies'. */
+    party: text(),
+    /** The person, as the article names them. */
+    speaker: text(),
+    text: text().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("budget_statements_proposal_idx").on(table.proposalId)],
+);
