@@ -489,6 +489,7 @@ describe("platform", () => {
       "/api/v2/admin/cases/{id}/unpublish",
       "/api/v2/admin/comments",
       "/api/v2/admin/comments/{id}/hide",
+      "/api/v2/admin/comments/{id}/reply",
       "/api/v2/admin/comments/{id}/unhide",
       "/api/v2/admin/corrections",
       "/api/v2/admin/corrections/{id}",

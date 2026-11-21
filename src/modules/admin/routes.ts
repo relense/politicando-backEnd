@@ -15,6 +15,9 @@ import type { Db } from "../../db/client.js";
 import { admins, auditLog, comments } from "../../db/schema.js";
 import { ApiError, notFound } from "../../errors.js";
 import { dismissReports } from "../../moderation/reports.js";
+import { assertPublishable } from "../../moderation/screen.js";
+import { notify } from "../../notifications/index.js";
+import { TEAM_NAME } from "../forums/routes.js";
 import { errorSchema } from "../shared.js";
 
 const roleSchema = z.enum(["author", "moderator", "admin"]);
@@ -213,6 +216,7 @@ export const adminRoutes =
       body: z.string(),
       stance: z.enum(["agree", "disagree"]).nullable(),
       likes: z.number(),
+      team: z.boolean().describe("A reply the team wrote from here"),
       createdAt: z.string(),
       hiddenAt: z.string().nullable(),
     });
@@ -240,10 +244,10 @@ export const adminRoutes =
         const rows = await db.execute<{
           id: number; article_id: number | null; article_title: string | null; post_id: number | null; post_slug: string | null;
           post_title: string | null; parent_id: number | null; username: string | null; body: string; created_at: string; hidden_at: string | null;
-          story_id: number | null; story_title: string | null; stance: "agree" | "disagree" | null; likes: number;
+          story_id: number | null; story_title: string | null; stance: "agree" | "disagree" | null; likes: number; team: boolean;
         }>(sql`
           select c.id, c.article_id, a.title as article_title, c.editorial_post_id as post_id, e.slug as post_slug,
-            e.title as post_title, c.parent_id, c.username, c.body, c.story_id, c.stance, c.likes,
+            e.title as post_title, c.parent_id, c.username, c.body, c.story_id, c.stance, c.likes, c.team,
             (select sa.title from articles sa where sa.story_id = c.story_id and sa.hidden_at is null order by sa.published_at limit 1) as story_title,
             to_char(c.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as created_at,
             to_char(c.hidden_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as hidden_at
@@ -258,9 +262,52 @@ export const adminRoutes =
           items: rows.rows.map((r) => ({
             id: r.id, articleId: r.article_id, articleTitle: r.article_title, storyId: r.story_id, storyTitle: r.story_title,
             postId: r.post_id, postSlug: r.post_slug, postTitle: r.post_title, parentId: r.parent_id, username: r.username,
-            body: r.body, stance: r.stance, likes: r.likes, createdAt: r.created_at, hiddenAt: r.hidden_at,
+            body: r.body, stance: r.stance, likes: r.likes, team: r.team, createdAt: r.created_at, hiddenAt: r.hidden_at,
           })),
         };
+      },
+    );
+
+    app.post(
+      "/admin/comments/:id/reply",
+      {
+        schema: {
+          tags: ["admin"],
+          summary: "Answer a comment as the team: a reply under it, signed «Politicando» (team: true), on the same page",
+          params: idParams,
+          body: z.strictObject({ body: z.string().trim().min(1).max(2_000) }),
+          response: { 201: z.object({ id: z.number() }), ...errors },
+        },
+      },
+      async (request, reply) => {
+        const me = await requireAdmin(request, "moderator");
+        const { body } = request.body;
+        assertPublishable(body);
+        const [parent] = await db
+          .select({
+            id: comments.id, articleId: comments.articleId, storyId: comments.storyId,
+            editorialPostId: comments.editorialPostId, userId: comments.userId, hiddenAt: comments.hiddenAt,
+          })
+          .from(comments)
+          .where(eq(comments.id, request.params.id));
+        if (!parent) throw notFound("Comment");
+        if (parent.hiddenAt) throw new ApiError(400, "comment_hidden", "That comment is hidden: show it again before answering");
+        // On the same page as the comment answered (its article, story or post).
+        const [created] = await db
+          .insert(comments)
+          .values({
+            articleId: parent.articleId, storyId: parent.storyId, editorialPostId: parent.editorialPostId,
+            parentId: parent.id, username: TEAM_NAME, userId: null, team: true, body,
+          })
+          .returning({ id: comments.id });
+        await audit(db, me.id, "comment.team_reply", "comment", created!.id, null, { parentId: parent.id, body });
+        // Best effort: the reply stands even if the notification fails.
+        try {
+          if (parent.userId !== null) await notify(db, { userIds: [parent.userId], kind: "comment_reply", targetId: created!.id, actorName: TEAM_NAME });
+        } catch (error) {
+          request.log.error(error, "comment reply notification failed");
+        }
+        return reply.status(201).send({ id: created!.id });
       },
     );
 

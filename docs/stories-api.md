@@ -230,6 +230,7 @@ id), plus likes and a side:
 - `GET /stories/:id/comments`: the story's comments, oldest first, including older ones made
   on its articles. Each is `{ id, storyId, parentId, username, parentUsername, body, stance, likes, createdAt }`.
 - Logged-in readers: no `recaptchaToken`, and the comment carries their username with `account: true` (`docs/accounts-api.md`).
+- Replies from the team carry **`team: true`**, with `username` `"Politicando"` and `account: false`: show them as official (a badge, "Equipa Politicando"). Every comment has `team`.
 - `POST /stories/:id/comments` with `{ "body": "…", "username": null, "parentId": null, "stance": "agree", "recaptchaToken": "…" }`.
   Text is screened as everywhere else: 400 `personal_data`, `hate` or `threat` (see `docs/forums-api.md`).
   `stance` is optional: `"agree"` ("Concordo") or `"disagree"` ("Discordo"), the
