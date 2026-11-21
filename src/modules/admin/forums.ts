@@ -3,7 +3,7 @@ import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { adminGuard, audit } from "../../admin/sessions.js";
 import type { Db } from "../../db/client.js";
-import { articles, comments, forumPosts, forumStatusChanges, forumThreads, forumVotes, reports } from "../../db/schema.js";
+import { articles, comments, editorialPosts, forumPosts, forumStatusChanges, forumThreads, forumVotes, reports } from "../../db/schema.js";
 import { ApiError, notFound } from "../../errors.js";
 import { voterKey } from "../../forums/identity.js";
 import { followers, notify } from "../../notifications/index.js";
@@ -29,7 +29,7 @@ export const adminForumRoutes =
     const targets = async (kind: Kind, ids: number[]) => {
       const map = new Map<
         number,
-        { text: string; hidden: boolean; threadId: number | null; articleId: number | null; postId: number | null; storyId?: number | null }
+        { text: string; hidden: boolean; threadId: number | null; articleId: number | null; postId: number | null; postSlug?: string | null; storyId?: number | null }
       >();
       if (ids.length === 0) return map;
       if (kind === "thread") {
@@ -56,12 +56,13 @@ export const adminForumRoutes =
         const rows = await db
           .select({
             id: comments.id, body: comments.body, hiddenAt: comments.hiddenAt, articleId: comments.articleId, postId: comments.editorialPostId,
-            storyId: comments.storyId,
+            storyId: comments.storyId, postSlug: editorialPosts.slug,
           })
           .from(comments)
+          .leftJoin(editorialPosts, eq(editorialPosts.id, comments.editorialPostId))
           .where(inArray(comments.id, ids));
         for (const r of rows) {
-          map.set(r.id, { text: r.body, hidden: r.hiddenAt !== null, threadId: null, articleId: r.articleId, postId: r.postId, storyId: r.storyId });
+          map.set(r.id, { text: r.body, hidden: r.hiddenAt !== null, threadId: null, articleId: r.articleId, postId: r.postId, postSlug: r.postSlug, storyId: r.storyId });
         }
       }
       return map;
@@ -95,6 +96,7 @@ export const adminForumRoutes =
                       threadId: z.number().nullable(),
                       articleId: z.number().nullable(),
                       postId: z.number().nullable().describe("An editorial post's id, for comments on our posts"),
+                      postSlug: z.string().nullable().optional().describe("That post's slug, to link to /blog/:slug"),
                       storyId: z.number().nullable().optional().describe("A story's id, for comments on stories"),
                     })
                     .nullable()

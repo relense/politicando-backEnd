@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { hashPassword } from "../src/admin/password.js";
 import { buildApp } from "../src/app.js";
-import { admins, comments } from "../src/db/schema.js";
+import { admins, comments, editorialPosts } from "../src/db/schema.js";
 import { posterId } from "../src/forums/identity.js";
 import { createTestDb, insertArticle, resetDb } from "./helpers.js";
 
@@ -132,6 +132,17 @@ describe("moderation", () => {
     for (const nickname of ["Zé Povinho", "Modesto"]) expect((await openThread("ps", { nickname })).status).toBe(201);
   });
 
+  it("links a reported comment on one of our posts to the post", async () => {
+    const { cookie } = await modCookie();
+    const [post] = await db
+      .insert(editorialPosts)
+      .values({ slug: "orcamento", title: "Orçamento", kind: "article", body: "Texto", authorName: "Ana", status: "published", publishedAt: new Date() })
+      .returning();
+    const [comment] = await db.insert(comments).values({ editorialPostId: post!.id, body: "spam" }).returning();
+    await call("POST", "/reports", { kind: "comment", id: comment!.id, reason: "spam" }, as("1.1.1.1"));
+    expect((await call("GET", "/admin/reports", undefined, { cookie })).body.items[0].target).toMatchObject({ postId: post!.id, postSlug: "orcamento" });
+  });
+
   it("queues reports per item, counts each reporter once, and resolves them", async () => {
     const { cookie } = await modCookie();
     const id = (await openThread()).body.id;
@@ -147,7 +158,7 @@ describe("moderation", () => {
     const queue = await call("GET", "/admin/reports", undefined, { cookie });
     expect(queue.body.items).toMatchObject([
       { kind: "thread", targetId: id, reports: 2, reasons: ["hate", "insult"], details: ["Ataque a um grupo"], target: { hidden: false, threadId: id } },
-      { kind: "comment", targetId: comment!.id, reports: 1, target: { text: "spam", articleId: article.id } },
+      { kind: "comment", targetId: comment!.id, reports: 1, target: { text: "spam", articleId: article.id, postSlug: null } },
     ]);
 
     expect((await call("POST", "/admin/reports/resolve", { kind: "thread", targetId: id, action: "hide" }, { cookie })).body).toEqual({ resolved: 2 });
