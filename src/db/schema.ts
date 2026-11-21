@@ -229,10 +229,12 @@ export const comments = pgTable(
     stance: text().$type<"agree" | "disagree">(),
     /** Readers who liked it, kept in step with comment_likes. */
     likes: integer().notNull().default(0),
+    /** Written by the team from the admin (POST /admin/comments/:id/reply), signed «Politicando». */
+    team: boolean().notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .default(sql`now()`),
-    /** Set to hide a comment from the API. There is no admin endpoint yet. */
+    /** Set to hide a comment from the API (the admin, or reports). */
     hiddenAt: timestamp("hidden_at", { withTimezone: true }),
   },
   (table) => [
