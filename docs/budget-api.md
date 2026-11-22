@@ -31,8 +31,10 @@ weeks. We read it every hour (`:35`), and only an unchanged file is skipped.
   Haiku) reads the PDFs of up to 200 proposals without a summary, latest votes first, and writes one
   or two neutral sentences (`plain`, `automatic: true`). A summary sent by a person through the
   publish key (`automatic: false`) is never replaced. A PDF that can't be read is tried again later,
-  less often each time. The backlog is cleared in a few hours, or at once with
-  `node dist/jobs/budgetSummaries.js --summaries=3000`.
+  less often each time. **Only the 2027 Budget on** gets automatic summaries for now
+  (`SUMMARIES_FROM_YEAR` in `src/budget/summarize.ts`): older years have `plain: null` unless a person
+  writes one, and so no news or statements either. The backlog is cleared in a day, or at once with
+  `node dist/jobs/budgetSummaries.js --summaries=3000` (`--from-year=2024` for older Budgets too).
 - **News and statements:** with each summary the model also gives the words the press would use for
   the measure. The same step looks for articles we collected around the proposal's dates (a week
   before it was submitted to a month after its last vote) that use those words and read like Budget

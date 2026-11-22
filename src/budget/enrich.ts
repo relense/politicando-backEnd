@@ -9,13 +9,19 @@ import { summarizeProposals, summarizerFromEnv, type SummarizeResult } from "./s
  */
 export const enrichBudget = async (
   db: Db,
-  { client, summaries = 200, news = 150, env = process.env }: { client: PoliteClient; summaries?: number; news?: number; env?: NodeJS.ProcessEnv },
+  {
+    client,
+    summaries = 200,
+    news = 150,
+    fromYear,
+    env = process.env,
+  }: { client: PoliteClient; summaries?: number; news?: number; fromYear?: number; env?: NodeJS.ProcessEnv },
 ): Promise<{ skipped: string } | { summaries: SummarizeResult; news: NewsResult }> => {
   const summarizer = summarizerFromEnv(env);
   const judge = newsJudgeFromEnv(env);
   if (!summarizer || !judge) return { skipped: "ANTHROPIC_API_KEY not set" };
   return {
-    summaries: await summarizeProposals(db, { client, summarizer, limit: summaries }),
+    summaries: await summarizeProposals(db, { client, summarizer, limit: summaries, fromYear }),
     news: await linkBudgetNews(db, { client, judge, limit: news }),
   };
 };
