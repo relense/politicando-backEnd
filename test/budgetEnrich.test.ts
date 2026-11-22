@@ -58,6 +58,16 @@ describe("summaries of Budget proposals", () => {
     expect(shown.json()).toMatchObject({ plain: { summary: "Cria o plano 2C para estudantes.", automatic: true }, news: [], statements: [] });
   });
 
+  it("leaves Budgets before 2027 alone unless asked", async () => {
+    await proposal(1, { year: 2026, lastVotedOn: "2025-11-27" });
+    await proposal(2, { lastVotedOn: "2026-11-19" });
+    const summarizer = vi.fn<ProposalSummarizer>(async (_pdf, brief) => ({ summary: `Cria o plano ${brief.number} para estudantes.`, terms: [] }));
+    expect(await summarizeProposals(db, { client: pdfClient(), summarizer, now: NOW })).toEqual({ summarized: 1, failed: 0, remaining: 0 });
+    expect(summarizer.mock.calls.map(([, brief]) => brief.number)).toEqual(["2C"]);
+    expect(await summarizeProposals(db, { client: pdfClient(), summarizer, fromYear: 2026, now: NOW })).toEqual({ summarized: 1, failed: 0, remaining: 0 });
+    expect(summarizer.mock.calls.map(([, brief]) => brief.number)).toEqual(["2C", "1C"]);
+  });
+
   it("waits before trying a failed proposal again, longer each time", async () => {
     await proposal(1);
     const client = pdfClient({ "https://app.parlamento.pt/doc/1.pdf": { status: "unavailable", reason: "HTTP 503" } });

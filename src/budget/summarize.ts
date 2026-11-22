@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { and, desc, eq, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import { budgetProposals, budgetSummaries, budgetSummaryAttempts } from "../db/schema.js";
 import type { PoliteClient } from "../ingestion/politeClient.js";
@@ -103,6 +103,12 @@ export const cleanSummary = (value: unknown): ProposalSummary | null => {
 export const summarizerFromEnv = (env: NodeJS.ProcessEnv = process.env): ProposalSummarizer | null =>
   env.ANTHROPIC_API_KEY ? claudeSummarizer(env.ANTHROPIC_API_KEY) : null;
 
+/**
+ * Only Budgets from this year on get automatic summaries: older ones aren't worth the model calls
+ * for now. Lower it (or pass `fromYear`) to fill them in.
+ */
+export const SUMMARIES_FROM_YEAR = 2027;
+
 /** After a failure, wait this many hours times the number of tries (up to a week) before trying again. */
 const RETRY_HOURS = 6;
 const MAX_RETRY_HOURS = 7 * 24;
@@ -116,16 +122,22 @@ export interface SummarizeResult {
 }
 
 /**
- * Summarises up to `limit` proposals that have none, latest votes first. Safe to run twice: a
+ * Summarises up to `limit` proposals from `fromYear`'s Budget on that have none, latest votes first. Safe to run twice: a
  * proposal summarised meanwhile (or by a person) is left as it is.
  */
 export const summarizeProposals = async (
   db: Db,
-  { client, summarizer, limit = 200, now = new Date() }: { client: Pick<PoliteClient, "getBytes">; summarizer: ProposalSummarizer; limit?: number; now?: Date },
+  {
+    client,
+    summarizer,
+    limit = 200,
+    fromYear = SUMMARIES_FROM_YEAR,
+    now = new Date(),
+  }: { client: Pick<PoliteClient, "getBytes">; summarizer: ProposalSummarizer; limit?: number; fromYear?: number; now?: Date },
 ): Promise<SummarizeResult> => {
+  const wanted = and(isNull(budgetSummaries.proposalId), isNotNull(budgetProposals.documentUrl), gte(budgetProposals.year, fromYear));
   const due = and(
-    isNull(budgetSummaries.proposalId),
-    isNotNull(budgetProposals.documentUrl),
+    wanted,
     or(
       isNull(budgetSummaryAttempts.proposalId),
       lt(budgetSummaryAttempts.triedAt, sql`${now.toISOString()}::timestamptz - least(${RETRY_HOURS} * ${budgetSummaryAttempts.tries}, ${MAX_RETRY_HOURS}) * interval '1 hour'`),
@@ -190,6 +202,6 @@ export const summarizeProposals = async (
     .select({ remaining: sql<number>`count(*)::int` })
     .from(budgetProposals)
     .leftJoin(budgetSummaries, eq(budgetSummaries.proposalId, budgetProposals.id))
-    .where(and(isNull(budgetSummaries.proposalId), isNotNull(budgetProposals.documentUrl)));
+    .where(wanted);
   return { summarized, failed, remaining };
 };

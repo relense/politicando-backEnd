@@ -1,4 +1,5 @@
 import { enrichBudget } from "../budget/enrich.js";
+import { SUMMARIES_FROM_YEAR } from "../budget/summarize.js";
 import { loadParliamentConfig } from "../config.js";
 import { createDb } from "../db/client.js";
 import { createPoliteClient } from "../ingestion/politeClient.js";
@@ -10,6 +11,7 @@ import { createRevalidator } from "../revalidate.js";
  *
  *   node dist/jobs/budgetSummaries.js                          200 summaries, 150 news checks
  *   node dist/jobs/budgetSummaries.js --summaries=2000 --news=500
+ *   node dist/jobs/budgetSummaries.js --from-year=2024       older Budgets too (default: 2027 on)
  */
 const config = loadParliamentConfig();
 const number = (name: string, fallback: number) => {
@@ -19,7 +21,12 @@ const number = (name: string, fallback: number) => {
 const { db, pool } = createDb(config.DATABASE_URL);
 
 try {
-  const result = await enrichBudget(db, { client: createPoliteClient(), summaries: number("summaries", 200), news: number("news", 150) });
+  const result = await enrichBudget(db, {
+    client: createPoliteClient(),
+    summaries: number("summaries", 200),
+    news: number("news", 150),
+    fromYear: number("from-year", SUMMARIES_FROM_YEAR),
+  });
   console.log(JSON.stringify(result));
   if ("skipped" in result) process.exitCode = 1;
   else if (result.summaries.summarized + result.news.linked > 0) await createRevalidator()(["budget"]);
