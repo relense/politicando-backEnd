@@ -9,7 +9,9 @@ in the plenary when a proposal is called up (avocada). Split votes keep each par
 The parliament's open data, Dados Abertos › Orçamento do Estado
 (`https://www.parlamento.pt/Cidadania/Paginas/DAOE.aspx`): one file per Budget, with the
 proposals and each party's vote. The parliament updates it **the same day** during the voting
-weeks. We read it every hour (`:35`), and only an unchanged file is skipped.
+weeks. We read it every hour (`:35`) **while a Budget is being discussed** (from its bill's
+submission to a month after its final overall vote), and only an unchanged file is skipped.
+Outside that, it's read once a day (06:35 UTC); a new Budget bill is noticed within the hour.
 
 - **Years:** the hourly sync reads the current legislature's Budgets (OE2026, OE2027). Every
   Budget since 2006 has per-party votes and can be loaded once with
@@ -44,6 +46,17 @@ weeks. We read it every hour (`:35`), and only an unchanged file is skipped.
   says, always kept with that article. The article's text isn't stored. This is automatic and
   approximate: it favours a missing link over a wrong one. Needs `ANTHROPIC_API_KEY` on the
   `politicando-budget` cron; without it, this step is skipped.
+- **What's voted on which day, ahead of time:** the data file only has a vote once it's happened.
+  But the Budget committee (COFAP) publishes, days before each voting day, a voting script
+  ("guião de votações") per day and venue: every proposal to be voted, in order. They're PDFs on
+  the committee's page for that Budget
+  (`https://www.parlamento.pt/sites/COM/XVIILeg/5COFAP/Paginas/OE2027.aspx`). While the Budget is
+  discussed, each hourly run reads the scripts not read yet, and a "consolidado" version replaces
+  the first one. They give `scheduled` on each proposal and `votingDays` on the summary. **Planned,
+  not certain:** the parliament says the votes are "sujeitas a verificação", and a day's votes can
+  be postponed; once voted, a proposal's `votes` and `result` are what happened. Some of the
+  parliament's links are broken for a while ("Recurso Não Encontrado"); those are tried again
+  every run.
 
 ## GET /budget
 
@@ -90,7 +103,8 @@ The Budgets we have, newest first: every year with amendment proposals or a bill
 | `topic` | Exactly as in `topics` ("Saúde"). The summary lists them |
 | `q` | Words in the number, title, article or topics, ignoring accents |
 | `votedFrom`, `votedTo` | Proposals with a vote in these days (`YYYY-MM-DD`): **a day's votes**. Items still carry all their votes; use each vote's `votedOn` |
-| `sort` | `voted` (default: latest vote first, unvoted last) or `number` (the parliament's numbering) |
+| `scheduledOn` | Proposals the voting scripts put on this day (`YYYY-MM-DD`): **"Em votação hoje"**. Planned, not certain |
+| `sort` | `voted` (default: latest vote first, unvoted last), `number` (the parliament's numbering) or `scheduled` (the order of `scheduledOn`'s scripts, committee first, then plenary; 400 `scheduled_on_required` without `scheduledOn`) |
 | `limit` | 1–100, default 20 |
 
 Each item:
@@ -119,6 +133,7 @@ Each item:
   "plain": { "summary": "Alarga a isenção a mais imóveis para alojamento de estudantes.", "automatic": true, "updatedAt": "…" },
   "documentUrl": "https://app.parlamento.pt/webutils/docs/doc.pdf?path=…",
   "sourceUrl": "https://www.parlamento.pt/Cidadania/Paginas/DAOE.aspx",
+  "scheduled": [{ "date": "2026-11-23", "venue": "committee", "position": 12, "scriptUrl": "https://app.parlamento.pt/webutils/docs/doc.pdf?path=…" }],
   "votes": [
     {
       "votedOn": "2026-11-19",
@@ -142,6 +157,11 @@ Each item:
 
 - `plain`: "O que muda", or null. When `automatic` is true a model wrote it from the PDF: label it
   ("Resumo automático") next to the "PDF oficial" link. Without it, show the title and the PDF.
+- `scheduled`: the voting days the parliament's scripts put it on, oldest first (`[]` when none):
+  `venue` is `committee` or `plenary`, `position` its place in that day's scripts for that venue,
+  `scriptUrl` the script (PDF). Show "Prevista para votação a 23/11" while `result` is `pending` or
+  `sent_to_plenary`; once it's voted, show the result instead. A proposal can be on two days (in
+  committee, then called up to the plenary).
 - `vote`: `favor`, `against`, `abstention` or `absent` (Favor, Contra, Abstenção, Ausente).
 - `party` is null for an independent deputy (`group: "Não Inscrito"`), and when the source names a
   group we don't recognise (then the vote is `ambiguous`).
@@ -208,12 +228,21 @@ in those days and only those votes count: **the daily summary**).
     { "id": "ar-48677", "title": "Discussão de artigos remetidos a Plenário e normas avocadas", "kind": "parliament", "stage": "final_vote",
       "startsAt": "2026-11-24T10:00:00.000Z", "endsAt": null, "allDay": false, "started": false }
   ],
+  "votingDays": [
+    { "date": "2026-11-23", "venue": "committee", "proposals": 236, "pending": 236 },
+    { "date": "2026-11-24", "venue": "plenary", "proposals": 2, "pending": 2 }
+  ],
   "sourceUrl": "…"
 }
 ```
 
-- `schedule`: **when the remaining votes happen.** The parliament doesn't say on which day each
-  proposal will be voted, only which sessions are for Budget votes. While proposals are still
+- `votingDays`: **which proposals each day takes**, from the parliament's voting scripts (see
+  "What's voted on which day" above), oldest first: per day and venue, how many proposals and how
+  many of those still wait for a vote. For "Em votação hoje: 236 propostas", then list them with
+  `GET /budget/:year/proposals?scheduledOn=2026-11-23&sort=scheduled`. Planned, not certain. Empty
+  before the first script, and on a day's summary (`votedFrom`/`votedTo`).
+- `schedule`: **when the remaining votes happen.** The open data doesn't say on which day each
+  proposal will be voted (the scripts do: `votingDays`), only which sessions are for Budget votes. While proposals are still
   waiting, this lists those sessions in the next 14 days (from `/agenda`: the Budget committee,
   the plenary's "normas avocadas", the final overall vote). It's empty once everything is voted,
   and on a day's summary (`votedFrom`/`votedTo`).

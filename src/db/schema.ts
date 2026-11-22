@@ -1750,3 +1750,41 @@ export const budgetStatements = pgTable(
   },
   (table) => [index("budget_statements_proposal_idx").on(table.proposalId)],
 );
+
+/**
+ * The parliament's voting scripts ("guiões de votações") for a Budget, one row per PDF on the
+ * Budget committee's page: which proposals each voting day takes, in order, published days
+ * ahead (src/budget/schedule.ts). Kept so each PDF is read once.
+ */
+export const budgetScheduleDocuments = pgTable("budget_schedule_documents", {
+  url: text().primaryKey(),
+  year: smallint().notNull(),
+  title: text().notNull(),
+  votingDay: date("voting_day").notNull(),
+  venue: text().$type<"committee" | "plenary">().notNull(),
+  /** The proposals it puts to the vote, in its order; empty until it's been read. */
+  numbers: text().array().notNull().default([]),
+  readAt: timestamp("read_at", { withTimezone: true }),
+  /** Why it couldn't be read last time (tried again on the next run). */
+  error: text(),
+  triedAt: timestamp("tried_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * Which proposals are on each voting day's script, rebuilt from the scripts on every run. By
+ * number, not id: the Budget sync replaces the year's proposals whole. Planned, not certain:
+ * votes get postponed.
+ */
+export const budgetSchedule = pgTable(
+  "budget_schedule",
+  {
+    year: smallint().notNull(),
+    number: text().notNull(),
+    votingDay: date("voting_day").notNull(),
+    venue: text().$type<"committee" | "plenary">().notNull(),
+    /** Its place in that day's scripts for that venue, from 1. */
+    position: integer().notNull(),
+    documentUrl: text("document_url").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.year, table.number, table.votingDay, table.venue] }), index("budget_schedule_day_idx").on(table.year, table.votingDay)],
+);

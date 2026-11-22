@@ -115,8 +115,10 @@ services:
       - key: PARLIAMENT_LEGISLATURE
         value: XVII
 
-  # The State Budget's amendment proposals and each party's votes (docs/budget-api.md). Hourly: during
-  # the voting weeks the parliament updates its file the same day; an unchanged file is skipped.
+  # The State Budget's amendment proposals and each party's votes (docs/budget-api.md), and the
+  # voting scripts that say which proposals each day takes. Hourly while a Budget is discussed (the
+  # parliament updates its file the same day); otherwise each run stops after a quick look at the
+  # Budget bills, and one full run a day (06:35 UTC) keeps corrections coming in.
   - type: cron
     name: politicando-budget
     runtime: docker
