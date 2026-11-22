@@ -144,7 +144,10 @@ describe("team replies and reply votes", () => {
 
     const posts = (await call("GET", `/forums/threads/${idea}`)).body.posts;
     expect(posts[1]).toMatchObject({ id: team.body.id, team: true, nickname: "Politicando", account: false, isOp: false, replyTo: first, score: 0 });
-    expect(posts[0]).toMatchObject({ team: false, score: 0 });
+    // A reader's reply starts with their own vote; the team's has no reader behind it.
+    expect(posts[0]).toMatchObject({ team: false, score: 1 });
+    expect((await call("POST", `/forums/posts/${first}/vote`, undefined, rui)).body).toEqual({ score: 1 });
+    expect((await call("GET", "/me/state", undefined, rui)).body.votes).toMatchObject({ forumPosts: [first] });
     // rui is told his reply was answered.
     expect((await call("GET", "/me/notifications", undefined, rui)).body.items[0]).toMatchObject({ kind: "forum_reply", actorName: "Politicando" });
 
@@ -175,7 +178,7 @@ describe("paging replies", () => {
     const idea = await openIdea(ana, "Modo escuro");
     const replies: number[] = [];
     for (let i = 0; i < 5; i++) replies.push((await call("POST", `/forums/threads/${idea}/posts`, { body: `Resposta ${i}` }, ana)).body.id);
-    // Scores: r3 = 2, r1 = 1, the rest 0.
+    // Scores (each starts with ana's own vote): r3 = 3, r1 = 2, the rest 1.
     await call("POST", `/forums/posts/${replies[3]}/vote`, undefined, rui);
     await call("POST", `/forums/posts/${replies[3]}/vote`, undefined, eva);
     await call("POST", `/forums/posts/${replies[1]}/vote`, undefined, rui);
@@ -207,7 +210,8 @@ describe("paging replies", () => {
 
 describe("duplicates", () => {
   it("points a duplicate to its original, whose score counts each voter once, and gives the votes back when unmarked", async () => {
-    const [ana, rui, eva] = [await register("ana"), await register("rui"), await register("eva")];
+    const [ana, rui, eva, leo] = [await register("ana"), await register("rui"), await register("eva"), await register("leo")];
+    // ana opened both, so each starts with her vote.
     const original = await openIdea(ana, "Modo escuro");
     const copy = await openIdea(ana, "Tema escuro");
     await call("POST", `/forums/threads/${original}/vote`, undefined, rui);
@@ -220,20 +224,20 @@ describe("duplicates", () => {
     expect((await setStatus(original, { status: "duplicate", duplicateOf: copy })).body.error.code).toBe("invalid_duplicate");
 
     const score = async (id: number) => (await call("GET", `/forums/threads/${id}`)).body.thread.score as number;
-    // rui voted for both: counted once.
-    expect(await score(original)).toBe(2);
-    expect(await score(copy)).toBe(2);
+    // ana and rui voted for both: counted once.
+    expect(await score(original)).toBe(3);
+    expect(await score(copy)).toBe(3);
     expect((await call("GET", `/forums/threads/${copy}`)).body.thread.duplicateOf).toEqual({ id: original, title: "Modo escuro" });
     expect(ids((await call("GET", "/forums/ideias/threads?status=duplicate")).body)).toEqual([copy]);
 
     // A new vote on the duplicate counts on the original too.
-    await call("POST", `/forums/threads/${copy}/vote`, undefined, ana);
-    expect(await score(original)).toBe(3);
+    await call("POST", `/forums/threads/${copy}/vote`, undefined, leo);
+    expect(await score(original)).toBe(4);
     // The original's own votes are what /me/state shows as voted.
     expect((await call("GET", "/me/state", undefined, eva)).body.votes.forum).toEqual([copy]);
 
     await setStatus(copy, { status: "declined" });
-    expect(await score(original)).toBe(1);
+    expect(await score(original)).toBe(2);
     expect((await call("GET", `/forums/threads/${copy}`)).body.thread.duplicateOf).toBeNull();
   });
 
@@ -247,11 +251,12 @@ describe("duplicates", () => {
     // rui votes on the duplicate (carried to the original), then on the original itself.
     await call("POST", `/forums/threads/${copy}/vote`, undefined, rui);
     expect((await call("GET", "/me/state", undefined, rui)).body.votes.forum).toEqual([copy]);
-    expect((await call("POST", `/forums/threads/${original}/vote`, undefined, rui)).body).toEqual({ score: 1 });
+    // ana's own vote and rui's.
+    expect((await call("POST", `/forums/threads/${original}/vote`, undefined, rui)).body).toEqual({ score: 2 });
     expect((await call("GET", "/me/state", undefined, rui)).body.votes.forum.sort()).toEqual([original, copy].sort());
 
     await setStatus(copy, { status: "declined" });
-    expect(await score(original)).toBe(1);
+    expect(await score(original)).toBe(2);
     expect((await call("GET", "/me/state", undefined, rui)).body.votes.forum.sort()).toEqual([original, copy].sort());
   });
 });

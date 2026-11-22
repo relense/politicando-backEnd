@@ -170,6 +170,8 @@ Upvotes a thread, on any board. No body, no captcha. Returns 200 `{ "score": 42 
 - 30 votes a minute per IP; past that, 429 `rate_limited`.
 - 404 for a missing or hidden thread. Locked threads can still be voted on.
 - On the ideas board it needs an account (401 `login_required`), and voting follows the idea.
+- A new thread starts at `score: 1`: its author's own upvote. Show the arrow as pressed for
+  them straight after posting (their vote is already counted; voting again changes nothing).
 - `score` is on every thread in the list and in `GET /forums/threads/:id`. Remember the vote
   on the device to show the arrow as pressed.
 
@@ -231,7 +233,9 @@ A new step only when the status changes, not when the answer does. Followers get
 reader, voting again returns the same score, no undo. Returns `{ "score": 4 }`. 400
 `not_an_idea` for replies on other boards, 404 for a missing or hidden one. 30 a minute.
 Order replies by votes with `GET /forums/threads/:id?sort=top`, but keep oldest first as the
-default. The reader's voted reply ids are in `GET /me/state` › `votes.forumPosts`.
+default. The reader's voted reply ids are in `GET /me/state` › `votes.forumPosts`. A reply
+starts at `score: 1`, its author's own vote (team replies start at 0), and it's in their
+`votes.forumPosts` straight away.
 
 **Duplicates.** A `duplicate` idea has `duplicateOf: { id, title }`: link to the original
 ("Já foi sugerida: *title*"). The original's `score` includes the duplicate's votes, each

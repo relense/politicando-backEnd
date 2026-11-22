@@ -407,9 +407,11 @@ export const forumRoutes =
         const id = await db.transaction(async (tx) => {
           const [created] = await tx
             .insert(forumThreads)
-            .values({ board, title, body, nickname: name, userId: who.userId, posterId: "", articleId: articleId ?? null, initiativeId: initiativeId ?? null, area })
+            .values({ board, title, body, nickname: name, userId: who.userId, posterId: "", articleId: articleId ?? null, initiativeId: initiativeId ?? null, area, score: 1 })
             .returning({ id: forumThreads.id });
           await tx.update(forumThreads).set({ posterId: posterId(forumSecret, who.key, created!.id) }).where(eq(forumThreads.id, created!.id));
+          // A thread starts with its author's own upvote, as if they'd voted for it themselves.
+          await tx.insert(forumVotes).values({ threadId: created!.id, voter: voterKey(forumSecret, who.key, created!.id), userId: who.userId });
           return created!.id;
         });
         if (who.userId !== null) {
@@ -456,7 +458,7 @@ export const forumRoutes =
         assertPublishable(body, name);
         await checkHuman(who, request.body.recaptchaToken, request.ip, request.log);
         const [thread] = await db
-          .select({ id: forumThreads.id, lockedAt: forumThreads.lockedAt })
+          .select({ id: forumThreads.id, lockedAt: forumThreads.lockedAt, board: forumThreads.board })
           .from(forumThreads)
           .where(and(eq(forumThreads.id, threadId), isNull(forumThreads.hiddenAt)));
         if (!thread) throw notFound("Thread");
@@ -472,11 +474,14 @@ export const forumRoutes =
           quotedUserId = quoted.hidden ? null : quoted.userId;
         }
         const poster = posterId(forumSecret, who.key, threadId);
+        // On the ideas board a reply starts with its author's own vote (replies' votes need an account).
+        const ownVote = thread.board === IDEAS_BOARD ? who.userId : null;
         const id = await db.transaction(async (tx) => {
           const [created] = await tx
             .insert(forumPosts)
-            .values({ threadId, body, nickname: name, userId: who.userId, posterId: poster, replyTo: replyTo ?? null })
+            .values({ threadId, body, nickname: name, userId: who.userId, posterId: poster, replyTo: replyTo ?? null, score: ownVote === null ? 0 : 1 })
             .returning({ id: forumPosts.id });
+          if (ownVote !== null) await tx.insert(forumPostVotes).values({ postId: created!.id, userId: ownVote });
           await tx
             .update(forumThreads)
             .set({ replyCount: sql`${forumThreads.replyCount} + 1`, bumpedAt: sql`now()` })
