@@ -162,11 +162,16 @@ export const commentRoutes =
           parentUsername = parent.username;
           parentUserId = parent.userId;
         }
-        const [created] = await db
-          .insert(comments)
-          .values({ ...target.insert, parentId: parentId ?? null, username, userId: who.userId, body, stance: stance ?? null })
-          .returning();
-        if (!created) throw new Error("Insert returned no row");
+        // A comment starts with its author's own like, as if they'd liked it themselves.
+        const created = await db.transaction(async (tx) => {
+          const [row] = await tx
+            .insert(comments)
+            .values({ ...target.insert, parentId: parentId ?? null, username, userId: who.userId, body, stance: stance ?? null, likes: 1 })
+            .returning();
+          if (!row) throw new Error("Insert returned no row");
+          await tx.insert(commentLikes).values({ commentId: row.id, voter: commentLikerKey(voteSecret, who.key, row.id), userId: who.userId });
+          return row;
+        });
         return { target, created, parentUsername, parentUserId };
       };
       // A story joined into another while this was being written (the merge holds its row until

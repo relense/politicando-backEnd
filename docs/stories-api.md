@@ -98,7 +98,8 @@ The feed as stories. Returns `{ items, nextCursor, total }`, paged like `/articl
   returns this story. Use it to recognise an old id the reader saved or linked to.
 - `debate`: `{ agree, disagree }`, the most liked comment that agrees and the one that
   disagrees ("A favor" / "Contra"), each `{ id, username, body, likes, createdAt }` or
-  `null`. Each needs at least one like. **Show the pair only when both exist**: one side
+  `null`. Each needs at least one like besides its author's own (every comment starts with
+  that one, so `likes` is at least 2). **Show the pair only when both exist**: one side
   alone isn't a debate. It's on every card (`/stories`, `/today`) and on `GET /stories/:id`.
 
 | query | what |
@@ -239,5 +240,8 @@ id), plus likes and a side:
 - `POST /comments/:id/like` with `{ "value": 1 }` (like) or `0` (take it back) returns
   `{ likes, mine }`. One like per reader per comment, 30 a minute per IP. It works on every
   comment: news, stories, editorial. Remember the reader's likes in the browser.
+- A new comment starts at `likes: 1`: its author's own like (team replies start at 0). Show
+  the heart as liked for them straight after posting; they can take it back with `0` like any
+  other. It's in their `GET /me/state` › `votes.comments` too.
 
 Every comment, wherever it is, now has `stance` and `likes`.
