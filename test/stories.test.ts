@@ -261,7 +261,8 @@ describe("story comments, likes and the debate", () => {
     await db.insert(comments).values({ articleId: v2.id, body: "Comentário antigo na notícia" });
     const created = await call("POST", `/stories/${ventura}/comments`, { body: "Concordo com isto", stance: "agree", recaptchaToken: "t" });
     expect(created.status).toBe(201);
-    expect(created.body).toMatchObject({ storyId: ventura, stance: "agree", likes: 0 });
+    // It starts with its author's own like.
+    expect(created.body).toMatchObject({ storyId: ventura, stance: "agree", likes: 1 });
     const reply = await call("POST", `/stories/${ventura}/comments`, { body: "Resposta", parentId: created.body.id, recaptchaToken: "t" });
     expect(reply.body).toMatchObject({ parentId: created.body.id, stance: null });
 
@@ -280,27 +281,31 @@ describe("story comments, likes and the debate", () => {
     const against = await post("Contra", "disagree");
     const neutral = await post("Sem lado");
 
-    expect((await call("POST", `/comments/${agree2}/like`, { value: 1 })).body).toEqual({ likes: 1, mine: 1 });
+    // Each comment starts with its author's own like: liking it again from there changes nothing.
     expect((await call("POST", `/comments/${agree2}/like`, { value: 1 })).body).toEqual({ likes: 1, mine: 1 });
     expect((await call("POST", `/comments/${agree2}/like`, { value: 1 }, "10.0.0.2")).body).toEqual({ likes: 2, mine: 1 });
-    await call("POST", `/comments/${agree1}/like`, { value: 1 });
-    await call("POST", `/comments/${neutral}/like`, { value: 1 });
+    expect((await call("POST", `/comments/${agree2}/like`, { value: 1 }, "10.0.0.2")).body).toEqual({ likes: 2, mine: 1 });
+    expect((await call("POST", `/comments/${agree2}/like`, { value: 1 }, "10.0.0.3")).body).toEqual({ likes: 3, mine: 1 });
+    await call("POST", `/comments/${agree1}/like`, { value: 1 }, "10.0.0.2");
+    await call("POST", `/comments/${neutral}/like`, { value: 1 }, "10.0.0.2");
 
+    // "Contra" has only its author's like: not a pick yet.
     let detail = (await call("GET", `/stories/${ventura}`)).body;
     expect(detail.articles).toHaveLength(3);
-    expect(detail.debate).toEqual({ agree: expect.objectContaining({ id: agree2, likes: 2 }), disagree: null });
+    expect(detail.debate).toEqual({ agree: expect.objectContaining({ id: agree2, likes: 3 }), disagree: null });
 
-    await call("POST", `/comments/${against}/like`, { value: 1 });
+    await call("POST", `/comments/${against}/like`, { value: 1 }, "10.0.0.2");
     detail = (await call("GET", `/stories/${ventura}`)).body;
-    expect(detail.debate.disagree).toMatchObject({ id: against, body: "Contra", likes: 1 });
+    expect(detail.debate.disagree).toMatchObject({ id: against, body: "Contra", likes: 2 });
     const cards = (await call("GET", "/stories")).body.items as { id: number; debate: unknown }[];
     expect(cards.find((c) => c.id === ventura)!.debate).toEqual(detail.debate);
     expect(cards.filter((c) => c.id !== ventura).every((c) => JSON.stringify(c.debate) === '{"agree":null,"disagree":null}')).toBe(true);
 
-    expect((await call("POST", `/comments/${against}/like`, { value: 0 })).body).toEqual({ likes: 0, mine: 0 });
+    // The author can take their own like back too.
+    expect((await call("POST", `/comments/${against}/like`, { value: 0 })).body).toEqual({ likes: 1, mine: 0 });
     expect((await call("GET", `/stories/${ventura}`)).body.debate.disagree).toBeNull();
     expect((await call("POST", "/comments/999999/like", { value: 1 })).status).toBe(404);
-    expect((await call("GET", `/stories/${ventura}/comments`)).body.find((c: { id: number }) => c.id === agree2)).toMatchObject({ likes: 2 });
+    expect((await call("GET", `/stories/${ventura}/comments`)).body.find((c: { id: number }) => c.id === agree2)).toMatchObject({ likes: 3 });
   });
 });
 

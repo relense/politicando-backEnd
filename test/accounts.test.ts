@@ -246,7 +246,7 @@ describe("accounts", () => {
     expect(s!.importa).toBe(0);
     const left = await db.select({ id: comments.id, body: comments.body, likes: comments.likes, hidden: comments.hiddenAt }).from(comments);
     expect(left.find((c) => c.id === mine.id)).toMatchObject({ body: "[apagado]", hidden: expect.any(Date) });
-    expect(left.find((c) => c.id === theirs.id)).toMatchObject({ body: "Resposta", likes: 0, hidden: null });
+    expect(left.find((c) => c.id === theirs.id)).toMatchObject({ body: "Resposta", likes: 1, hidden: null }); // its author's own like stays
     expect(await db.select().from(users).where(eq(users.username, "leitor_1"))).toEqual([]);
     expect((await db.select().from(articleVotes)).length).toBe(1);
     expect((await call("GET", "/me", { cookie })).statusCode).toBe(401);

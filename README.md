@@ -226,7 +226,11 @@ longer fits the seat map.
 Every amendment proposal to the State Budget and how each party voted on it, from the
 parliament's open data (`docs/budget-api.md`). `npm run budget:sync` reads the current
 legislature's Budgets; `-- --all` loads every Budget since 2004. In production the
-`politicando-budget` cron runs hourly and skips an unchanged file.
+`politicando-budget` cron runs hourly while a Budget is discussed (from its bill's submission to a
+month after its final overall vote) and skips an unchanged file; outside that it does one full run
+a day. While a Budget is discussed it also reads the committee's voting scripts (which proposals
+each day takes, ahead of the vote) with Poppler's `pdftotext`, installed in the Docker image
+(`brew install poppler` locally).
 
 ## Party matching
 

@@ -207,7 +207,10 @@ export const storyRoutes =
       return new Map(rows.rows.map((r) => [r.id, r.n]));
     };
 
-    /** Per story, the most liked comment on each side ("A favor" / "Contra"), counting those made on its articles too. */
+    /**
+     * Per story, the most liked comment on each side ("A favor" / "Contra"), counting those made on
+     * its articles too. It needs a like besides its author's own (every comment starts with that one).
+     */
     const debates = async (ids: number[]) => {
       type Side = z.infer<typeof debateCommentSchema>;
       const result = new Map<number, { agree: Side | null; disagree: Side | null }>();
@@ -224,7 +227,7 @@ export const storyRoutes =
       }>(sql`
         select distinct on (sid, c.stance) coalesce(c.story_id, a.story_id) as sid, c.stance, c.id, c.username, c.body, c.likes, c.created_at
         from comments c left join articles a on a.id = c.article_id
-        where c.hidden_at is null and c.stance is not null and c.likes > 0
+        where c.hidden_at is null and c.stance is not null and c.likes > 1
           and (c.story_id in (${list}) or (a.hidden_at is null and a.story_id in (${list})))
         order by sid, c.stance, c.likes desc, c.created_at asc, c.id asc`);
       for (const r of rows.rows) {

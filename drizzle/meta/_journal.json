@@ -372,6 +372,13 @@
       "when": 1795280572464,
       "tag": "0052_budget_summaries_news",
       "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1795347467609,
+      "tag": "0053_budget_vote_schedule",
+      "breakpoints": true
     }
   ]
 }

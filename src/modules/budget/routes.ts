@@ -5,7 +5,7 @@ import { PROPOSAL_RESULTS, VOTE_RESULTS } from "../../budget/parse.js";
 import { BUDGET_DATASET_PAGE } from "../../budget/sync.js";
 import type { Db } from "../../db/client.js";
 import { budgetNewsFor } from "../../budget/news.js";
-import { agendaEvents, budgetBills, budgetProposals, budgetSources, budgetSummaries, budgetVotes, parties, type BudgetVoteEntry } from "../../db/schema.js";
+import { agendaEvents, budgetBills, budgetProposals, budgetSchedule, budgetSources, budgetSummaries, budgetVotes, parties, type BudgetVoteEntry } from "../../db/schema.js";
 import { ApiError, notFound } from "../../errors.js";
 import { PARTY_DEFINITIONS } from "../../matching/parties.js";
 import { escapeLike, searchWords } from "../articles/routes.js";
@@ -73,6 +73,16 @@ const proposalSchema = z.object({
   documentUrl: z.string().nullable().describe("The proposal's official text (PDF)"),
   sourceUrl: z.string().describe("The parliament's open-data page this comes from"),
   votes: z.array(voteSchema).describe("Oldest first; a proposal voted in parts has one per part"),
+  scheduled: z
+    .array(
+      z.object({
+        date: z.string().describe("The voting day its script is for"),
+        venue: z.enum(["committee", "plenary"]),
+        position: z.number().describe("Its place in that day's scripts for that venue, from 1"),
+        scriptUrl: z.string().describe("The parliament's voting script (PDF)"),
+      }),
+    )
+    .describe("The voting days the parliament's scripts put it on, oldest first: planned, not certain (votes get postponed). [] when on none"),
 });
 
 const proposalDetailSchema = proposalSchema.extend({
@@ -167,6 +177,15 @@ export const budgetRoutes =
       const summaries = new Map(
         (await db.select().from(budgetSummaries).where(sql`${budgetSummaries.proposalId} in ${rows.map((r) => r.id)}`)).map((s) => [s.proposalId, s]),
       );
+      const planned = new Map<string, { date: string; venue: "committee" | "plenary"; position: number; scriptUrl: string }[]>();
+      for (const s of await db
+        .select()
+        .from(budgetSchedule)
+        .where(sql`(${budgetSchedule.year}, ${budgetSchedule.number}) in ${sql`(${sql.join(rows.map((r) => sql`(${r.year}, ${r.number})`), sql`, `)})`}`)
+        .orderBy(budgetSchedule.votingDay, budgetSchedule.venue)) {
+        const key = `${s.year}|${s.number}`;
+        planned.set(key, [...(planned.get(key) ?? []), { date: s.votingDay, venue: s.venue, position: s.position, scriptUrl: s.documentUrl }]);
+      }
       const byProposal = new Map<number, typeof votes>();
       for (const v of votes) byProposal.set(v.proposalId, [...(byProposal.get(v.proposalId) ?? []), v]);
       return rows.map((r) => ({
@@ -177,6 +196,7 @@ export const budgetRoutes =
         submittedOn: r.submittedOn, lastVotedOn: r.lastVotedOn,
         plain: ((s) => (s ? { summary: s.summary, automatic: s.automatic, updatedAt: s.updatedAt.toISOString() } : null))(summaries.get(r.id)),
         documentUrl: r.documentUrl, sourceUrl: BUDGET_DATASET_PAGE,
+        scheduled: planned.get(`${r.year}|${r.number}`) ?? [],
         votes: (byProposal.get(r.id) ?? []).map((v) => ({
           votedOn: v.votedOn, phase: v.phase as "committee" | "plenary" | null, result: v.result as (typeof VOTE_RESULTS)[number] | null,
           unanimous: v.unanimous, label: v.label, partLabel: v.partLabel, parts: v.parts, subject: v.subject,
@@ -202,7 +222,19 @@ export const budgetRoutes =
       return map;
     };
 
-    // The parliament gives no date per proposal; the agenda has the sessions where they're voted.
+    /** Per voting day and venue, how many proposals the parliament's scripts put on it, and how many still wait. */
+    const votingDays = async (year: number) => {
+      const rows = await db.execute<{ date: string; venue: "committee" | "plenary"; proposals: number; pending: number }>(sql`
+        select s.voting_day::text as date, s.venue, count(*)::int as proposals,
+          count(*) filter (where p.result in ('pending', 'sent_to_plenary'))::int as pending
+        from ${budgetSchedule} s left join ${budgetProposals} p on p.year = s.year and p.number = s.number
+        where s.year = ${year}
+        group by 1, 2 order by 1, 2`);
+      return rows.rows;
+    };
+
+    // The parliament gives no date per proposal in its data; the agenda has the sessions where
+    // they're voted, and the voting scripts (votingDays, scheduled) which proposals.
     const schedule = async (year: number) => {
       const rows = await db
         .select({
@@ -314,7 +346,11 @@ export const budgetRoutes =
             q: z.string().trim().max(200).optional().describe("Words in the number, title, article or topics"),
             votedFrom: day.optional().describe("Proposals with a vote on or after this day"),
             votedTo: day.optional().describe("Proposals with a vote on or before this day"),
-            sort: z.enum(["voted", "number"]).default("voted").describe("voted: latest vote first, unvoted last; number: in the parliament's numbering"),
+            scheduledOn: day.optional().describe("Proposals the parliament's voting scripts put on this day (planned, not certain)"),
+            sort: z
+              .enum(["voted", "number", "scheduled"])
+              .default("voted")
+              .describe("voted: latest vote first, unvoted last; number: in the parliament's numbering; scheduled: in the order of scheduledOn's scripts, committee first (needs scheduledOn)"),
             cursor: z.string().max(200).optional(),
             limit: z.coerce.number().int().min(1).max(100).default(20),
           }),
@@ -323,7 +359,8 @@ export const budgetRoutes =
       },
       async (request, reply) => {
         const { year } = request.params;
-        const { party: partySlug, result, topic, q, votedFrom, votedTo, sort, cursor, limit } = request.query;
+        const { party: partySlug, result, topic, q, votedFrom, votedTo, scheduledOn, sort, cursor, limit } = request.query;
+        if (sort === "scheduled" && !scheduledOn) throw new ApiError(400, "scheduled_on_required", "sort=scheduled needs scheduledOn");
         await requireYear(year);
         const offset = cursor ? decodeCursor(cursor) : 0;
         const filters: (SQL | undefined)[] = [
@@ -332,11 +369,17 @@ export const budgetRoutes =
           result?.length ? inArray(budgetProposals.result, result) : undefined,
           topic ? sql`${topic} = any(${budgetProposals.topics})` : undefined,
           votedBetween(votedFrom, votedTo),
+          scheduledOn
+            ? sql`exists (select 1 from ${budgetSchedule} s where s.year = ${budgetProposals.year} and s.number = ${budgetProposals.number} and s.voting_day = ${scheduledOn})`
+            : undefined,
           ...(q ? searchWords(q).map((w) => sql`${budgetProposals.searchText} like ${`%${escapeLike(w)}%`}`) : []),
         ];
         const where = and(...filters);
         const numberOrder = [sql`nullif(regexp_replace(${budgetProposals.number}, '\\D.*$', ''), '')::int nulls last`, budgetProposals.number, budgetProposals.id];
-        const order = sort === "number" ? numberOrder : [sql`${budgetProposals.lastVotedOn} desc nulls last`, ...numberOrder];
+        const scriptOrder = sql`(select min(case s.venue when 'committee' then 0 else 1000000 end + s.position) from ${budgetSchedule} s
+          where s.year = ${budgetProposals.year} and s.number = ${budgetProposals.number} and s.voting_day = ${scheduledOn ?? null})`;
+        const order =
+          sort === "number" ? numberOrder : sort === "scheduled" ? [scriptOrder, ...numberOrder] : [sql`${budgetProposals.lastVotedOn} desc nulls last`, ...numberOrder];
         const [rows, [{ total } = { total: 0 }]] = await Promise.all([
           db.select().from(budgetProposals).where(where).orderBy(...order).limit(limit + 1).offset(offset),
           db.select({ total: sql<number>`count(*)::int` }).from(budgetProposals).where(where),
@@ -417,6 +460,16 @@ export const budgetRoutes =
                   }),
                 )
                 .describe("While proposals are still waiting: the coming sessions where Budget votes happen (next 14 days, from /agenda). Sessions, not a date per proposal"),
+              votingDays: z
+                .array(
+                  z.object({
+                    date: z.string(),
+                    venue: z.enum(["committee", "plenary"]),
+                    proposals: z.number().describe("Proposals on that day's scripts"),
+                    pending: z.number().describe("Of those, still waiting for a vote (pending or sent_to_plenary)"),
+                  }),
+                )
+                .describe("From the parliament's voting scripts, oldest first: which days take how many proposals. List them with ?scheduledOn=&sort=scheduled"),
               sourceUrl: z.string(),
             }),
             400: errorSchema,
@@ -481,6 +534,7 @@ export const budgetRoutes =
           lastVotedOn: votes.reduce<string | null>((m, v) => (!m || v.votedOn > m ? v.votedOn : m), null),
           syncedAt: source.syncedAt.toISOString(), bills: (await billsByYear(year)).get(year) ?? [],
           schedule: results.pending + results.sent_to_plenary > 0 && !votedFrom && !votedTo ? await schedule(year) : [],
+          votingDays: votedFrom || votedTo ? [] : await votingDays(year),
           sourceUrl: BUDGET_DATASET_PAGE,
         };
       },

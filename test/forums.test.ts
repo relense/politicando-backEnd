@@ -185,17 +185,20 @@ describe("thread votes", () => {
     const c = (await openThread("geral", { title: "Mapa de contratos" })).body.id;
     await call("POST", `/forums/threads/${c}/posts`, { body: "Sim!", recaptchaToken: "t" });
 
-    expect((await call("POST", `/forums/threads/${b}/vote`, undefined, as("1.1.1.1"))).body).toEqual({ score: 1 });
-    expect((await call("POST", `/forums/threads/${b}/vote`, undefined, as("1.1.1.1"))).body).toEqual({ score: 1 });
-    expect((await call("POST", `/forums/threads/${b}/vote`, undefined, as("2.2.2.2"))).body).toEqual({ score: 2 });
-    expect((await call("POST", `/forums/threads/${a}/vote`, undefined, as("1.1.1.1"))).body).toEqual({ score: 1 });
+    // Each thread starts with its author's own upvote: voting again doesn't add one.
+    expect((await call("GET", `/forums/threads/${b}`)).body.thread).toMatchObject({ score: 1 });
+    expect((await call("POST", `/forums/threads/${b}/vote`)).body).toEqual({ score: 1 });
+    expect((await call("POST", `/forums/threads/${b}/vote`, undefined, as("1.1.1.1"))).body).toEqual({ score: 2 });
+    expect((await call("POST", `/forums/threads/${b}/vote`, undefined, as("1.1.1.1"))).body).toEqual({ score: 2 });
+    expect((await call("POST", `/forums/threads/${b}/vote`, undefined, as("2.2.2.2"))).body).toEqual({ score: 3 });
+    expect((await call("POST", `/forums/threads/${a}/vote`, undefined, as("1.1.1.1"))).body).toEqual({ score: 2 });
     expect((await call("POST", "/forums/threads/999999/vote")).status).toBe(404);
 
     const top = await call("GET", "/forums/geral/threads?sort=top");
-    // b has 2 votes; a and c have 1 and 0, but c's reply doesn't beat a's vote.
+    // b has 3 votes; a and c have 2 and 1, but c's reply doesn't beat a's vote.
     expect(ids(top.body)).toEqual([b, a, c]);
-    expect(top.body.items[0]).toMatchObject({ score: 2, status: null, answer: null, answeredAt: null });
-    expect((await call("GET", `/forums/threads/${b}`)).body.thread).toMatchObject({ score: 2 });
+    expect(top.body.items[0]).toMatchObject({ score: 3, status: null, answer: null, answeredAt: null });
+    expect((await call("GET", `/forums/threads/${b}`)).body.thread).toMatchObject({ score: 3 });
     // On equal scores, most replies first.
     await call("POST", `/forums/threads/${c}/vote`, undefined, as("3.3.3.3"));
     expect(ids((await call("GET", "/forums/geral/threads?sort=top")).body)).toEqual([b, c, a]);

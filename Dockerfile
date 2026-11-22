@@ -9,7 +9,8 @@ RUN npm run build
 FROM node:22-alpine
 ENV NODE_ENV=production
 # The contracts import streams BASE's yearly zips through unzip; busybox's can't read zip64.
-RUN apk add --no-cache unzip
+# The Budget's voting scripts are read with Poppler's pdftotext (src/budget/schedule.ts).
+RUN apk add --no-cache unzip poppler-utils
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
