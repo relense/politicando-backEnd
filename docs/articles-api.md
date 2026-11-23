@@ -7,9 +7,9 @@ Base path: `/api/v2`. Article items look the same everywhere (`id`, `title`, `ex
 
 - `kind`: `"news"`, or what the outlet itself marks as something else: `"opinion"` (columns,
   chronicles, editorials), `"podcast"` (also radio and TV programmes, such as Observador's
-  "Momentos de Glória" or SIC's "Eixo do Mal"), `"newsletter"`. **Label anything but news**
-  ("Opinião", "Podcast"). Only news makes stories, so the others have `storyId: null` and never
-  show in `/stories` or `/today`. Read from the article's URL ("/opiniao/", "/programas/") and
+  "Momentos de Glória" or SIC's "Eixo do Mal"), `"newsletter"`. **Tag anything but news**
+  ("Opinião", "Podcast"). They're in the feed like news, each on a story of its own that nothing
+  joins (the story has the same `kind`), but not in `/today`. Read from the article's URL ("/opiniao/", "/programas/") and
   its page's section, so it's as good as the outlet's own marking: an opinion piece filed
   under a news URL stays `"news"`.
 - `storyId`: the story the article belongs to, with the other outlets' versions. **The feed

@@ -307,7 +307,7 @@ export const recentStories = async (db: Runner, now = new Date()) => {
         array(select p.slug from article_parties ap join parties p on p.id = ap.party_id where ap.article_id = a.id) as parties
       from articles a join stories s on s.id = a.story_id
       where a.hidden_at is null and a.story_id in (
-        select story_id from articles where hidden_at is null and story_id is not null
+        select story_id from articles where hidden_at is null and story_id is not null and kind = 'news'
           and published_at >= ${now.toISOString()}::timestamptz - make_interval(hours => ${LOOKBACK_HOURS}))
       order by a.published_at, a.id`)
   ).rows;

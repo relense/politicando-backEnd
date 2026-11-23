@@ -1,7 +1,7 @@
 /*
  * Whether an article is news or something else an outlet lists with it: opinion (columns,
- * chronicles, editorials), podcasts and radio or TV programmes, newsletters. Only news makes
- * stories (src/stories); the rest stays an article, labelled.
+ * chronicles, editorials), podcasts and radio or TV programmes, newsletters. All are in the
+ * feed, tagged; the rest never joins a news story (src/stories), each gets one of its own.
  *
  * Outlets mark these in the URL, as a whole path segment ("/opiniao/", Público's
  * "/2026/11/23/ciencia/opiniao/…", DN's "/opiniao-dn/", Observador's "/programas/…"). Their

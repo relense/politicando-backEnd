@@ -89,6 +89,32 @@ describe("assignStories", () => {
     expect(await assignStories(db)).toEqual({ assigned: 0, created: 0, tagged: 0, notified: 0, strays: { suspects: 0, checked: 0, detached: 0 }, merges: { candidates: expect.any(Number), checked: 0, merged: 0 } });
   });
 
+  it("gives opinion and podcasts a card of their own, tagged, which nothing joins; not in Hoje em 5", async () => {
+    await background();
+    const title = "André Ventura reeleito presidente do Chega com 98% dos votos";
+    const a = await article(title, "Convenção do Chega em Viseu confirmou a liderança de André Ventura.", "rtp.pt", 5);
+    const column = await insertArticle(
+      db,
+      { title, excerpt: "O líder do Chega foi reeleito na convenção de Viseu.", source: "observador.pt", sourceUri: "op1",
+        url: "https://observador.pt/opiniao/ventura-98", publishedAt: new Date(Date.now() - 4 * HOUR), kind: "opinion" },
+      [],
+    );
+    const b = await article(title, "Ventura obteve 98% na convenção em Viseu.", "expresso.pt", 3);
+    await assignStories(db);
+    expect(await storyOf(b.id)).toBe(await storyOf(a.id));
+    expect(await storyOf(column.id)).not.toBeNull();
+    expect(await storyOf(column.id)).not.toBe(await storyOf(a.id));
+
+    const cards = (await call("GET", "/stories?q=ventura")).body.items;
+    expect(cards.map((s: { kind: string; articleCount: number }) => [s.kind, s.articleCount])).toEqual([
+      ["news", 2],
+      ["opinion", 1],
+    ]);
+    expect((await call("GET", "/stories?kind=opinion,podcast")).body.items.map((s: { id: number }) => s.id)).toEqual([await storyOf(column.id)]);
+    expect((await call("GET", "/stories?kind=gossip")).status).toBe(400);
+    expect((await call("GET", "/today?limit=10")).body.items.every((s: { kind: string }) => s.kind === "news")).toBe(true);
+  });
+
   it("doesn't join news days apart", async () => {
     await background();
     const a = await article("André Ventura reeleito presidente do Chega com 98% dos votos", "Convenção do Chega em Viseu.", "rtp.pt", 100);
