@@ -119,6 +119,13 @@ describe("President's agenda", () => {
       }),
     ]);
   });
+
+  it("tells an empty agenda from a page that changed", () => {
+    const none = `<a href="#v-pills-no-events">Próximos Dias</a><div id="v-pills-no-events"><p>Sem informação para apresentar</p></div>`;
+    expect(parsePresidentAgenda(none, () => null)).toEqual({ days: [], events: [], empty: true });
+    expect(parsePresidentAgenda("<main></main>", () => null)).toEqual({ days: [], events: [], empty: false });
+    expect(parsePresidentAgenda(presidentPage([gazeta]), () => null).empty).toBe(false);
+  });
 });
 
 describe("European Parliament", () => {

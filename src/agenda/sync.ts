@@ -56,7 +56,9 @@ export const syncAgenda = async (db: Db, { parliament, fetch: fetchImpl = fetch,
   });
 
   await run("president", async () => {
-    const { days, events } = parsePresidentAgenda(await (await get(PRESIDENT_AGENDA_URL)).text(), await loadDistricts(db));
+    const { days, events, empty } = parsePresidentAgenda(await (await get(PRESIDENT_AGENDA_URL)).text(), await loadDistricts(db));
+    // Nothing on the agenda: keep what we have (an event already imported may still happen).
+    if (empty) return { upserted: 0, removed: 0, empty: true };
     if (days.length === 0) throw new Error("No days on the President's agenda page: has it changed?");
     return syncAgendaSource(db, "president", events, { fromDay: days[0]!, toDay: days.at(-1)! }, now);
   });

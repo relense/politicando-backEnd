@@ -8,6 +8,8 @@ import { truncate } from "./text.js";
  * The President's public agenda on presidencia.pt. The page shows a tab per day (today and
  * the next few) and each event carries its details for "add to calendar" as JSON; that's what
  * we read. Its end is always the start plus an hour, a placeholder, so we leave it out.
+ * When nothing is scheduled, the page shows a single "Próximos Dias" tab (`v-pills-no-events`)
+ * saying "Sem informação para apresentar": that's `empty`, not a changed page.
  */
 export const PRESIDENT_AGENDA_URL = "https://www.presidencia.pt/atualidade/agenda";
 
@@ -71,5 +73,6 @@ export const parsePresidentAgenda = (html: string, districtOf: (municipality: st
       sourceUrl: PRESIDENT_AGENDA_URL,
     });
   });
-  return { days, events: [...events.values()] };
+  const empty = days.length === 0 && $("#v-pills-no-events").length > 0;
+  return { days, events: [...events.values()], empty };
 };
