@@ -92,7 +92,7 @@ describe("following", () => {
     expect((await call("PUT", `/me/follows/thread/${thread.id}`, ana)).statusCode).toBe(204);
     expect((await call("PUT", "/me/follows/story/999", ana)).statusCode).toBe(404);
     expect((await call("PUT", `/me/follows/thread/${thread.id}`)).statusCode).toBe(401);
-    expect((await call("GET", "/me/state", ana)).json().follows).toEqual({ stories: [], threads: [thread.id] });
+    expect((await call("GET", "/me/state", ana)).json().follows).toEqual({ stories: [], threads: [thread.id], budgetProposals: [] });
 
     await call("POST", `/forums/threads/${thread.id}/posts`, rui, { body: "Alguém?" });
     expect(await unread(ana)).toBe(1);

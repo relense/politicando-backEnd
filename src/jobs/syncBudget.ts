@@ -1,3 +1,4 @@
+import { announceBudgetVotes } from "../budget/alerts.js";
 import { importPastBudgetBills, syncCurrentBudgetBills } from "../budget/bills.js";
 import { enrichBudget } from "../budget/enrich.js";
 import { budgetInDiscussion, syncBudgetSchedule } from "../budget/schedule.js";
@@ -42,6 +43,14 @@ try {
     const { results, warnings } = await syncBudget(db, { legislatures: args.includes("--all") ? "all" : [legislature ?? config.PARLIAMENT_LEGISLATURE] });
     for (const result of results) console.log(JSON.stringify(result));
     for (const warning of warnings) console.error(`Budget: ${warning}`);
+    // New votes on proposals readers follow go to their inbox. Best effort: never fails the sync.
+    if (results.some((r) => r.changed)) {
+      try {
+        console.log(JSON.stringify({ alerts: await announceBudgetVotes(db) }));
+      } catch (error) {
+        console.error("Budget alerts:", error instanceof Error ? error.message : error);
+      }
+    }
     if (args.includes("--all")) {
       // Every earlier legislature: Budget bills (and their votes, where recorded) go back to the 1980s.
       for (const past of PAST_LEGISLATURES) {

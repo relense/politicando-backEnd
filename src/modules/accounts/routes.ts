@@ -99,7 +99,7 @@ const stateSchema = z.object({
   hidden: z.array(z.number()).describe("Article ids, newest first"),
   muted: z.object({ sources: z.array(z.string()), parties: z.array(z.string()) }),
   read: z.array(z.number()).describe("Story ids, newest first"),
-  follows: z.object({ stories: z.array(z.number()), threads: z.array(z.number()) }).describe('What the reader follows ("Seguir"), newest first'),
+  follows: z.object({ stories: z.array(z.number()), threads: z.array(z.number()), budgetProposals: z.array(z.number()) }).describe('What the reader follows ("Seguir"), newest first'),
   votes: z.object({
     articles: z.record(z.string(), z.union([z.literal(1), z.literal(-1)])).describe("Article id → 1 or -1"),
     editorial: z.record(z.string(), z.literal(1)).describe('Blog posts marked "Importa": slug → 1'),

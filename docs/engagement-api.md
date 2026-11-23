@@ -42,8 +42,12 @@ exactly as given: anything else is 400 `invalid_cursor` (it used to be ignored a
 | `prediction_result` | A prediction was settled | "Acertaste!" / "Falhaste": *initiativeTitle* was `prediction.result` | Initiative `initiativeId` |
 | `feedback_reply` | The team answered a message the reader sent from the feedback form | "A equipa respondeu à tua mensagem": `feedback.reply` | Show the reply inline (`link.feedbackId`) |
 | `idea_status` | The team changed the status of an idea the reader follows (ideas board) | "*threadTitle*: Planeado" (`status` is the idea's status now) | Thread `threadId` |
+| `budget_vote` | A Budget proposal the reader follows was voted | "Aprovada em comissão: *budgetProposal.title* (*number*)", from `budgetProposal.result` and `.phase`; add `partLabel` when set | Proposal `link.budgetProposalId` of the `link.budgetYear` Budget |
 
 - **Coalescing:** updates (`thread_update`, `story_update`, `idea_status`) are one unread line per thread or story, whose `count` goes up and which moves back to the top. Once read, the next update starts a new line.
+- **Budget votes aren't coalesced:** each vote is its own line (`count` is always 1). A proposal voted in parts gives one line per part (`partLabel` says which), and a later plenary vote is a new line.
+  - `budgetProposal: { number, title, votedOn, phase: "committee"|"plenary"|null, result: "approved"|"rejected"|"superseded"|null, partLabel }` is the vote as it was when announced. It's `null` on every other kind.
+  - They arrive after the hourly budget run that brings the vote in. Votes from before the reader followed, or more than 14 days old when first seen, aren't announced.
 - **Hidden content:** anything hidden or deleted since is left out of the list and the count.
 - **Retention:** notifications are deleted after 90 days.
 
@@ -63,14 +67,16 @@ doesn't mark anything by itself, so call this when the reader opens the inbox, o
 |---|---|
 | `PUT /me/follows/story/:id` | Follow a story: told when new outlets cover it (checked after each hourly news run) |
 | `PUT /me/follows/thread/:id` | Follow a forum thread: told about new replies |
-| `DELETE /me/follows/{story\|thread}/:id` | Stop following |
+| `PUT /me/follows/budget_proposal/:id` | Follow a Budget proposal (its parliament `id`): told about each vote on it (`budget_vote`) |
+| `DELETE /me/follows/{story\|thread\|budget_proposal}/:id` | Stop following |
+| `GET /me/follows/budget_proposals?cursor=` | The followed proposals, for "A seguir": `{ items, nextCursor }`, newest followed first, 20 a page. Items have the same shape as `GET /budget/:year/proposals` (with `year`, `result`, `lastVotedOn`, `scheduled`). Private: 401 without an account |
 
 A story id that was merged into another (see `mergedFrom` in stories-api.md) stands for the story
 it went into: following or unfollowing the old id acts on the new one, and `/me/state` lists the new id.
 
 - Calls return 204, or 404 for something missing or hidden.
 - **Followed already:** opening a thread, replying in one, and commenting on a story follow it automatically. Show the "A seguir" state so readers can unfollow.
-- **In `/me/state`:** `follows: { stories: [ids], threads: [ids] }`, newest first.
+- **In `/me/state`:** `follows: { stories: [ids], threads: [ids], budgetProposals: [ids] }`, newest first.
 - **Cap:** the newest 200 of each kind are kept.
 
 ## "Passa ou chumba?"

@@ -37,6 +37,8 @@ const itemSchema = z.object({
     postId: z.number().nullable().describe("A forum reply: the new post in threadId"),
     initiativeId: z.number().nullable(),
     feedbackId: z.number().nullable().describe("feedback_reply: the reader's message the team answered"),
+    budgetProposalId: z.number().nullable().describe("budget_vote: the proposal (/orcamento/:budgetYear/propostas/:id)"),
+    budgetYear: z.number().nullable(),
   }),
   threadTitle: z.string().nullable(),
   board: z.string().nullable(),
@@ -49,6 +51,17 @@ const itemSchema = z.object({
     .object({ id: z.number(), reply: z.string().describe("The team's answer, in full") })
     .nullable()
     .describe("feedback_reply: the team answered the reader's message"),
+  budgetProposal: z
+    .object({
+      number: z.string().describe('"1C-1"'),
+      title: z.string(),
+      votedOn: z.string(),
+      phase: z.enum(["committee", "plenary"]).nullable(),
+      result: z.enum(["approved", "rejected", "superseded"]).nullable().describe("This vote's result (one part's, for a proposal voted in parts)"),
+      partLabel: z.string().nullable().describe("Which part, for a proposal voted in parts, as the source writes it"),
+    })
+    .nullable()
+    .describe("budget_vote: a proposal the reader follows was voted. One line per vote, as it was"),
   prediction: z
     .object({
       initiativeTitle: z.string(),
@@ -119,12 +132,14 @@ export const notificationRoutes =
       },
     );
 
-    const followParams = z.object({ kind: z.enum(["story", "thread"]), id: idSchema });
+    const followParams = z.object({ kind: z.enum(["story", "thread", "budget_proposal"]), id: idSchema });
     const exists = async (kind: FollowKind, id: number, runner: Pick<Db, "execute"> = db) => {
       const query =
         kind === "story"
           ? sql`select 1 from articles where story_id = ${id} and hidden_at is null limit 1`
-          : sql`select 1 from forum_threads where id = ${id} and hidden_at is null`;
+          : kind === "thread"
+            ? sql`select 1 from forum_threads where id = ${id} and hidden_at is null`
+            : sql`select 1 from budget_proposals where id = ${id}`;
       return (await runner.execute(query)).rows.length > 0;
     };
 
@@ -133,7 +148,7 @@ export const notificationRoutes =
       {
         schema: {
           tags: ["accounts"],
-          summary: '"Seguir" a story (told when new outlets cover it) or a forum thread (told about new replies)',
+          summary: '"Seguir" a story (told when new outlets cover it), a forum thread (new replies) or a Budget proposal (each vote on it)',
           description: "Opening or replying in a thread, and commenting on a story, follow it already. The newest 200 of each kind are kept.",
           params: followParams,
           response: { 204: z.null(), ...errors, 404: errorSchema },
@@ -154,7 +169,7 @@ export const notificationRoutes =
           return reply.status(204).send(null);
         }
         const id = request.params.id;
-        if (!(await exists(kind, id))) throw new ApiError(404, "not_found", "Thread not found");
+        if (!(await exists(kind, id))) throw new ApiError(404, "not_found", kind === "thread" ? "Thread not found" : "Proposal not found");
         await follow(db, reader.id, kind, id);
         return reply.status(204).send(null);
       },

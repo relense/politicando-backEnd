@@ -1,6 +1,6 @@
 import { and, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import type { Db } from "../db/client.js";
-import { type NotificationKind, notifications, userFollows } from "../db/schema.js";
+import { type BudgetVoteNotice, type NotificationKind, notifications, userFollows } from "../db/schema.js";
 import { ApiError } from "../errors.js";
 
 /*
@@ -12,7 +12,7 @@ import { ApiError } from "../errors.js";
 /** Anything that can run queries: the db or a transaction. */
 type Runner = Pick<Db, "insert" | "select" | "delete" | "update" | "execute">;
 
-export type FollowKind = "story" | "thread";
+export type FollowKind = "story" | "thread" | "budget_proposal";
 /** Follows kept per kind; past it, the oldest go. */
 export const FOLLOW_CAP = 200;
 /** Read or not, notifications older than this are deleted. */
@@ -30,9 +30,16 @@ export const notify = async (db: Runner, input: { userIds: Iterable<number>; kin
     .values(userIds.map((userId) => ({ userId, kind: input.kind, targetId: input.targetId, actorName: input.actorName ?? null })))
     .onConflictDoUpdate({
       target: [notifications.userId, notifications.kind, notifications.targetId],
-      targetWhere: sql`read_at is null`,
+      targetWhere: sql`read_at is null and kind <> 'budget_vote'`,
       set: { count: sql`${notifications.count} + 1`, actorName: sql`excluded.actor_name`, createdAt: sql`now()` },
     });
+};
+
+/** A Budget vote on a proposal these readers follow: one line per vote, never coalesced. */
+export const notifyBudgetVote = async (db: Runner, input: { userIds: Iterable<number>; proposalId: number; detail: BudgetVoteNotice }) => {
+  const userIds = [...new Set(input.userIds)];
+  if (userIds.length === 0) return;
+  await db.insert(notifications).values(userIds.map((userId) => ({ userId, kind: "budget_vote" as const, targetId: input.proposalId, detail: input.detail })));
 };
 
 /** Runs notify() without ever failing the caller: a lost notification beats a lost reply. */
@@ -66,7 +73,8 @@ export const followsOf = async (db: Runner, userId: number) => {
     .from(userFollows)
     .where(eq(userFollows.userId, userId))
     .orderBy(sql`${userFollows.createdAt} desc`);
-  return { stories: rows.filter((r) => r.kind === "story").map((r) => r.id), threads: rows.filter((r) => r.kind === "thread").map((r) => r.id) };
+  const of = (kind: FollowKind) => rows.filter((r) => r.kind === kind).map((r) => r.id);
+  return { stories: of("story"), threads: of("thread"), budgetProposals: of("budget_proposal") };
 };
 
 /**
@@ -127,6 +135,7 @@ interface InboxRow extends Record<string, unknown> {
   vote_result: string | null;
   feedback_reply: string | null;
   idea_status: "reviewing" | "planned" | "in_progress" | "done" | "declined" | "duplicate" | null;
+  detail: BudgetVoteNotice | null;
   cursor_at: string;
 }
 
@@ -150,7 +159,7 @@ export const inbox = async (db: Runner, userId: number, cursor?: string) => {
   const after = cursor === undefined ? sql`` : afterCursor(cursor);
   const rows = (
     await db.execute<InboxRow>(sql`
-      select n.id, n.kind, n.target_id, n.actor_name, n.count, n.created_at, n.read_at,
+      select n.id, n.kind, n.target_id, n.actor_name, n.count, n.created_at, n.read_at, n.detail,
         coalesce(c.body, fp.body) as snippet,
         c.article_id, coalesce(c.story_id, case when n.kind = 'story_update' then n.target_id end) as story_id,
         ep.slug as post_slug, c.id as comment_id,
@@ -192,12 +201,21 @@ export const inbox = async (db: Runner, userId: number, cursor?: string) => {
         postId: r.kind === "forum_reply" ? r.target_id : null,
         initiativeId: r.kind === "prediction_result" ? r.target_id : null,
         feedbackId: r.kind === "feedback_reply" ? r.target_id : null,
+        budgetProposalId: r.kind === "budget_vote" ? r.target_id : null,
+        budgetYear: r.kind === "budget_vote" ? (r.detail?.year ?? null) : null,
       },
       threadTitle: r.thread_title,
       board: r.board,
       headline: r.headline,
       status: r.idea_status,
       feedback: r.kind === "feedback_reply" && r.feedback_reply !== null ? { id: r.target_id, reply: r.feedback_reply } : null,
+      budgetProposal:
+        r.kind === "budget_vote" && r.detail
+          ? {
+              number: r.detail.number, title: r.detail.title, votedOn: r.detail.votedOn,
+              phase: r.detail.phase, result: r.detail.result, partLabel: r.detail.partLabel,
+            }
+          : null,
       prediction:
         r.kind === "prediction_result" && r.pick
           ? { initiativeTitle: r.initiative_title ?? "", pick: r.pick as "pass" | "fail", outcome: r.outcome as "hit" | "miss" | "void" | null, result: r.vote_result }
