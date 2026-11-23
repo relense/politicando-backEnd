@@ -217,6 +217,8 @@ export const linkBudgetNews = async (
         and(
           isNull(budgetNews.articleId),
           isNull(articles.hiddenAt),
+          // News only: a column's view isn't what a party said, nor news about the proposal.
+          eq(articles.kind, "news"),
           sql`${articles.publishedAt} between ${start.toISOString()}::timestamptz and ${(end < now ? end : now).toISOString()}::timestamptz`,
           sql`${text} ~ ${terms}`,
           sql`${text} ~ ${BUDGET_WORDS}`,

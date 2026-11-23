@@ -37,6 +37,7 @@ import { loadMatchableLocalOfficials } from "../places/localOfficials.js";
 import { GOVERNMENT_ALIASES } from "../government/aliases.js";
 import { PRESIDENT_ALIASES, currentPresident } from "../presidency/presidents.js";
 import { DEPUTY_ALIASES } from "../parliament/aliases.js";
+import { articleKind } from "./kind.js";
 import { extractArticle, isGenericHeadline, pickHeadline } from "./extractArticle.js";
 import { parseNewsSitemap, parseRss, type ListingItem } from "./parseListing.js";
 import type { PoliteClient } from "./politeClient.js";
@@ -343,6 +344,7 @@ const scanSource = async (
       let description = item.description;
       let imageUrl = item.imageUrl;
       let pageUnavailable = false;
+      let section: string | null = null;
 
       if (worthReading && item.fullText.length < FULL_TEXT_CHARS) {
         if (stats.pagesRead >= maxPagesPerSource) {
@@ -360,6 +362,7 @@ const scanSource = async (
           description = (headline.fromPage && extracted.description) || description || extracted.description;
           // The page's share image is more reliable than the one in the listing.
           imageUrl = extracted.imageUrl ?? imageUrl;
+          section = extracted.section;
         } else if (page.status === "unavailable") {
           pageUnavailable = true;
         }
@@ -382,6 +385,7 @@ const scanSource = async (
             source: source.domain,
             imageUrl,
             publishedAt: item.publishedAt,
+            kind: articleKind(url, section),
           },
           { ...matches, initiatives: initiativeMatches, government: matchNames(text, matchable.government),
             president: matchNames(text, matchable.president),

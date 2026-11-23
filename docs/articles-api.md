@@ -2,9 +2,16 @@
 
 Base path: `/api/v2`. Article items look the same everywhere (`id`, `title`, `excerpt`, `url`,
 `source`, `imageUrl`, `publishedAt`, `commentCount`, `upvotes`, `downvotes`, `parties`, `deputies`, `government`,
-`president`, `people`, `initiatives`, `storyId`). That includes the article lists in `/deputies/:id`, `/initiatives/:id`,
+`president`, `people`, `initiatives`, `kind`, `storyId`). That includes the article lists in `/deputies/:id`, `/initiatives/:id`,
 `/government/...` and `/president`.
 
+- `kind`: `"news"`, or what the outlet itself marks as something else: `"opinion"` (columns,
+  chronicles, editorials), `"podcast"` (also radio and TV programmes, such as Observador's
+  "Momentos de Glória" or SIC's "Eixo do Mal"), `"newsletter"`. **Label anything but news**
+  ("Opinião", "Podcast"). Only news makes stories, so the others have `storyId: null` and never
+  show in `/stories` or `/today`. Read from the article's URL ("/opiniao/", "/programas/") and
+  its page's section, so it's as good as the outlet's own marking: an opinion piece filed
+  under a news URL stays `"news"`.
 - `storyId`: the story the article belongs to, with the other outlets' versions. **The feed
   should use stories** (`docs/stories-api.md`); articles remain for search and for the news
   on deputy, initiative, Government and President pages.
@@ -37,6 +44,7 @@ Returns `{ items, nextCursor, total }`. `total` is how many articles match the f
 | `since` | Only articles published in the last N hours: `24h` (or `24`). 1 to 8760 |
 | `ids` | Only these articles, by id, separated by commas (up to 100). For the reader's **saved** list |
 | `exclude` | Leave these article ids out (up to 500). For the ones the reader **hid** |
+| `kind` | Only these kinds, separated by commas: `news`, or `opinion,podcast` for an "Opinião" section. All kinds by default |
 | `excludeSource` | Leave out these outlets (up to 30). For "Mostrar menos deste jornal" |
 | `excludeParty` | Leave out articles about any of these parties (up to 30). For "Mostrar menos sobre este partido". Unknown slugs are ignored, so stale saved preferences never break the feed |
 | `limit` | 1–50, default 10 |
