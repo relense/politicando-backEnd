@@ -5,7 +5,7 @@ import { PROPOSAL_RESULTS, VOTE_RESULTS } from "../../budget/parse.js";
 import { BUDGET_DATASET_PAGE } from "../../budget/sync.js";
 import type { Db } from "../../db/client.js";
 import { budgetNewsFor } from "../../budget/news.js";
-import { agendaEvents, budgetBills, budgetProposals, budgetSchedule, budgetSources, budgetSummaries, budgetVotes, parties, type BudgetVoteEntry } from "../../db/schema.js";
+import { agendaEvents, budgetBills, budgetProposals, budgetSchedule, budgetSources, budgetSummaries, budgetVotes, parties, userFollows, type BudgetVoteEntry } from "../../db/schema.js";
 import { ApiError, notFound } from "../../errors.js";
 import { PARTY_DEFINITIONS } from "../../matching/parties.js";
 import { escapeLike, searchWords } from "../articles/routes.js";
@@ -119,6 +119,7 @@ const voteCountsSchema = z.object({ favor: z.number(), against: z.number(), abst
 const resultCountsSchema = z.object(Object.fromEntries(PROPOSAL_RESULTS.map((r) => [r, z.number()])) as Record<(typeof PROPOSAL_RESULTS)[number], z.ZodNumber>);
 
 const PUBLIC = "public, max-age=300";
+const FOLLOWED_PAGE = 20;
 
 const encodeCursor = (offset: number) => Buffer.from(JSON.stringify({ o: offset })).toString("base64url");
 const decodeCursor = (value: string) => {
@@ -386,6 +387,34 @@ export const budgetRoutes =
         ]);
         reply.header("Cache-Control", PUBLIC);
         return { items: await hydrate(rows.slice(0, limit)), nextCursor: rows.length > limit ? encodeCursor(offset + limit) : null, total };
+      },
+    );
+
+    app.get(
+      "/me/follows/budget_proposals",
+      {
+        schema: {
+          tags: ["accounts"],
+          summary: 'The Budget proposals the reader follows ("A seguir"), newest followed first, 20 a page',
+          description: "Private to the account. Same items as GET /budget/:year/proposals.",
+          querystring: z.object({ cursor: z.string().max(200).optional() }),
+          response: { 200: z.object({ items: z.array(proposalSchema), nextCursor: z.string().nullable() }), 400: errorSchema, 401: errorSchema },
+        },
+      },
+      async (request, reply) => {
+        if (!request.reader) throw new ApiError(401, "unauthenticated", "Log in first");
+        reply.header("Cache-Control", "private, no-store");
+        const offset = request.query.cursor ? decodeCursor(request.query.cursor) : 0;
+        const rows = await db
+          .select({ proposal: budgetProposals })
+          .from(userFollows)
+          .innerJoin(budgetProposals, eq(budgetProposals.id, userFollows.targetId))
+          .where(and(eq(userFollows.userId, request.reader.id), eq(userFollows.kind, "budget_proposal")))
+          .orderBy(desc(userFollows.createdAt), desc(userFollows.targetId))
+          .limit(FOLLOWED_PAGE + 1)
+          .offset(offset);
+        const page = rows.slice(0, FOLLOWED_PAGE).map((r) => r.proposal);
+        return { items: await hydrate(page), nextCursor: rows.length > FOLLOWED_PAGE ? encodeCursor(offset + FOLLOWED_PAGE) : null };
       },
     );
 

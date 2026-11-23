@@ -593,6 +593,7 @@ describe("platform", () => {
       "/api/v2/me/email",
       "/api/v2/me/email/remind-later",
       "/api/v2/me/export",
+      "/api/v2/me/follows/budget_proposals",
       "/api/v2/me/follows/{kind}/{id}",
       "/api/v2/me/hidden/{id}",
       "/api/v2/me/merge",

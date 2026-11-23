@@ -201,6 +201,13 @@ One item, as above, plus its news and statements. 404 for an unknown id, or one 
   news, not from the parliament's record. `party` is null when the article names no party, or one we
   can't tell apart (a coalition). Hide the section when it's empty.
 
+## "Seguir" a proposal
+
+Readers with an account can follow a proposal and get each vote on it in their inbox. The calls
+(`PUT`/`DELETE /me/follows/budget_proposal/:id`, `GET /me/follows/budget_proposals`) and the
+`budget_vote` notification are in engagement-api.md. The id is the proposal's `id` here, which
+stays the same across syncs.
+
 ## GET /budget/:year/summary
 
 Totals for the year, or for some days with `votedFrom` / `votedTo` (then only proposals voted

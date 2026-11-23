@@ -1497,14 +1497,26 @@ export const userReads = pgTable(
   (table) => [primaryKey({ columns: [table.userId, table.storyId] })],
 );
 
-export const NOTIFICATION_KINDS = ["comment_reply", "forum_reply", "thread_update", "story_update", "prediction_result", "idea_status", "feedback_reply"] as const;
+export const NOTIFICATION_KINDS = ["comment_reply", "forum_reply", "thread_update", "story_update", "prediction_result", "idea_status", "feedback_reply", "budget_vote"] as const;
 export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
+
+/** What a budget_vote notification says: the vote as it was when announced. */
+export type BudgetVoteNotice = {
+  year: number;
+  number: string;
+  title: string;
+  votedOn: string;
+  phase: "committee" | "plenary" | null;
+  result: "approved" | "rejected" | "superseded" | null;
+  partLabel: string | null;
+};
 
 /**
  * A reader's private inbox (src/notifications): replies to them, news on what they follow,
  * their predictions' results. `target_id` is the new comment or forum post for replies, the
- * thread or story for updates, the initiative for predictions. Updates are coalesced: one
- * unread line per thread or story, with `count` going up.
+ * thread or story for updates, the initiative for predictions, the proposal for budget votes.
+ * Updates are coalesced: one unread line per thread or story, with `count` going up. Budget
+ * votes aren't: each vote is its own line, with what it said in `detail`.
  */
 export const notifications = pgTable(
   "notifications",
@@ -1518,19 +1530,23 @@ export const notifications = pgTable(
     count: integer().notNull().default(1),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     readAt: timestamp("read_at", { withTimezone: true }),
+    /** budget_vote: the vote announced (a snapshot: the proposal's own row is replaced on sync). */
+    detail: jsonb().$type<BudgetVoteNotice>(),
   },
   (table) => [
     index("notifications_inbox_idx").on(table.userId, table.createdAt.desc()),
-    uniqueIndex("notifications_unread_once_idx").on(table.userId, table.kind, table.targetId).where(sql`read_at is null`),
+    uniqueIndex("notifications_unread_once_idx")
+      .on(table.userId, table.kind, table.targetId)
+      .where(sql`read_at is null and kind <> 'budget_vote'`),
   ],
 );
 
-/** Stories and forum threads a reader follows ("Seguir"). */
+/** Stories, forum threads and Budget proposals a reader follows ("Seguir"). */
 export const userFollows = pgTable(
   "user_follows",
   {
     userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-    kind: text().$type<"story" | "thread">().notNull(),
+    kind: text().$type<"story" | "thread" | "budget_proposal">().notNull(),
     targetId: integer("target_id").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -1662,6 +1678,21 @@ export const budgetVotes = pgTable(
     ambiguity: text(),
   },
   (table) => [primaryKey({ columns: [table.proposalId, table.seq] }), index("budget_votes_day_idx").on(table.votedOn)],
+);
+
+/**
+ * Every Budget vote already seen (src/budget/alerts.ts), so a followed proposal's vote is
+ * announced once. Not keyed to budget_votes, which the sync replaces whole.
+ */
+export const budgetVoteNotices = pgTable(
+  "budget_vote_notices",
+  {
+    proposalId: integer("proposal_id").notNull(),
+    seq: smallint().notNull(),
+    votedOn: date("voted_on").notNull(),
+    seenAt: timestamp("seen_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.proposalId, table.seq, table.votedOn] })],
 );
 
 /** One row per Budget year: which file was read, and its hash, so an unchanged file is skipped. */
