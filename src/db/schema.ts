@@ -47,7 +47,9 @@ export const articles = pgTable(
     downvotes: integer().notNull().default(0),
     /** Hidden by a moderator (duplicate, not about politics…): left out everywhere readers look. */
     hiddenAt: timestamp("hidden_at", { withTimezone: true }),
-    /** The story it tells, with other outlets' versions (src/stories). Null until grouped. */
+    /** "news", or "opinion", "podcast" or "newsletter" (src/ingestion/kind.ts): only news makes stories. */
+    kind: text().$type<"news" | "opinion" | "podcast" | "newsletter">().notNull().default("news"),
+    /** The story it tells, with other outlets' versions (src/stories). Null until grouped; always null when not news. */
     storyId: integer("story_id").references((): AnyPgColumn => stories.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },

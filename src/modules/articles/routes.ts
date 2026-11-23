@@ -7,6 +7,7 @@ import { articles, articleViews, articleVotes, deputies, initiatives, parties } 
 import { ApiError, notFound } from "../../errors.js";
 import { articleVoterKey } from "../../forums/identity.js";
 import { createReadDedupe, lisbonToday } from "../editorial/routes.js";
+import { ARTICLE_KINDS } from "../../ingestion/kind.js";
 import { articleParamsSchema, errorSchema } from "../shared.js";
 
 const cursorSchema = z.object({
@@ -84,7 +85,13 @@ export const articleSchema = z.object({
   source: z.string(),
   imageUrl: z.string().nullable(),
   publishedAt: z.string(),
-  storyId: z.number().nullable().describe("The story it belongs to, with the other outlets' versions (null for a few minutes after it's found)"),
+  kind: z
+    .enum(ARTICLE_KINDS)
+    .describe('"news", or what the outlet marks as "opinion" (columns, chronicles, editorials), "podcast" (also radio and TV programmes) or "newsletter". Label anything but news'),
+  storyId: z
+    .number()
+    .nullable()
+    .describe("The story it belongs to, with the other outlets' versions (null for a few minutes after it's found, and always for anything but news)"),
   commentCount: z.number(),
   upvotes: z.number(),
   downvotes: z.number(),
@@ -185,6 +192,7 @@ export const articleColumns = {
   source: articles.source,
   imageUrl: articles.imageUrl,
   publishedAt: articles.publishedAt,
+  kind: articles.kind,
   storyId: articles.storyId,
   commentCount: commentCountSql,
   upvotes: articles.upvotes,
@@ -268,6 +276,10 @@ export const articleRoutes =
               .describe('Outlet as in article.source (see /articles/sources), or several separated by commas: articles from any of them'),
             ids: idList(100).optional().describe("Only these articles (up to 100), e.g. the reader's saved ones"),
             exclude: idList(500).optional().describe("Leave these articles out (up to 500), e.g. the ones the reader hid"),
+            kind: commaList(4)
+              .pipe(z.array(z.enum(ARTICLE_KINDS)))
+              .optional()
+              .describe('Only these kinds, separated by commas ("news", or "opinion,podcast" for an Opinião section). All kinds by default'),
             excludeSource: commaList(30).optional().describe("Leave out articles from these outlets (\"show fewer like this\")"),
             excludeParty: commaList(30)
               .optional()
@@ -308,7 +320,7 @@ export const articleRoutes =
         },
       },
       async (request) => {
-        const { party, deputy, initiative, governmentMember, president, q, source, ids, exclude, excludeSource, excludeParty, sort, days, period, since, cursor, limit } =
+        const { party, deputy, initiative, governmentMember, president, q, source, kind, ids, exclude, excludeSource, excludeParty, sort, days, period, since, cursor, limit } =
           request.query;
         // Only newest pages by (publishedAt, id); the others by position, since counts change.
         const byPosition = sort !== "newest";
@@ -327,6 +339,7 @@ export const articleRoutes =
           conditions.push(sql`${FOLDED_TEXT} like ${`%${escapeLike(word)}%`}`);
         }
         if (source !== undefined) conditions.push(inArray(articles.source, source));
+        if (kind !== undefined) conditions.push(inArray(articles.kind, kind));
         if (ids !== undefined) conditions.push(inArray(articles.id, ids));
         if (exclude !== undefined) conditions.push(notInArray(articles.id, exclude));
         if (excludeSource !== undefined) conditions.push(notInArray(articles.source, excludeSource));

@@ -112,7 +112,14 @@ describe("extractArticle", () => {
       description: "Resumo",
       headline: "",
       imageUrl: "https://a.pt/i.jpg",
+      section: null,
     });
+  });
+
+  it("reads the page's section, from JSON-LD or the meta tag", () => {
+    expect(extractArticle(`${ld({ "@type": "NewsArticle", articleSection: "Opinião DN" })}<p>${long}</p>`).section).toBe("Opinião DN");
+    expect(extractArticle(`${ld({ articleSection: ["Opinião", "Política"] })}<p>${long}</p>`).section).toBe("Opinião");
+    expect(extractArticle(`<meta property="article:section" content="Política"><p>${long}</p>`).section).toBe("Política");
   });
 
   it("falls back to paragraphs in the article, skipping short ones and page furniture", () => {

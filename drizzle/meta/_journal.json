@@ -379,6 +379,13 @@
       "when": 1795347467609,
       "tag": "0053_budget_vote_schedule",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1795429178433,
+      "tag": "0054_article_kinds",
+      "breakpoints": true
     }
   ]
 }

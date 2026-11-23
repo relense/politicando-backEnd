@@ -26,7 +26,8 @@ interface Row extends Record<string, unknown> {
 }
 
 /**
- * Gives every visible article without a story one: an existing story it matches, or a new
+ * Gives every visible news article without a story one (opinion, podcasts and newsletters
+ * never make stories: src/ingestion/kind.ts): an existing story it matches, or a new
  * one. Oldest first, so stories grow in the order the news came out. Hidden articles are
  * skipped (if one is shown again, the next run groups it). Runs after each ingest; safe to run
  * twice at once (the second waits).
@@ -78,7 +79,7 @@ type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 const group = async (tx: Tx, touched: Set<number>, createdIds: Set<number>) => {
   const [first] = (
     await tx.execute<{ at: Date | null }>(
-      sql`select min(published_at) as at from articles where story_id is null and hidden_at is null`,
+      sql`select min(published_at) as at from articles where story_id is null and hidden_at is null and kind = 'news'`,
     )
   ).rows;
   if (!first?.at) return { assigned: 0, created: 0 };
@@ -90,7 +91,7 @@ const group = async (tx: Tx, touched: Set<number>, createdIds: Set<number>) => {
             || array(select 'g:' || agm.member_id from article_government_members agm where agm.article_id = a.id)
             || array(select 'p:' || ap.president_id from article_presidents ap where ap.article_id = a.id) as people
         from articles a
-        where a.hidden_at is null and a.published_at >= ${first.at}::timestamptz - make_interval(days => ${CONTEXT_DAYS})
+        where a.hidden_at is null and a.kind = 'news' and a.published_at >= ${first.at}::timestamptz - make_interval(days => ${CONTEXT_DAYS})
         order by a.published_at, a.id`)
   ).rows;
 

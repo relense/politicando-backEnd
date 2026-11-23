@@ -8,6 +8,8 @@ export interface ExtractedArticle {
   /** The page's own headline (og:title, else the JSON-LD headline), possibly with a site suffix. */
   headline: string;
   imageUrl: string | null;
+  /** The page's section (JSON-LD articleSection, else article:section), as written: "Opinião DN". */
+  section: string | null;
 }
 
 const MIN_PARAGRAPH_CHARS = 60;
@@ -44,19 +46,23 @@ export const extractArticle = (html: string): ExtractedArticle => {
   const imageUrl = toImageUrl($('meta[property="og:image"]').attr("content"));
   const jsonLdHeadline = nodes.map((node) => node.headline).find((h): h is string => typeof h === "string");
   const headline = toPlainText($('meta[property="og:title"]').attr("content") ?? jsonLdHeadline ?? "");
-  if (isPaywalled(nodes)) return { text: "", description, headline, imageUrl };
+  const jsonLdSection = nodes
+    .map((node) => (Array.isArray(node.articleSection) ? node.articleSection[0] : node.articleSection))
+    .find((s): s is string => typeof s === "string" && s.trim() !== "");
+  const section = (jsonLdSection ?? $('meta[property="article:section"]').attr("content") ?? "").trim() || null;
+  if (isPaywalled(nodes)) return { text: "", description, headline, imageUrl, section };
 
   const articleBody = nodes
     .map((node) => node.articleBody)
     .find((body): body is string => typeof body === "string" && body.trim() !== "");
-  if (articleBody) return { text: toPlainText(articleBody), description, headline, imageUrl };
+  if (articleBody) return { text: toPlainText(articleBody), description, headline, imageUrl, section };
 
   $("script, style, nav, header, footer, aside, form").remove();
   const inArticle = $("article p").toArray();
   const paragraphs = (inArticle.length > 0 ? inArticle : $("p").toArray())
     .map((element) => clean($(element).text()))
     .filter((text) => text.length >= MIN_PARAGRAPH_CHARS);
-  return { text: paragraphs.join("\n"), description, headline, imageUrl };
+  return { text: paragraphs.join("\n"), description, headline, imageUrl, section };
 };
 
 const simplify = (text: string) =>
