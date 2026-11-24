@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { and, eq, gt, isNull, lt, ne } from "drizzle-orm";
+import { and, eq, gt, lt, ne, sql } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import { userSessions, users } from "../db/schema.js";
 
@@ -15,10 +15,21 @@ const SESSION_DAYS = 30;
 const RENEW_BELOW_DAYS = 15;
 const DAY = 24 * 60 * 60 * 1000;
 
+/** Why the account can't take part right now: banned, or suspended until a date. */
+export type Restriction = { code: "account_banned" } | { code: "account_suspended"; until: Date };
+
 export interface Reader {
   id: number;
   username: string;
+  /** Set while banned or suspended: still logged in (to read, export or delete), but can't take part. */
+  restriction?: Restriction | null;
 }
+
+export const restrictionOf = (user: { disabledAt: Date | null; suspendedUntil: Date | null }, now = new Date()): Restriction | null =>
+  user.disabledAt ? { code: "account_banned" } : user.suspendedUntil && user.suspendedUntil > now ? { code: "account_suspended", until: user.suspendedUntil } : null;
+
+/** How often a reader's last-seen time is written: at most once an hour per account. */
+const SEEN_EVERY_MS = 60 * 60 * 1000;
 
 const hashToken = (token: string) => createHash("sha256").update(token).digest("base64url");
 
@@ -32,21 +43,31 @@ export const createReaderSession = async (db: Db, userId: number) => {
   return { token, expiresAt };
 };
 
-/** The session's reader, or null (unknown, expired, or a disabled account). Returns a new expiry when it was extended. */
+/**
+ * The session's reader, or null (unknown or expired). A banned or suspended account keeps its
+ * session, flagged (`restriction`), so taking part answers 403 with why. Returns a new expiry
+ * when it was extended.
+ */
 export const sessionReader = async (db: Db, token: string): Promise<{ reader: Reader; renewedUntil: Date | null } | null> => {
   const tokenHash = hashToken(token);
   const [row] = await db
-    .select({ id: users.id, username: users.username, expiresAt: userSessions.expiresAt })
+    .select({
+      id: users.id, username: users.username, expiresAt: userSessions.expiresAt,
+      disabledAt: users.disabledAt, suspendedUntil: users.suspendedUntil, lastSeenAt: users.lastSeenAt,
+    })
     .from(userSessions)
     .innerJoin(users, eq(users.id, userSessions.userId))
-    .where(and(eq(userSessions.tokenHash, tokenHash), gt(userSessions.expiresAt, new Date()), isNull(users.disabledAt)));
+    .where(and(eq(userSessions.tokenHash, tokenHash), gt(userSessions.expiresAt, new Date())));
   if (!row) return null;
+  if (!row.lastSeenAt || Date.now() - row.lastSeenAt.getTime() > SEEN_EVERY_MS) {
+    await db.update(users).set({ lastSeenAt: sql`now()` }).where(eq(users.id, row.id));
+  }
   let renewedUntil: Date | null = null;
   if (row.expiresAt.getTime() - Date.now() < RENEW_BELOW_DAYS * DAY) {
     renewedUntil = new Date(Date.now() + SESSION_DAYS * DAY);
     await db.update(userSessions).set({ expiresAt: renewedUntil }).where(eq(userSessions.tokenHash, tokenHash));
   }
-  return { reader: { id: row.id, username: row.username }, renewedUntil };
+  return { reader: { id: row.id, username: row.username, restriction: restrictionOf(row) }, renewedUntil };
 };
 
 export const endReaderSession = (db: Db, token: string) => db.delete(userSessions).where(eq(userSessions.tokenHash, hashToken(token)));

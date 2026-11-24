@@ -262,7 +262,9 @@ describe("accounts", () => {
     expect((await asAdmin("/admin/users?q=tro", "GET")).json().items[0]).toMatchObject({ username: "trol", disabledAt: null });
     expect((await asAdmin(`/admin/users/${response.json().user.id}/disable`)).statusCode).toBe(204);
     expect((await call("GET", "/me", { cookie })).statusCode).toBe(401);
-    expect((await call("POST", "/auth/login", { payload: { username: "trol", password: "palavra-passe", recaptchaToken: "t" } })).statusCode).toBe(401);
+    // The right password learns why; a wrong one still can't tell.
+    expect((await call("POST", "/auth/login", { payload: { username: "trol", password: "palavra-passe", recaptchaToken: "t" } })).json().error.code).toBe("account_banned");
+    expect((await call("POST", "/auth/login", { payload: { username: "trol", password: "errada-errada", recaptchaToken: "t" } })).statusCode).toBe(401);
     await asAdmin(`/admin/users/${response.json().user.id}/enable`);
     expect((await call("POST", "/auth/login", { payload: { username: "trol", password: "palavra-passe", recaptchaToken: "t" } })).statusCode).toBe(200);
   });

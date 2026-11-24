@@ -1,6 +1,6 @@
 import type { FastifyRequest } from "fastify";
 import { ApiError } from "../errors.js";
-import type { Reader } from "./sessions.js";
+import type { Reader, Restriction } from "./sessions.js";
 
 /*
  * Who is taking part. Logged-in readers are keyed by their account ("u:<id>"), so a vote counts
@@ -29,10 +29,22 @@ declare module "fastify" {
   }
 }
 
+/** The 403 a banned or suspended reader gets on login and when taking part. */
+export const restrictedError = (restriction: Restriction) =>
+  restriction.code === "account_banned"
+    ? new ApiError(403, "account_banned", "This account was banned")
+    : new ApiError(403, "account_suspended", `This account is suspended until ${restriction.until.toISOString()}`);
+
+/** Throws the 403 when the reader is banned or suspended. */
+export const assertCanTakePart = (reader: Reader) => {
+  if (reader.restriction) throw restrictedError(reader.restriction);
+};
+
 export const participantFor =
   (loginRequired: readonly Participation[]) =>
   (request: FastifyRequest, what: Participation): Participant => {
     const reader = request.reader;
+    if (reader) assertCanTakePart(reader);
     if (reader) return { key: `u:${reader.id}`, userId: reader.id, username: reader.username };
     if (loginRequired.includes(what)) throw new ApiError(401, "login_required", "Log in to take part");
     return { key: request.ip, userId: null, username: null };

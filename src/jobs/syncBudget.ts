@@ -1,5 +1,5 @@
 import { announceBudgetVotes } from "../budget/alerts.js";
-import { importPastBudgetBills, syncCurrentBudgetBills } from "../budget/bills.js";
+import { importPastBudgetBills, refreshBudgetBillsInProgress, syncCurrentBudgetBills } from "../budget/bills.js";
 import { enrichBudget } from "../budget/enrich.js";
 import { budgetInDiscussion, syncBudgetSchedule } from "../budget/schedule.js";
 import { syncBudget } from "../budget/sync.js";
@@ -32,9 +32,21 @@ const { db, pool } = createDb(config.DATABASE_URL);
 try {
   // Each Budget's own votes (generalidade, final global): the current ones every run, earlier ones
   // with --all. From our own copy of the initiatives, so it's quick: it also says whether a Budget is on.
-  const bills = await syncCurrentBudgetBills(db);
+  let bills = await syncCurrentBudgetBills(db);
   console.log(JSON.stringify({ budgetBills: bills }));
   const discussed = await budgetInDiscussion(db, config.PARLIAMENT_LEGISLATURE);
+  // Our copy of the initiatives is daily (the 04:00 parliament sync). While a Budget bill is still
+  // in progress, its votes (the final overall one above all) are read straight from the open data
+  // every run, so they show within the hour they're published. Best effort: the daily sync catches up.
+  if (discussed !== null) {
+    try {
+      const refreshed = await refreshBudgetBillsInProgress(db, createOpenDataClient({ legislature: config.PARLIAMENT_LEGISLATURE, retryDelaysMs: [] }), config.PARLIAMENT_LEGISLATURE);
+      console.log(JSON.stringify({ budgetBillsFromOpenData: refreshed }));
+      if (refreshed) bills += await syncCurrentBudgetBills(db);
+    } catch (error) {
+      console.error("Budget bills from the open data:", error instanceof Error ? error.message : error);
+    }
+  }
   const full = args.includes("--all") || args.includes("--force") || legislature !== undefined || discussed !== null || new Date().getUTCHours() === DAILY_RUN_HOUR_UTC;
   if (!full) {
     console.log(JSON.stringify({ quiet: "no Budget in discussion; the full run is daily" }));

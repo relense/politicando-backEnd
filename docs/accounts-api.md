@@ -31,14 +31,24 @@ account and their comments carry their username.
   - `unauthenticated` on `/me*`
   - `login_required` on writes, when `LOGIN_REQUIRED` covers them (show "Entra para comentar",
     "Entra para votar"…)
+- A **banned or suspended** account stays logged in (to read, export or delete its data), but
+  every write that takes part (comments, likes, votes, Importa, forum, reports, predictions)
+  answers **403**:
+  - `account_suspended`: the message ends with the date it lifts (ISO, UTC). Show "A tua conta
+    está suspensa até …".
+  - `account_banned`: "A tua conta foi suspensa por tempo indeterminado" (or your wording).
 
 ## Logging in
 
 ### `POST /auth/register`
 
 ```json
-{ "username": "ana_silva", "password": "…", "recaptchaToken": "…", "email": "ana@example.pt", "newsletter": true }
+{ "username": "ana_silva", "password": "…", "recaptchaToken": "…", "email": "ana@example.pt", "newsletter": true, "signupFrom": "/orcamento/2027" }
 ```
+
+- `signupFrom` (optional): the site page they signed up from, as a path starting with `/`, at
+  most 300 characters. Anything else (a full URL, `//host`) is ignored, never an error. Only
+  admins see it (`GET /admin/readers`).
 
 - `email` and `newsletter` are optional. Show the email as "Email (opcional): para recuperares a
   conta se te esqueceres da palavra-passe", and the box **unticked**: "Quero receber a newsletter
@@ -63,8 +73,9 @@ account and their comments carry their username.
 ```
 
 - 200 `{ "user": … }`, sets the cookie. The username can be in any case.
-- 401 `invalid_credentials` for an unknown name, a wrong password or a banned account: the same
-  answer for all three.
+- 401 `invalid_credentials` for an unknown name or a wrong password: the same answer for both.
+- 403 `account_banned` / `account_suspended` (as above) for a banned or suspended account, but
+  only when the password is right.
 - 429 `too_many_attempts` after 10 failures for one username (it unlocks within 15 minutes);
   `rate_limited` past 5 tries a minute per IP.
 
@@ -221,6 +232,8 @@ account's `votes` and clear the browser's own copies.
 - `GET /admin/users?q=` lists accounts, most reported first.
 - `POST /admin/users/:id/disable` bans an account: it's logged out and can't log in or take part.
   `POST /admin/users/:id/enable` lifts the ban.
+- Admins have more (the reader list, suspensions with a reason, removing everything someone
+  wrote, deleting an account): `GET /admin/readers` and the rest in `docs/admin-api.md`.
 - From the terminal: `npm run moderation -- ban <username>` and `unban <username>`.
 
 ## Copy to update on the site
