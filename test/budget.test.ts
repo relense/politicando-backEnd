@@ -256,7 +256,7 @@ describe("each Budget's own bill", () => {
   it("comes with its votes on each year, and a year with only a bill is listed too", async () => {
     await syncBudget(db, { legislatures: ["XVII"], fetchFn: site(() => JSON.stringify(FILE)) });
     await db.insert(initiatives).values({
-      id: 377352, legislature: "XVII", type: "Proposta de Lei", number: "110", title: "Orçamento do Estado para 2027",
+      id: 377999, legislature: "XVII", type: "Proposta de Lei", number: "110", title: "Orçamento do Estado para 2027",
       status: "in_progress", phase: "Votação na generalidade", phaseDate: "2026-10-28", votes: [generalidade],
     });
     expect(await syncCurrentBudgetBills(db)).toBe(1);
@@ -265,7 +265,7 @@ describe("each Budget's own bill", () => {
 
     const years = (await get("/budget")).json().items;
     expect(years.map((y: { year: number }) => y.year)).toEqual([2027, 2005]);
-    expect(years[0].bills).toEqual([expect.objectContaining({ initiativeId: 377352, number: "110", status: "in_progress", votes: [generalidade] })]);
+    expect(years[0].bills).toEqual([expect.objectContaining({ initiativeId: 377999, number: "110", status: "in_progress", votes: [generalidade] })]);
     expect(years[1]).toMatchObject({ proposals: 0, syncedAt: null, bills: [expect.objectContaining({ legislature: "IX" })] });
     expect((await get("/budget/2027/summary")).json().bills[0].votes[0].phase).toBe("Votação na generalidade");
   });
