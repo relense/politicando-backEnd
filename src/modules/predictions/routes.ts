@@ -2,6 +2,7 @@ import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import type { FastifyRequest } from "fastify";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
+import { assertCanTakePart } from "../../accounts/participant.js";
 import type { Reader } from "../../accounts/sessions.js";
 import type { Db } from "../../db/client.js";
 import { type VoteRecord, initiatives, parties, predictions } from "../../db/schema.js";
@@ -88,6 +89,12 @@ export const predictionRoutes =
     const requireReader = (request: FastifyRequest): Reader => {
       if (!request.reader) throw new ApiError(401, "login_required", "Log in to predict");
       return request.reader;
+    };
+    /** Predicting is taking part: not while banned or suspended. */
+    const requirePredictor = (request: FastifyRequest): Reader => {
+      const reader = requireReader(request);
+      assertCanTakePart(reader);
+      return reader;
     };
     const acronyms = async () => new Map((await db.select({ slug: parties.slug, acronym: parties.acronym }).from(parties)).map((p) => [p.slug, p.acronym]));
     const tallyOf = (vote: VoteRecord | null, names: Map<string, string>) => {
@@ -283,11 +290,11 @@ export const predictionRoutes =
           description: "Changeable until the session starts (closesAt). Picking follows the vote's megathread.",
           params: idParams,
           body: z.strictObject({ pick: pickSchema }),
-          response: { 200: z.object({ pick: pickSchema, split: splitSchema }), 401: errorSchema, 404: errorSchema, 409: errorSchema },
+          response: { 200: z.object({ pick: pickSchema, split: splitSchema }), 401: errorSchema, 403: errorSchema, 404: errorSchema, 409: errorSchema },
         },
       },
       async (request) => {
-        const reader = requireReader(request);
+        const reader = requirePredictor(request);
         const { initiativeId } = request.params;
         const [initiative] = await db
           .select({ id: initiatives.id, open: sql<boolean>`${PREDICTABLE_NOW}` })
@@ -326,11 +333,11 @@ export const predictionRoutes =
           tags: ["predictions"],
           summary: "Take a prediction back, while the vote is still open",
           params: idParams,
-          response: { 204: z.null(), 401: errorSchema, 409: errorSchema },
+          response: { 204: z.null(), 401: errorSchema, 403: errorSchema, 409: errorSchema },
         },
       },
       async (request, reply) => {
-        const reader = requireReader(request);
+        const reader = requirePredictor(request);
         const { initiativeId } = request.params;
         // Once the session starts the pick stands: otherwise a miss could be taken back before it's scored.
         const [initiative] = await db.select({ open: sql<boolean>`${PREDICTABLE_NOW}` }).from(initiatives).where(eq(initiatives.id, initiativeId));

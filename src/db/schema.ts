@@ -1403,7 +1403,7 @@ export const podcastEpisodes = pgTable(
 );
 
 /*
- * Reader accounts: a public username and a password, nothing else (no email). Taking part
+ * Reader accounts: a public username and a password (an email is optional). Taking part
  * (comments, forum, votes, reports) needs one; reading doesn't.
  */
 export const users = pgTable(
@@ -1415,8 +1415,14 @@ export const users = pgTable(
     passwordHash: text("password_hash").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
-    /** Set by a moderator: the account can't log in or take part. */
+    /** Set by a moderator: banned, the account can't log in or take part. */
     disabledAt: timestamp("disabled_at", { withTimezone: true }),
+    /** Suspended by an admin until then: can't log in or take part meanwhile. */
+    suspendedUntil: timestamp("suspended_until", { withTimezone: true }),
+    /** The site page they signed up from (a path), as the website sent it. */
+    signupFrom: text("signup_from"),
+    /** Their last request with a session, to the hour at best. */
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
     /** Optional, private (never shown to anyone else), stored lowercase. Only once confirmed does it reset the password. */
     email: text(),
     emailConfirmedAt: timestamp("email_confirmed_at", { withTimezone: true }),
