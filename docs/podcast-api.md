@@ -1,7 +1,7 @@
 # Podcast API
 
 Our podcast's newest episode, for the home page's play bar, with no deploy per episode. The
-hourly ingest reads Spotify's public player page for the show and stores the newest episode;
+ingest (every 15 minutes) reads Spotify's public player page for the show and stores the newest episode;
 a new one shows here within the hour after it goes live on Spotify (episodes come out around
 11:30 UTC, so expect them by about 12:05).
 
@@ -49,7 +49,7 @@ The same episodes as a list, with the player addresses. Query: `limit` (1–50, 
 ```
 
 - `latest` is `null` until the first episode is read (right after a fresh deploy, until the
-  next hourly run). Fall back to today's box: the show's "Abrir no Spotify" link.
+  next ingest run). Fall back to today's box: the show's "Abrir no Spotify" link.
 - `title` is as on Spotify, date prefix included ("18 nov. · …").
 - `durationSeconds` can be `null`; show "7 min" (rounded) when present.
 - `imageUrl` is the 640px cover on Spotify's image server. Loading it sends the reader's IP to

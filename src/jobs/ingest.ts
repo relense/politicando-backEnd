@@ -16,8 +16,10 @@ const config = loadIngestConfig();
 const { db, pool } = createDb(config.DATABASE_URL);
 const client = createPoliteClient();
 const revalidate = createRevalidator();
-// The previous run started an hour ago: from then on, everything new is worth announcing.
-const changedSince = new Date(Date.now() - 61 * 60 * 1000);
+/** How often this job runs (render.yaml: "5,20,35,50 * * * *"). */
+const RUN_EVERY_MINUTES = 15;
+// The previous run started one interval ago (plus a minute of slack): from then on, everything new is worth announcing.
+const changedSince = new Date(Date.now() - (RUN_EVERY_MINUTES + 1) * 60 * 1000);
 
 try {
   const stats = await ingest({

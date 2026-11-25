@@ -65,7 +65,7 @@ doesn't mark anything by itself, so call this when the reader opens the inbox, o
 
 | Call | What |
 |---|---|
-| `PUT /me/follows/story/:id` | Follow a story: told when new outlets cover it (checked after each hourly news run) |
+| `PUT /me/follows/story/:id` | Follow a story: told when new outlets cover it (checked after each news run, every 15 minutes) |
 | `PUT /me/follows/thread/:id` | Follow a forum thread: told about new replies |
 | `PUT /me/follows/budget_proposal/:id` | Follow a Budget proposal (its parliament `id`): told about each vote on it (`budget_vote`) |
 | `DELETE /me/follows/{story\|thread\|budget_proposal}/:id` | Stop following |

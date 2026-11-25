@@ -5,7 +5,7 @@ import { feedbackMessages } from "../db/schema.js";
 /** Screenshots sent with feedback are kept 90 days (as the privacy page says). */
 export const SCREENSHOT_DAYS = 90;
 
-/** Removes screenshots past their 90 days. Runs on every new message, every admin read and every hourly ingest. */
+/** Removes screenshots past their 90 days. Runs on every new message, every admin read and every ingest run. */
 export const purgeFeedback = (db: Db, now = new Date()) =>
   db
     .update(feedbackMessages)

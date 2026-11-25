@@ -66,13 +66,14 @@ services:
       - key: PUBLIC_API_URL
         sync: false
 
-  # RSS feeds only cover a few hours: run it every hour.
+  # Every 15 minutes, so news shows soon after it's out. Each run only opens pages it hasn't seen,
+  # so the outlets get the same article requests as hourly, spread out, plus a few more feed reads.
   - type: cron
     name: politicando-ingest
     runtime: docker
     region: frankfurt
     plan: starter
-    schedule: "5 * * * *"
+    schedule: "5,20,35,50 * * * *"
     dockerCommand: node dist/jobs/ingest.js
     envVars:
       - key: DATABASE_URL
