@@ -100,7 +100,9 @@ export const parseMarkdownPost = (text: string): MarkdownPost | null => {
 
 /**
  * Stores posts by slug: new ones are created, existing ones get the new text. Publishing keeps
- * the first publication date. Featured changes only when the file says so; drafts are never featured.
+ * the first publication date. A post is featured (a front-page highlight) when it first goes live,
+ * unless the file says `featured: false`; after that, featured changes only when the file says so
+ * (a moderator's choice stands). Drafts are never featured.
  *
  * A draft never touches a live post (its text would go live at once): unpublish first. With
  * `fromRepo` (the deploy's import of content/editorial), a post someone took down stays down and
@@ -116,7 +118,7 @@ export const saveMarkdownPosts = async (
     const [row] = await db
       .insert(editorialPosts)
       .values({
-        ...post, featured: publish && post.featured === true, authorName,
+        ...post, featured: publish && post.featured !== false, authorName,
         status: publish ? "published" : "draft", publishedAt: publish ? now : null, createdAt: now, updatedAt: now,
       })
       .onConflictDoUpdate({
@@ -126,6 +128,8 @@ export const saveMarkdownPosts = async (
           coverImageUrl: post.coverImageUrl, mediaUrl: post.mediaUrl, ...(!fromRepo && { authorName }), updatedAt: now,
           ...(publish && { status: "published" as const, publishedAt: sql`coalesce(${editorialPosts.publishedAt}, ${now.toISOString()}::timestamptz)` }),
           ...(post.featured !== null && { featured: publish && post.featured }),
+          // A draft going live for the first time is featured, like a new post.
+          ...(post.featured === null && publish && { featured: sql`${editorialPosts.featured} or ${editorialPosts.publishedAt} is null` }),
         },
         // Unchanged posts keep their dates, so re-importing (each deploy) doesn't look like an edit.
         setWhere: sql`${

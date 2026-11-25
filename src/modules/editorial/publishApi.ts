@@ -59,7 +59,7 @@ export const publishRoutes =
           tags: ["editorial"],
           summary: "Publish (or update) a blog post from its article.md, with the team's API key",
           description:
-            "Matched by the front matter's `slug`: a new slug creates the post, an existing one replaces its text and keeps its first publication date. `featured: true|false` in the front matter sets the front-page pick.",
+            "Matched by the front matter's `slug`: a new slug creates the post, an existing one replaces its text and keeps its first publication date. A new post is a front-page pick (featured) unless the front matter says `featured: false`; on an update, `featured: true|false` changes it and leaving it out keeps it.",
           headers: z.object({ authorization: z.string().optional() }),
           body: z.strictObject({
             markdown: z.string().min(1).max(200_000).describe("The whole file: the front matter between --- lines, then the body"),

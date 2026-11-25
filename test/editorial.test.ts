@@ -1,4 +1,4 @@
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { hashPassword } from "../src/admin/password.js";
 import { buildApp } from "../src/app.js";
@@ -74,7 +74,8 @@ describe("editorial", () => {
     expect((await call("GET", "/editorial")).body.total).toBe(0);
     expect((await call("GET", `/editorial/${created.body.slug}`)).status).toBe(404);
 
-    expect((await call("POST", `/admin/editorial/${id}/publish`, ana)).body).toMatchObject({ status: "published" });
+    // Going live for the first time makes it a front-page highlight.
+    expect((await call("POST", `/admin/editorial/${id}/publish`, ana)).body).toMatchObject({ status: "published", featured: true });
     expect((await call("POST", `/admin/editorial/${id}/feature`, ana)).status).toBe(403);
     const mod = await login("mod@example.pt");
     expect((await call("POST", `/admin/editorial/${id}/feature`, mod)).body.featured).toBe(true);
@@ -232,6 +233,26 @@ describe("posts from Markdown files", () => {
     expect(await featured()).toBe(true);
     await saveMarkdownPosts(db, [parseMarkdownPost(featuredFile.replace("featured: true", "featured: false"))!], { authorName: "R", publish: true });
     expect(await featured()).toBe(false);
+  });
+
+  it("features a new post unless the file says false, and an edit never features it again", async () => {
+    const featured = async (slug = "oe-explicado") => (await app.inject({ method: "GET", url: `/api/v2/editorial/${slug}` })).json().featured;
+    await saveMarkdownPosts(db, [parseMarkdownPost(file)!], { authorName: "R", publish: true });
+    expect(await featured()).toBe(true);
+    // A moderator took it off: an edit without `featured` leaves it off.
+    await db.update(editorialPosts).set({ featured: false });
+    await saveMarkdownPosts(db, [parseMarkdownPost(file.replace("# ", "# Revisto: "))!], { authorName: "R", publish: true });
+    expect(await featured()).toBe(false);
+    // Opted out in the file.
+    const optOut = file.replace("slug: oe-explicado", "slug: sem-destaque\nfeatured: false");
+    await saveMarkdownPosts(db, [parseMarkdownPost(optOut)!], { authorName: "R", publish: true });
+    expect(await featured("sem-destaque")).toBe(false);
+    // A draft isn't featured; it is once it goes live.
+    const draft = file.replace("slug: oe-explicado", "slug: rascunho");
+    await saveMarkdownPosts(db, [parseMarkdownPost(draft)!], { authorName: "R", publish: false });
+    expect((await db.select({ featured: editorialPosts.featured }).from(editorialPosts).where(eq(editorialPosts.slug, "rascunho")))[0]!.featured).toBe(false);
+    await saveMarkdownPosts(db, [parseMarkdownPost(draft)!], { authorName: "R", publish: true });
+    expect(await featured("rascunho")).toBe(true);
   });
 
   it("publishes, then updates by slug keeping the first publication date and featured", async () => {
