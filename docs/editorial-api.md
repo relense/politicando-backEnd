@@ -41,8 +41,10 @@ read with `sort=popular` (see [Most read](#most-read)).
 }
 ```
 
-- Front page: `?featured=true&limit=4`. Moderators choose what's featured. If fewer than 4
-  are featured, fill with the latest (`?limit=4`).
+- Front page: `?featured=true&limit=4`. Every post is featured when it first goes live (the
+  admin's publish, the publish API, the repo's Markdown), unless its file says `featured: false`,
+  so the newest post leads. Moderators can take one off (`unfeature`) or put an older one back;
+  edits never feature a post again. If fewer than 4 are featured, fill with the latest (`?limit=4`).
 - `media.embedUrl` is safe to use as an iframe `src`. It's always from an allowed provider:
   YouTube (privacy-enhanced domain), Vimeo, Spotify, SoundCloud or Apple Podcasts. Never
   build iframes from `media.url`.
@@ -109,7 +111,8 @@ one level of replies, and the same report button and moderation.
 ## Writing (admin)
 
 Sign-in and roles are in `docs/admin-api.md`. Authors write and publish their own posts.
-Moderators and admins can edit any post and choose the featured ones.
+Moderators and admins can edit any post and choose the featured ones. Publishing a post for
+the first time features it; a moderator can take it off.
 
 - `GET /admin/editorial`: posts you can edit (authors see only their own), last edited first.
   Each includes `status` (`draft` or `published`), `authorId`, `mediaUrl` and `updatedAt`.
@@ -154,9 +157,9 @@ instead of the admin. They come out of the API exactly like posts written in the
 these differences:
 
 - `authorName` is `"Redação Politicando"` and there's no author account behind it.
-- `featured` comes from the file (`featured: true`); `GET /editorial?featured=true&limit=1`
-  gives the newest pick. A moderator can also change it in the admin, and re-importing keeps
-  that unless the file says otherwise.
+- `featured`: on when the post first goes live, unless the file says `featured: false`;
+  `GET /editorial?featured=true&limit=1` gives the newest pick. A moderator can also change it in
+  the admin, and re-importing keeps that unless the file says `featured: true` or `false`.
 - No `coverImageUrl` yet, so the cards need a fallback without an image.
 - Bodies use GitHub-flavoured Markdown **tables** (party results, vote counts), plus
   footnote-style lines in italics and a `---` rule before the "Como fizemos" note at the end.
