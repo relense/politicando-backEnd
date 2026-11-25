@@ -4,6 +4,7 @@ import { purgeFeedback } from "../feedback/purge.js";
 import { pruneNotifications } from "../notifications/index.js";
 import { ingest, pruneSeen, refreshGenericHeadlines } from "../ingestion/ingest.js";
 import { createPoliteClient } from "../ingestion/politeClient.js";
+import { hideRepeats } from "../ingestion/repeats.js";
 import { NEWS_SOURCES } from "../ingestion/sources.js";
 import { syncPodcast } from "../podcast/spotify.js";
 import { changedPages, pingIndexNow } from "../seo/indexNow.js";
@@ -39,6 +40,8 @@ try {
     }
   };
   await step("refreshedHeadlines", () => refreshGenericHeadlines({ db, client }));
+  // An outlet's second copy of the same article (another URL, same headline) is hidden.
+  await step("hiddenRepeats", () => hideRepeats(db));
   // After the headlines are final: every new article joins a story, or starts one.
   await step("stories", () => assignStories(db, { judge: judgeFromEnv() }));
   // Not news, but this job runs every hour: old feedback screenshots go here too.
