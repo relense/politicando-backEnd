@@ -1386,7 +1386,7 @@ export const corrections = pgTable(
   (table) => [index("corrections_date_idx").on(table.date.desc(), table.id.desc())],
 );
 
-/** Our podcast's episodes on Spotify, as the hourly ingest finds them (newest first, from the first one seen). */
+/** Our podcast's episodes on Spotify, as the ingest finds them (newest first, from the first one seen). */
 export const podcastEpisodes = pgTable(
   "podcast_episodes",
   {

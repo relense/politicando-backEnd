@@ -47,7 +47,7 @@ The answer:
   400 `invalid_article` (no slug or title, a bad cover URL…); 413 `payload_too_large` past about
   850 KB (the body takes 200,000 characters of any script); 429 past 30 calls a minute.
 - Every `/publish` response is `Cache-Control: private, no-store`.
-- New posts reach search engines at the next hourly ingest (IndexNow).
+- New posts reach search engines at the next ingest, within 15 minutes (IndexNow).
 
 ```sh
 curl -X POST https://api.politicando.pt/api/v2/publish \

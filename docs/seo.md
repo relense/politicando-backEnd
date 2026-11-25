@@ -85,7 +85,7 @@ has them in one place. For each:
 
 ## IndexNow (Bing, Yandex and others)
 
-The backend tells IndexNow about new pages every hour, from the ingest job: new news
+The backend tells IndexNow about new pages every 15 minutes, from the ingest job: new news
 (`/article/:id`, which shows the story), blog posts published or edited
 (`/editorial/:slug`), and local officials added or changed (`/autarcas/:id`). Google doesn't
 use IndexNow; for Google, the sitemap is what counts.

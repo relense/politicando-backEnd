@@ -10,7 +10,7 @@ const sitemap = (url: string) => ({ url, kind: "news-sitemap" as const });
 /**
  * Checked by hand on 2026-11-01 with the scanner's own user agent. News
  * sitemaps cover about 48 hours; the RSS feeds below often cover far less, which
- * is why the job should run hourly. Renascença (rr.pt) is left out because it
+ * is why the job runs at least hourly (every 15 minutes). Renascença (rr.pt) is left out because it
  * refuses the bot with HTTP 403, and we don't disguise it to get past that.
  */
 export const NEWS_SOURCES: NewsSource[] = [

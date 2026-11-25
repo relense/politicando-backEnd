@@ -17,7 +17,7 @@ Base path: `/api/v2`. Article items look the same everywhere (`id`, `title`, `ex
   on deputy, initiative, Government and President pages.
 - **One copy per outlet:** when an outlet publishes the same article twice under different URLs
   (RTP under both /politica/ and /economia/, Expresso re-dating a slug or adding "-1"), the later
-  copy is hidden at the end of that hourly scan. Same outlet and same headline within 3 days count as one article;
+  copy is hidden at the end of that scan (every 15 minutes). Same outlet and same headline within 3 days count as one article;
   the same headline from two outlets (agency copy) is two versions of one story, as before.
 - `people`: **everyone named in it who has a page**, most mentioned first, for linking names
   to people pages (internal links matter for search):

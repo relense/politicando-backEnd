@@ -5,7 +5,7 @@ import { splitStory } from "../stories/split.js";
 
 /*
  * Moves articles that don't belong out of a story, into a new one kept apart from it for good
- * (the hourly job does this by itself for the cases it catches; see src/stories/split.ts):
+ * (the ingest job does this by itself for the cases it catches; see src/stories/split.ts):
  *
  *   npm run story:split -- <storyId> <articleId> [articleId…] [--apply]
  *   npm run story:split -- <storyId> --merge <oldStoryId> [--apply]
@@ -41,7 +41,7 @@ try {
       if (!merge) throw new Error(`Story ${mergeArg} was never joined into another`);
       if (merge.into_id !== storyId) throw new Error(`Story ${mergeArg} was joined into ${merge.into_id}, not ${storyId}`);
       if (!merge.article_ids?.length) throw new Error(`The join of ${mergeArg} predates keeping its articles: list them by hand`);
-      // Some may have left the story since (the hourly check, an earlier split): split the rest.
+      // Some may have left the story since (the regular check, an earlier split): split the rest.
       const still = await tx.execute<{ id: number }>(
         sql`select id from articles where story_id = ${storyId} and id = any(${`{${merge.article_ids.join(",")}}`}::integer[])`,
       );
