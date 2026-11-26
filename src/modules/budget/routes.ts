@@ -5,12 +5,13 @@ import { PROPOSAL_RESULTS, VOTE_RESULTS } from "../../budget/parse.js";
 import { BUDGET_DATASET_PAGE } from "../../budget/sync.js";
 import type { Db } from "../../db/client.js";
 import { budgetNewsFor } from "../../budget/news.js";
-import { agendaEvents, budgetBills, budgetProposals, budgetSchedule, budgetSources, budgetSummaries, budgetVotes, parties, userFollows, type BudgetVoteEntry } from "../../db/schema.js";
+import { agendaEvents, budgetAfterVote, budgetBills, budgetImplementations, budgetProposals, budgetSchedule, budgetSources, budgetSummaries, budgetVotes, parties, userFollows, type BudgetVoteEntry } from "../../db/schema.js";
 import { ApiError, notFound } from "../../errors.js";
 import { PARTY_DEFINITIONS } from "../../matching/parties.js";
 import { escapeLike, searchWords } from "../articles/routes.js";
 import { voteSchema as billVoteSchema } from "../parliament/routes.js";
 import { withProvisionalVotes } from "../../budget/provisional.js";
+import { IMPLEMENTATION_STATUSES } from "../../budget/afterVote.js";
 import { errorSchema } from "../shared.js";
 
 /*
@@ -84,7 +85,32 @@ const proposalSchema = z.object({
       }),
     )
     .describe("The voting days the parliament's scripts put it on, oldest first: planned, not certain (votes get postponed). [] when on none"),
+  implementation: z
+    .object({
+      status: z.enum(IMPLEMENTATION_STATUSES),
+      date: z.string().describe("When it was announced"),
+      note: z.string().nullable(),
+      sourceName: z.string(),
+      sourceUrl: z.string(),
+    })
+    .nullable()
+    .describe("After the vote: whether it's being applied, from announcements the team records by hand (approved or partially approved only). Null when unknown"),
 });
+
+const afterVoteSchema = z
+  .array(
+    z.object({
+      date: z.string(),
+      text: z.string().describe("Who announced what and the reason they gave, written by the team"),
+      sourceName: z.string(),
+      sourceUrl: z.string(),
+      proposalIds: z.array(z.number()).describe("The proposals it's about; [] when none in particular"),
+    }),
+  )
+  .describe("What happened after the vote, newest first; [] when nothing is recorded");
+
+/** Results whose proposals can carry an implementation status. */
+const APPLICABLE = new Set(["approved", "partially_approved"]);
 
 const proposalDetailSchema = proposalSchema.extend({
   news: z
@@ -197,6 +223,12 @@ export const budgetRoutes =
       }
       const byProposal = new Map<number, typeof votes>();
       for (const v of votes) byProposal.set(v.proposalId, [...(byProposal.get(v.proposalId) ?? []), v]);
+      const implementations = new Map(
+        (await db.select().from(budgetImplementations).where(inArray(budgetImplementations.proposalId, rows.map((r) => r.id)))).map((i) => [
+          i.proposalId,
+          { status: i.status, date: i.date, note: i.note, sourceName: i.sourceName, sourceUrl: i.sourceUrl },
+        ]),
+      );
       return rows.map((r) => ({
         id: r.id, year: r.year, number: r.number, title: r.title, article: r.article, topics: r.topics,
         target: r.target as "articles" | "tables" | null, kind: r.kind, status: r.status,
@@ -206,6 +238,7 @@ export const budgetRoutes =
         plain: ((s) => (s ? { summary: s.summary, automatic: s.automatic, updatedAt: s.updatedAt.toISOString() } : null))(summaries.get(r.id)),
         documentUrl: r.documentUrl, sourceUrl: BUDGET_DATASET_PAGE,
         scheduled: planned.get(`${r.year}|${r.number}`) ?? [],
+        implementation: APPLICABLE.has(r.result) ? (implementations.get(r.id) ?? null) : null,
         votes: (byProposal.get(r.id) ?? []).map((v) => ({
           votedOn: v.votedOn, phase: v.phase as "committee" | "plenary" | null, result: v.result as (typeof VOTE_RESULTS)[number] | null,
           unanimous: v.unanimous, label: v.label, partLabel: v.partLabel, parts: v.parts, subject: v.subject,
@@ -273,6 +306,29 @@ export const budgetRoutes =
       }));
     };
 
+    /** Approved proposals whose status after the vote is this one. */
+    const implementationFilter = (status: (typeof IMPLEMENTATION_STATUSES)[number]) =>
+      and(
+        inArray(budgetProposals.result, [...APPLICABLE]),
+        exists(
+          db.select({ one: sql`1` }).from(budgetImplementations).where(and(eq(budgetImplementations.proposalId, budgetProposals.id), eq(budgetImplementations.status, status))),
+        ),
+      );
+
+    /** What happened after the vote, per year, newest first. */
+    const afterVote = async (year?: number) => {
+      const rows = await db
+        .select()
+        .from(budgetAfterVote)
+        .where(year === undefined ? undefined : eq(budgetAfterVote.year, year))
+        .orderBy(desc(budgetAfterVote.date), desc(budgetAfterVote.id));
+      const map = new Map<number, z.infer<typeof afterVoteSchema>>();
+      for (const r of rows) {
+        map.set(r.year, [...(map.get(r.year) ?? []), { date: r.date, text: r.text, sourceName: r.sourceName, sourceUrl: r.sourceUrl, proposalIds: r.proposalIds }]);
+      }
+      return map;
+    };
+
     const votedBetween = (from?: string, to?: string) =>
       from || to
         ? exists(
@@ -299,6 +355,7 @@ export const budgetRoutes =
                   year: z.number(), proposals: z.number(), voted: z.number(), pending: z.number(), lastVotedOn: z.string().nullable(),
                   syncedAt: z.string().nullable().describe("Null for a year with a bill but no amendment proposals"),
                   bills: z.array(billSchema).describe("The Budget's own bill and its votes; 2022 had two (one rejected)"),
+                  afterVote: afterVoteSchema,
                 }),
               ),
               sourceUrl: z.string(),
@@ -321,10 +378,12 @@ export const budgetRoutes =
           .leftJoin(budgetProposals, eq(budgetProposals.year, budgetSources.year))
           .groupBy(budgetSources.year, budgetSources.syncedAt)
           .orderBy(desc(budgetSources.year));
-        const bills = await billsByYear();
-        const years = new Map(rows.map((r) => [r.year, { ...r, syncedAt: r.syncedAt.toISOString() as string | null, bills: bills.get(r.year) ?? [] }]));
+        const [bills, notes] = await Promise.all([billsByYear(), afterVote()]);
+        const years = new Map(
+          rows.map((r) => [r.year, { ...r, syncedAt: r.syncedAt.toISOString() as string | null, bills: bills.get(r.year) ?? [], afterVote: notes.get(r.year) ?? [] }]),
+        );
         for (const [year, list] of bills) {
-          if (!years.has(year)) years.set(year, { year, proposals: 0, voted: 0, pending: 0, lastVotedOn: null, syncedAt: null, bills: list });
+          if (!years.has(year)) years.set(year, { year, proposals: 0, voted: 0, pending: 0, lastVotedOn: null, syncedAt: null, bills: list, afterVote: notes.get(year) ?? [] });
         }
         reply.header("Cache-Control", PUBLIC);
         return { items: [...years.values()].sort((a, b) => b.year - a.year), sourceUrl: BUDGET_DATASET_PAGE };
@@ -357,6 +416,7 @@ export const budgetRoutes =
             votedFrom: day.optional().describe("Proposals with a vote on or after this day"),
             votedTo: day.optional().describe("Proposals with a vote on or before this day"),
             scheduledOn: day.optional().describe("Proposals the parliament's voting scripts put on this day (planned, not certain)"),
+            implementation: z.enum(IMPLEMENTATION_STATUSES).optional().describe("Approved proposals with this status after the vote: not_applied is what the Government says it won't apply"),
             sort: z
               .enum(["voted", "number", "scheduled"])
               .default("voted")
@@ -369,7 +429,7 @@ export const budgetRoutes =
       },
       async (request, reply) => {
         const { year } = request.params;
-        const { party: partySlug, result, topic, q, votedFrom, votedTo, scheduledOn, sort, cursor, limit } = request.query;
+        const { party: partySlug, result, topic, q, votedFrom, votedTo, scheduledOn, implementation, sort, cursor, limit } = request.query;
         if (sort === "scheduled" && !scheduledOn) throw new ApiError(400, "scheduled_on_required", "sort=scheduled needs scheduledOn");
         await requireYear(year);
         const offset = cursor ? decodeCursor(cursor) : 0;
@@ -383,6 +443,7 @@ export const budgetRoutes =
             ? sql`exists (select 1 from ${budgetSchedule} s where s.year = ${budgetProposals.year} and s.number = ${budgetProposals.number} and s.voting_day = ${scheduledOn})`
             : undefined,
           ...(q ? searchWords(q).map((w) => sql`${budgetProposals.searchText} like ${`%${escapeLike(w)}%`}`) : []),
+          implementation ? implementationFilter(implementation) : undefined,
         ];
         const where = and(...filters);
         const numberOrder = [sql`nullif(regexp_replace(${budgetProposals.number}, '\\D.*$', ''), '')::int nulls last`, budgetProposals.number, budgetProposals.id];
@@ -488,6 +549,7 @@ export const budgetRoutes =
               lastVotedOn: z.string().nullable(),
               syncedAt: z.string(),
               bills: z.array(billSchema).describe("The Budget's own bill and its votes"),
+              afterVote: afterVoteSchema,
               schedule: z
                 .array(
                   z.object({
@@ -571,6 +633,7 @@ export const budgetRoutes =
           topics: [...topics.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([topic, n]) => ({ topic, proposals: n })),
           lastVotedOn: votes.reduce<string | null>((m, v) => (!m || v.votedOn > m ? v.votedOn : m), null),
           syncedAt: source.syncedAt.toISOString(), bills: (await billsByYear(year)).get(year) ?? [],
+          afterVote: (await afterVote(year)).get(year) ?? [],
           schedule: results.pending + results.sent_to_plenary > 0 && !votedFrom && !votedTo ? await schedule(year) : [],
           votingDays: votedFrom || votedTo ? [] : await votingDays(year),
           sourceUrl: BUDGET_DATASET_PAGE,

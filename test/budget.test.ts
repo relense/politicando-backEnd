@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { buildApp } from "../src/app.js";
+import { AFTER_VOTE_NOTES, IMPLEMENTATION_STATUSES, syncAfterVoteNotes, type AfterVoteNote } from "../src/budget/afterVote.js";
 import { budgetBillYear, syncCurrentBudgetBills } from "../src/budget/bills.js";
 import { parseProposals, partyVotes, proposalResult } from "../src/budget/parse.js";
 import { findLegislatures, findProposalFiles, syncBudget } from "../src/budget/sync.js";
@@ -235,6 +236,87 @@ describe("the Budget API", () => {
 
     const day = (await get("/budget/2027/summary?votedFrom=2026-11-18&votedTo=2026-11-18")).json();
     expect(day).toMatchObject({ proposals: 2, votes: 2, lastVotedOn: "2026-11-18" });
+  });
+});
+
+describe("after the vote", () => {
+  const get = (url: string) => app.inject({ method: "GET", url: `/api/v2${url}` });
+  const NOTES: AfterVoteNote[] = [
+    {
+      year: 2027, date: "2026-11-26",
+      text: "O Governo anunciou que não vai aplicar duas normas aprovadas, invocando a lei-travão.",
+      source: { name: "exemplo.pt", url: "https://exemplo.pt/a" },
+      // 3C was rejected: a status on it is ignored.
+      proposals: [{ id: 1, status: "not_applied", note: "Invocada a lei-travão." }, { id: 2, status: "not_applied" }, { id: 3, status: "not_applied" }],
+    },
+    {
+      year: 2027, date: "2026-11-28",
+      text: "O Governo anunciou que vai, afinal, aplicar a norma da proposta 2C-1.",
+      source: { name: "outro.pt", url: "https://outro.pt/b" },
+      proposals: [{ id: 2, status: "applied" }],
+    },
+    { year: 2026, date: "2025-12-01", text: "Uma nota de outro ano.", source: { name: "x.pt", url: "https://x.pt" }, proposals: [] },
+  ];
+  beforeEach(async () => {
+    await syncBudget(db, { legislatures: ["XVII"], fetchFn: site(() => JSON.stringify(FILE)) });
+    await syncAfterVoteNotes(db, NOTES);
+  });
+
+  it("lists the year's notes, newest first, on the summary and the years list", async () => {
+    const afterVote = [
+      { date: "2026-11-28", text: NOTES[1]!.text, sourceName: "outro.pt", sourceUrl: "https://outro.pt/b", proposalIds: [2] },
+      { date: "2026-11-26", text: NOTES[0]!.text, sourceName: "exemplo.pt", sourceUrl: "https://exemplo.pt/a", proposalIds: [1, 2, 3] },
+    ];
+    expect((await get("/budget/2027/summary")).json().afterVote).toEqual(afterVote);
+    expect((await get("/budget")).json().items[0].afterVote).toEqual(afterVote);
+  });
+
+  it("gives approved proposals the status from the newest note, and filters by it", async () => {
+    expect((await get("/budget/2027/proposals/1")).json().implementation).toEqual({
+      status: "not_applied", date: "2026-11-26", note: "Invocada a lei-travão.", sourceName: "exemplo.pt", sourceUrl: "https://exemplo.pt/a",
+    });
+    expect((await get("/budget/2027/proposals/2")).json().implementation).toMatchObject({ status: "applied", date: "2026-11-28", note: null });
+    expect((await get("/budget/2027/proposals/3")).json().implementation).toBeNull();
+    expect((await get("/budget/2027/proposals/4")).json().implementation).toBeNull();
+
+    const numbers = async (query: string) => (await get(`/budget/2027/proposals?${query}`)).json().items.map((p: { number: string }) => p.number);
+    expect(await numbers("implementation=not_applied")).toEqual(["10C"]);
+    expect(await numbers("implementation=applied")).toEqual(["2C-1"]);
+    expect(await numbers("implementation=disputed")).toEqual([]);
+    expect((await get("/budget/2027/proposals?implementation=maybe")).statusCode).toBe(400);
+  });
+
+  it("copies the notes once, replaces them when they change, and survives a sync of the year", async () => {
+    expect(await syncAfterVoteNotes(db, NOTES)).toEqual({ notes: 3, changed: false });
+    // The parliament's file changing replaces the year's proposals; the statuses stay.
+    const resync = await syncBudget(db, { legislatures: ["XVII"], fetchFn: site(() => JSON.stringify(FILE).replace("21:26", "21:27")) });
+    expect(resync.results[0]!.changed).toBe(true);
+    expect((await get("/budget/2027/proposals/1")).json().implementation).toMatchObject({ status: "not_applied" });
+
+    const edited = structuredClone(NOTES);
+    edited[0]!.proposals[0]!.status = "disputed";
+    expect(await syncAfterVoteNotes(db, edited)).toEqual({ notes: 3, changed: true });
+    expect((await get("/budget/2027/proposals/1")).json().implementation).toMatchObject({ status: "disputed" });
+  });
+
+  it("sends [] and null when nothing is recorded", async () => {
+    expect(await syncAfterVoteNotes(db, [])).toEqual({ notes: 0, changed: true });
+    expect((await get("/budget/2027/summary")).json().afterVote).toEqual([]);
+    expect((await get("/budget/2027/proposals/1")).json().implementation).toBeNull();
+  });
+});
+
+describe("the after-the-vote notes written in src/budget/afterVote.ts", () => {
+  it("each have a date, text and a source, and name proposals once", () => {
+    for (const n of AFTER_VOTE_NOTES) {
+      expect(n.date, n.text).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(Number.isNaN(Date.parse(n.date)), n.text).toBe(false);
+      expect(n.text.trim().length, n.date).toBeGreaterThan(20);
+      expect(n.source.name.trim(), n.text).not.toBe("");
+      expect(n.source.url, n.text).toMatch(/^https:\/\//);
+      expect(new Set(n.proposals.map((p) => p.id)).size, n.text).toBe(n.proposals.length);
+      for (const p of n.proposals) if (p.status) expect(IMPLEMENTATION_STATUSES, n.text).toContain(p.status);
+    }
   });
 });
 
