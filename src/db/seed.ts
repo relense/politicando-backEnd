@@ -3,6 +3,7 @@ import { pathToFileURL } from "node:url";
 import { loadDatabaseConfig } from "../config.js";
 import { importContentPosts } from "../editorial/markdownFiles.js";
 import { PARTY_DEFINITIONS, SEATS_AS_OF } from "../matching/parties.js";
+import { importLocalElectedFiles } from "../places/localElected.js";
 import { syncLocalOfficials } from "../places/localOfficials.js";
 import { createDb, type Db } from "./client.js";
 import { createRevalidator } from "../revalidate.js";
@@ -40,6 +41,8 @@ export const seed = async (db: Db) => {
   console.log(`Seeded ${PARTY_DEFINITIONS.length} parties`);
   // Cheap, and keeps local officials in step with the election data after each deploy.
   console.log(JSON.stringify(await syncLocalOfficials(db)));
+  // Names of everyone elected locally (data/*-eleitos.json); does nothing unless a file changed.
+  console.log(JSON.stringify({ localElected: await importLocalElectedFiles(db) }));
   // Blog posts written in content/editorial; only new or edited ones are touched.
   const posts = await importContentPosts(db);
   console.log(JSON.stringify({ editorial: posts.filter((p) => p.changed).map((p) => p.slug), unchanged: posts.filter((p) => !p.changed).length }));

@@ -662,6 +662,47 @@ export const localOfficials = pgTable(
   (table) => [index("local_officials_place_idx").on(table.placeKey)],
 );
 
+/**
+ * Everyone elected to each câmara, assembleia municipal and assembleia de freguesia, in list
+ * order, from the CNE's official results map (src/places/localElected.ts). Kept apart from
+ * election_candidates, whose elected câmara heads are the mayors.
+ */
+export const localElected = pgTable(
+  "local_elected",
+  {
+    electionId: text("election_id")
+      .notNull()
+      .references(() => elections.id, { onDelete: "cascade" }),
+    placeKey: text("place_key")
+      .notNull()
+      .references(() => places.key),
+    organ: text().$type<"CM" | "AM" | "AF">().notNull(),
+    /** The ballot acronym, as in election_results. */
+    list: text().notNull(),
+    /** Order among the list's elected, from 1. */
+    position: smallint().notNull(),
+    /** As published, in capitals. */
+    name: text().notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.electionId, table.placeKey, table.organ, table.list, table.position] }),
+    index("local_elected_place_idx").on(table.placeKey),
+  ],
+);
+
+/** Where each election's local_elected came from, for citing, and the file loaded (to skip reloads). */
+export const localElectedSources = pgTable("local_elected_sources", {
+  electionId: text("election_id")
+    .primaryKey()
+    .references(() => elections.id, { onDelete: "cascade" }),
+  name: text().notNull(),
+  url: text().notNull(),
+  /** The version of the map: its latest rectification. */
+  asOf: date("as_of").notNull(),
+  hash: text().notNull(),
+  importedAt: timestamp("imported_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const articleLocalOfficials = pgTable(
   "article_local_officials",
   {

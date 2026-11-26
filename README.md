@@ -27,6 +27,7 @@ The API docs are at `/docs` and the OpenAPI spec is at `/docs/json`.
 | `npm run ingest` | Scan news sources once |
 | `npm run parliament:sync` | Load deputies and initiatives from the parliament's open data |
 | `npm run elections:import` | Import election results since 2011, plus the curated legislativas 1975–2009 (one-off; add ids to import only some, `--historic` for just the curated ones) |
+| `npm run local-elected:fetch` | Rebuild `data/autarquicas-2025-eleitos.json`, the names of everyone elected locally, from the CNE's official map (one-off; commit the file) |
 | `npm run agenda:sync` | Import the political calendar: the parliament's agenda, the President's and the European Parliament's plenaries (Render runs it every 3 hours) |
 | `npm run parliament:history` | Import earlier legislatures' initiatives (I to XVI) from the parliament's open data, for the legislature pages (one-off; add ids for only some) |
 | `npm run editorial:import -- <folder or .md files>` | Publish editorial posts written as Markdown with front matter (e.g. `../politicando-research/articles`); only files with a `slug` are published (`featured: true` makes a front-page pick); re-running updates them by slug. `--draft` to keep them as drafts, `--author="Nome"` for the byline |
@@ -134,6 +135,12 @@ one after each general election.
 `GET /places` and `GET /places/:key` (`docs/places-api.md`) put together each district,
 municipality and parish: the mayor (from the 2025 autárquicas candidates, imported with the
 election), council seats, the district's deputies, recent results and contracts.
+
+Everyone elected to each câmara, assembleia municipal and assembleia de freguesia is named
+from the CNE's official results map: `npm run local-elected:fetch` converts its spreadsheet
+into `data/autarquicas-2025-eleitos.json` (committed), and the seed loads it on deploy,
+doing nothing unless the file changed. Run the fetch again when the CNE publishes a new
+rectification (update `AS_OF` in `src/jobs/fetchLocalElected.ts`).
 `GET /sitemap` lists every indexable page for the frontend's sitemap; `docs/seo.md` is the
 search brief for the frontend.
 
