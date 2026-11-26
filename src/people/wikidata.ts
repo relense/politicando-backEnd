@@ -48,30 +48,54 @@ export const mergeLinks = (own: Link[], extra: Link[]) => {
   return [...own, ...extra.filter((l) => !seen.has(l.network.toLowerCase()))];
 };
 
-const query = async (fetchFn: typeof fetch, sparql: string): Promise<Binding[]> => {
-  const response = await fetchFn(`${ENDPOINT}?query=${encodeURIComponent(sparql)}`, {
-    headers: { Accept: "application/sparql-results+json", "User-Agent": USER_AGENT },
-    signal: AbortSignal.timeout(60_000),
-  });
-  if (!response.ok) throw new Error(`Wikidata answered ${response.status}`);
-  return ((await response.json()) as { results: { bindings: Binding[] } }).results.bindings;
+/** Deputies asked about per query: one query for all of them outgrew Wikidata's 60-second limit. */
+const DEPUTY_BATCH = 200;
+/** Waits before asking again after a timeout, a 429 or a 5xx (Wikidata's query service is often busy). */
+const RETRY_DELAYS_MS = [5_000, 20_000];
+
+type Options = { fetchFn?: typeof fetch; retryDelaysMs?: number[] };
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const query = async ({ fetchFn = fetch, retryDelaysMs = RETRY_DELAYS_MS }: Options, sparql: string): Promise<Binding[]> => {
+  for (let attempt = 0; ; attempt++) {
+    let retryable: unknown;
+    try {
+      const response = await fetchFn(ENDPOINT, {
+        method: "POST",
+        headers: { Accept: "application/sparql-results+json", "Content-Type": "application/x-www-form-urlencoded", "User-Agent": USER_AGENT },
+        body: new URLSearchParams({ query: sparql }).toString(),
+        signal: AbortSignal.timeout(60_000),
+      });
+      if (response.ok) return ((await response.json()) as { results: { bindings: Binding[] } }).results.bindings;
+      const error = new Error(`Wikidata answered ${response.status}`);
+      if (response.status !== 429 && response.status < 500) throw error;
+      retryable = error;
+    } catch (error) {
+      if (!(error instanceof Error && error.name === "TimeoutError")) throw error;
+      retryable = error;
+    }
+    const delay = retryDelaysMs[attempt];
+    if (delay === undefined) throw retryable;
+    await sleep(delay);
+  }
 };
 
 const literal = (text: string) => `"${text.replace(/["\\]/g, "")}"@pt`;
 
-export const syncWikidataLinks = async (db: Db, fetchFn: typeof fetch = fetch) => {
-  // Deputies, by the parliament's ID.
-  const byDeputy = new Map<number, Link[]>();
-  for (const b of await query(fetchFn, `SELECT ?id ?item ${LINK_SELECT} WHERE { ?item wdt:P6199 ?id . ${LINK_FIELDS} } GROUP BY ?id ?item`)) {
-    const id = Number(b.id?.value);
-    if (Number.isInteger(id) && !byDeputy.has(id)) byDeputy.set(id, linksOf(b));
-  }
+/**
+ * Everything is read before anything is written: when Wikidata fails, the links stored last time stay.
+ */
+export const syncWikidataLinks = async (db: Db, options: Options = {}) => {
+  // Deputies, by the parliament's ID: only the ones we store, a batch at a time.
   const storedDeputies = await db.select({ id: deputies.id }).from(deputies);
-  let deputyLinks = 0;
-  for (const { id } of storedDeputies) {
-    const links = byDeputy.get(id) ?? [];
-    if (links.length) deputyLinks++;
-    await db.update(deputies).set({ wikidataLinks: links }).where(eq(deputies.id, id));
+  const byDeputy = new Map<number, Link[]>();
+  for (let i = 0; i < storedDeputies.length; i += DEPUTY_BATCH) {
+    const ids = storedDeputies.slice(i, i + DEPUTY_BATCH).map((d) => `"${d.id}"`).join(" ");
+    for (const b of await query(options, `SELECT ?id ?item ${LINK_SELECT} WHERE { VALUES ?id { ${ids} } ?item wdt:P6199 ?id . ${LINK_FIELDS} } GROUP BY ?id ?item`)) {
+      const id = Number(b.id?.value);
+      if (Number.isInteger(id) && !byDeputy.has(id)) byDeputy.set(id, linksOf(b));
+    }
   }
 
   // Members of the Government: their deputy record's links, or a unique exact name.
@@ -83,7 +107,7 @@ export const syncWikidataLinks = async (db: Db, fetchFn: typeof fetch = fetch) =
   for (let i = 0; i < unlinked.length; i += 50) {
     const names = unlinked.slice(i, i + 50).map((m) => literal(m.name)).join(" ");
     const rows = await query(
-      fetchFn,
+      options,
       `SELECT ?name ?item ${LINK_SELECT} WHERE { VALUES ?name { ${names} } ?item rdfs:label ?name; wdt:P31 wd:Q5; wdt:P27 wd:Q45 . ${LINK_FIELDS} } GROUP BY ?name ?item`,
     );
     for (const b of rows) {
@@ -92,6 +116,12 @@ export const syncWikidataLinks = async (db: Db, fetchFn: typeof fetch = fetch) =
       // The same name on two people: skip it rather than guess.
       byName.set(name, byName.has(name) ? null : linksOf(b));
     }
+  }
+  let deputyLinks = 0;
+  for (const { id } of storedDeputies) {
+    const links = byDeputy.get(id) ?? [];
+    if (links.length) deputyLinks++;
+    await db.update(deputies).set({ wikidataLinks: links }).where(eq(deputies.id, id));
   }
   let memberLinks = 0;
   for (const m of members) {

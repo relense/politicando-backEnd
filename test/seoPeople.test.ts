@@ -141,8 +141,14 @@ describe("deputies' gender and official links", () => {
         { name: { value: "Nome Repetido" }, item: { value: "http://www.wikidata.org/entity/Q4" } },
       ],
     ];
-    const fakeFetch = (async () => new Response(JSON.stringify({ results: { bindings: answers.shift() } }))) as unknown as typeof fetch;
-    expect(await syncWikidataLinks(db, fakeFetch)).toEqual({ deputies: 1, governmentMembers: 1 });
+    const asked: string[] = [];
+    const fakeFetch = (async (_url: string, init: RequestInit) => {
+      asked.push(new URLSearchParams(String(init.body)).get("query")!);
+      return new Response(JSON.stringify({ results: { bindings: answers.shift() } }));
+    }) as unknown as typeof fetch;
+    expect(await syncWikidataLinks(db, { fetchFn: fakeFetch })).toEqual({ deputies: 1, governmentMembers: 1 });
+    // Only the deputies we store are asked about, not every deputy Wikidata knows.
+    expect(asked[0]).toContain('VALUES ?id { "1" }');
 
     const deputy = (await get("/deputies/1")).body;
     expect(deputy.gender).toBe("F");
@@ -155,6 +161,29 @@ describe("deputies' gender and official links", () => {
       { network: "Wikidata", url: "https://www.wikidata.org/wiki/Q2" },
     ]);
     expect((await db.select().from(governmentMembers).where(eq(governmentMembers.id, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")))[0]!.wikidataLinks).toEqual([]);
+  });
+
+  it("asks again when Wikidata is busy, and keeps the stored links when it stays down", async () => {
+    await db.insert(deputies).values({ id: 1, name: "Ana Deputada", fullName: "Ana Maria Deputada", constituency: "Lisboa", situation: "Efetivo", active: true, wikidataLinks: [{ network: "X", url: "https://x.com/ana" }] });
+    const timeout = () => Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" });
+    const answers: (() => Response)[] = [
+      () => { throw timeout(); },
+      () => new Response("busy", { status: 503 }),
+      () => new Response(JSON.stringify({ results: { bindings: [{ id: { value: "1" }, item: { value: "http://www.wikidata.org/entity/Q1" } }] } })),
+    ];
+    const flaky = (async () => answers.shift()!()) as unknown as typeof fetch;
+    expect(await syncWikidataLinks(db, { fetchFn: flaky, retryDelaysMs: [0, 0] })).toEqual({ deputies: 1, governmentMembers: 0 });
+    const stored = async () => (await db.select().from(deputies).where(eq(deputies.id, 1)))[0]!.wikidataLinks;
+    expect(await stored()).toEqual([{ network: "Wikidata", url: "https://www.wikidata.org/wiki/Q1" }]);
+
+    const down = (async () => { throw timeout(); }) as unknown as typeof fetch;
+    await expect(syncWikidataLinks(db, { fetchFn: down, retryDelaysMs: [0] })).rejects.toThrow("timeout");
+    // A 400 is our mistake, not a busy server: no retry.
+    let calls = 0;
+    const bad = (async () => { calls++; return new Response("bad query", { status: 400 }); }) as unknown as typeof fetch;
+    await expect(syncWikidataLinks(db, { fetchFn: bad, retryDelaysMs: [0, 0] })).rejects.toThrow("Wikidata answered 400");
+    expect(calls).toBe(1);
+    expect(await stored()).toEqual([{ network: "Wikidata", url: "https://www.wikidata.org/wiki/Q1" }]);
   });
 });
 
