@@ -1,9 +1,10 @@
-import { sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import { budgetBills, initiatives, type VoteRecord } from "../db/schema.js";
 import { foldText } from "../modules/articles/routes.js";
 import type { OpenDataLoader } from "../parliament/openData.js";
-import { parseInitiative } from "../parliament/parse.js";
+import { overwriteAll } from "../db/upsert.js";
+import { type ParsedInitiative, parseInitiative } from "../parliament/parse.js";
 
 /*
  * Each Budget's own bill and its votes (generalidade, final global…), next to the amendment
@@ -66,4 +67,33 @@ export const importPastBudgetBills = async (db: Db, load: OpenDataLoader, legisl
     }
   }
   return store(db, bills);
+};
+
+/**
+ * While one of the legislature's Budget bills is still in progress, re-reads those bills from the
+ * parliament's initiatives file (as the daily parliament sync does, for them only), so a new vote
+ * reaches the site within the hour it's published rather than at the next 04:00 UTC sync. Returns
+ * null when no bill is in progress (nothing read), else how many of our initiatives changed.
+ */
+export const refreshBudgetBillsInProgress = async (db: Db, load: OpenDataLoader, legislature: string) => {
+  const open = await db
+    .select({ id: budgetBills.initiativeId })
+    .from(budgetBills)
+    .where(and(eq(budgetBills.legislature, legislature), eq(budgetBills.status, "in_progress")));
+  if (open.length === 0) return null;
+  const ids = new Set(open.map((b) => b.id));
+  const found: ParsedInitiative[] = [];
+  for await (const item of load.items("initiatives")) for (const parsed of parseInitiative(item)) if (ids.has(parsed.id)) found.push(parsed);
+  if (found.length === 0) return 0;
+  const changed = await db
+    .insert(initiatives)
+    // Authors are the parliament sync's; a Budget bill's never change.
+    .values(found.map(({ authorGroups: _groups, authorDeputyIds: _deputies, ...initiative }) => ({ ...initiative, updatedAt: new Date() })))
+    .onConflictDoUpdate({
+      target: initiatives.id,
+      set: overwriteAll(initiatives),
+      setWhere: sql`(${initiatives.status}, ${initiatives.votes}) is distinct from (excluded.status, excluded.votes)`,
+    })
+    .returning({ id: initiatives.id });
+  return changed.length;
 };

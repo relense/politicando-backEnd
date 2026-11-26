@@ -6,7 +6,7 @@ stories "Importa" and comment on the story, not on each outlet's version.
 
 ## How stories are made
 
-After each hourly news scan, every new article joins the story it matches or starts a new
+After each news scan (every 15 minutes), every new article joins the story it matches or starts a new
 one. Two articles tell the same story when, within 36 hours of each other, their titles and
 excerpts share enough **rare** words ("Odemira", "reeleito", "98%", not "Governo") and,
 where their headlines name parties, the parties overlap. To join a story, an article has to

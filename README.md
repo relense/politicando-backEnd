@@ -172,7 +172,7 @@ limits on posting, a per-thread poster ID keyed by `FORUM_SECRET` (set it once a
 change it), upvotes (one per reader per thread, keyed the same way), and reports that feed
 the moderation queue. The `ideias` board holds readers' ideas for the site, which the team
 answers with a status. The feedback form, the public corrections log and their admin are in
-`docs/feedback-api.md`; screenshots are kept in the database for 90 days and the hourly
+`docs/feedback-api.md`; screenshots are kept in the database for 90 days and the news
 ingest deletes older ones. Our own posts and podcasts live under `/editorial`
 (`docs/editorial-api.md`), written in the admin.
 
@@ -189,7 +189,7 @@ The scanner identifies itself as `PoliticandoBot`, obeys `robots.txt` and `Crawl
 
 It prints one JSON line per source and exits non-zero if more than half of the sources can't be read. It's safe to re-run. Articles that match no party are recorded in `seen_source_uris` so they aren't scored again; clear that table to re-score after changing terms.
 
-Schedule it hourly next to the API, using the same Docker image with the command `node dist/jobs/ingest.js`. RSS feeds only cover a few hours, so running it less often misses articles.
+Schedule it every 15 minutes next to the API, using the same Docker image with the command `node dist/jobs/ingest.js`. RSS feeds only cover a few hours, so running it less often misses articles.
 
 ## Parliament
 
@@ -251,7 +251,7 @@ The file header records where the party list and seat counts came from. Update i
 
 `render.yaml` is a Render Blueprint for everything, in Frankfurt: the API (web service, Docker,
 health check on `/health`, migrations and party seed before each deploy), the database
-(Postgres 17) and the scheduled jobs (`ingest` hourly, the parliament and government syncs daily,
+(Postgres 17) and the scheduled jobs (`ingest` every 15 minutes, the parliament and government syncs daily,
 contracts weekly). In Render: New › Blueprint, pick this repo, and fill in the values it asks for
 (`CORS_ORIGINS`, `RECAPTCHA_SECRET`, `RECAPTCHA_HOSTNAMES`, `SMTP_URL`, `SITE_URL`,
 `PUBLIC_API_URL`). `FORUM_SECRET` and `NEWSLETTER_SECRET` are generated once; never regenerate them.
@@ -304,7 +304,7 @@ Production checklist:
 - `PUBLISH_API_KEYS`: keys that may publish blog posts with `POST /api/v2/publish` (`docs/publish-api.md`), e.g. from an automation. Empty: off.
 - Blog posts can live in `content/editorial/*.md` (front matter as in `src/editorial/markdownFiles.ts`): every deploy publishes new ones and updates live ones whose file changed. A post taken down (admin or `/publish/:slug/unpublish`) stays down, and a byline set through the API is kept.
 - Create the first admin with `node dist/jobs/createAdmin.js <email> "<name>" admin`, then invite the rest from the admin (`docs/admin-api.md`).
-- Schedule the jobs from the host's cron, with the same image: `node dist/jobs/ingest.js` hourly, `syncParliament.js` and `syncGovernment.js` daily, `importContracts.js` weekly.
+- Schedule the jobs from the host's cron, with the same image: `node dist/jobs/ingest.js` every 15 minutes, `syncParliament.js` and `syncGovernment.js` daily, `importContracts.js` weekly.
 
 ```sh
 node dist/db/migrate.js   # on each release: migrates, then seeds

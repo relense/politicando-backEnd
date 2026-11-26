@@ -4,6 +4,7 @@ import { purgeFeedback } from "../feedback/purge.js";
 import { pruneNotifications } from "../notifications/index.js";
 import { ingest, pruneSeen, refreshGenericHeadlines } from "../ingestion/ingest.js";
 import { createPoliteClient } from "../ingestion/politeClient.js";
+import { hideRepeats } from "../ingestion/repeats.js";
 import { NEWS_SOURCES } from "../ingestion/sources.js";
 import { syncPodcast } from "../podcast/spotify.js";
 import { changedPages, pingIndexNow } from "../seo/indexNow.js";
@@ -15,8 +16,10 @@ const config = loadIngestConfig();
 const { db, pool } = createDb(config.DATABASE_URL);
 const client = createPoliteClient();
 const revalidate = createRevalidator();
-// The previous run started an hour ago: from then on, everything new is worth announcing.
-const changedSince = new Date(Date.now() - 61 * 60 * 1000);
+/** How often this job runs (render.yaml: "5,20,35,50 * * * *"). */
+const RUN_EVERY_MINUTES = 15;
+// The previous run started one interval ago (plus a minute of slack): from then on, everything new is worth announcing.
+const changedSince = new Date(Date.now() - (RUN_EVERY_MINUTES + 1) * 60 * 1000);
 
 try {
   const stats = await ingest({
@@ -39,6 +42,8 @@ try {
     }
   };
   await step("refreshedHeadlines", () => refreshGenericHeadlines({ db, client }));
+  // An outlet's second copy of the same article (another URL, same headline) is hidden.
+  await step("hiddenRepeats", () => hideRepeats(db));
   // After the headlines are final: every new article joins a story, or starts one.
   await step("stories", () => assignStories(db, { judge: judgeFromEnv() }));
   // Not news, but this job runs every hour: old feedback screenshots go here too.

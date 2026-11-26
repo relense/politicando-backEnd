@@ -90,6 +90,16 @@ The Budgets we have, newest first: every year with amendment proposals or a bill
   (which led to early elections) and the one approved in 2022. Its votes have the same shape as
   on `/initiatives` (party slugs; `count` when only part of a group voted that way). Current
   bills have a page at `/iniciativas/:initiativeId`.
+- **When the bill's votes arrive:** while a Budget bill is still `in_progress`, the hourly sync
+  re-reads it from the parliament's open data, so a new vote shows within the hour it's
+  published there (other bills get it from the daily 04:00 UTC parliament sync). The open data
+  usually lags the plenary by a few days.
+- **Provisional votes:** until then, a vote the team added by hand from the news has
+  `"provisional": true` and `"source": { "name": "RTP", "url": "…" }`. Show it with a note such as
+  "Provisório, segundo a RTP (ainda não publicado pelo Parlamento)", linking the source. A
+  provisional final overall vote also settles the bill's `status` (`approved`/`rejected`). When
+  the official vote of that phase comes in, it replaces the provisional one: no `provisional`, no
+  `source`. OE2027's final overall vote (24 Nov 2026) is the first.
 - Years before 2006 have a bill but no amendment proposals (`proposals: 0`, `syncedAt: null`).
 
 ## GET /budget/:year/proposals

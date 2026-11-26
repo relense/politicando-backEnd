@@ -10,6 +10,7 @@ import { ApiError, notFound } from "../../errors.js";
 import { PARTY_DEFINITIONS } from "../../matching/parties.js";
 import { escapeLike, searchWords } from "../articles/routes.js";
 import { voteSchema as billVoteSchema } from "../parliament/routes.js";
+import { withProvisionalVotes } from "../../budget/provisional.js";
 import { errorSchema } from "../shared.js";
 
 /*
@@ -110,7 +111,14 @@ const billSchema = z.object({
   number: z.string().describe('"110": Proposta de Lei 110/XVII'),
   title: z.string(),
   status: z.string().describe("approved, rejected, in_progress, withdrawn, or lapsed (its legislature ended first)"),
-  votes: z.array(billVoteSchema).describe('Oldest first: "Votação na generalidade", "Votação final global"…, as on /initiatives'),
+  votes: z
+    .array(
+      billVoteSchema.extend({
+        provisional: z.boolean().optional().describe("true: from the news, before the parliament's open data has it (see source)"),
+        source: z.object({ name: z.string(), url: z.string() }).optional().describe("Where a provisional vote comes from"),
+      }),
+    )
+    .describe('Oldest first: "Votação na generalidade", "Votação final global"…, as on /initiatives'),
 });
 
 const day = z.iso.date();
@@ -215,10 +223,11 @@ export const budgetRoutes =
         .orderBy(budgetBills.year, budgetBills.initiativeId);
       const map = new Map<number, z.infer<typeof billSchema>[]>();
       for (const r of rows) {
-        map.set(r.year, [...(map.get(r.year) ?? []), {
+        // Votes the open data hasn't published yet, from the news, until it does (src/budget/provisional.ts).
+        map.set(r.year, [...(map.get(r.year) ?? []), withProvisionalVotes({
           initiativeId: r.initiativeId, legislature: r.legislature, number: r.number, title: r.title, status: r.status,
           votes: [...r.votes].sort((a, b) => a.date.localeCompare(b.date)),
-        }]);
+        })]);
       }
       return map;
     };

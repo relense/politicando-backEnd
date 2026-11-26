@@ -26,6 +26,7 @@ import { ApiError } from "./errors.js";
 import { adminForumRoutes } from "./modules/admin/forums.js";
 import { adminRecordRoutes } from "./modules/admin/records.js";
 import { adminRoutes } from "./modules/admin/routes.js";
+import { adminReaderRoutes } from "./modules/admin/readers.js";
 import { adminUserRoutes } from "./modules/admin/users.js";
 import { caseRoutes } from "./modules/cases/routes.js";
 import { forumRoutes } from "./modules/forums/routes.js";
@@ -269,6 +270,7 @@ export const buildApp = async ({
       await api.register(adminRecordRoutes(db));
       await api.register(adminForumRoutes(db, forumSecret));
       await api.register(adminUserRoutes(db));
+      await api.register(adminReaderRoutes(db));
       await api.register(editorialRoutes(db, { voteSecret: forumSecret, revalidate }));
       await api.register(publishRoutes(db, publishKeys, { apiUrl: publicApiUrl, revalidate }));
       await api.register(agendaRoutes(db));

@@ -395,7 +395,8 @@ export const editorialRoutes =
     );
 
     const transitions = [
-      { name: "publish", role: "author", set: (r: Row) => ({ status: "published" as const, publishedAt: r.publishedAt ?? new Date() }) },
+      // The first time a post goes live it's featured (a front-page highlight); a moderator can take it off.
+      { name: "publish", role: "author", set: (r: Row) => ({ status: "published" as const, publishedAt: r.publishedAt ?? new Date(), featured: r.featured || r.publishedAt === null }) },
       { name: "unpublish", role: "author", set: () => ({ status: "draft" as const, featured: false }) },
       { name: "feature", role: "moderator", set: () => ({ featured: true }) },
       { name: "unfeature", role: "moderator", set: () => ({ featured: false }) },

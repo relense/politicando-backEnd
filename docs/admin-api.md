@@ -42,7 +42,7 @@ Publishing, unpublishing, featuring or editing a live post tells the site to ref
 | --- | --- |
 | `author` | sign in, change their password, write and publish their own editorial posts (`docs/editorial-api.md`) |
 | `moderator` | everything an author can, plus edit and feature any editorial post, moderate comments and forums, handle reports, curate the corruption record and declared interests (`docs/cases-api.md`), and read the audit log |
-| `admin` | everything, plus invite, edit and disable admins |
+| `admin` | everything, plus invite, edit and disable admins, and manage reader accounts (`/admin/readers`) |
 
 ## Admins (role admin)
 
@@ -55,6 +55,114 @@ Publishing, unpublishing, featuring or editing a live post tells the site to ref
   everywhere. You can't disable yourself or drop your own admin role (400 `self_lockout`).
 
 The very first admin is created on the server: `npm run admin:create -- <email> "<name>" admin`.
+
+## Reader accounts (role admin)
+
+Moderators and authors get 403 `forbidden`. Opening a reader and every action below go into the
+audit log as entity `reader` (see the end). Never sent: password hashes or session tokens (and we
+keep no IPs).
+
+### `GET /admin/readers`
+
+Query, all optional: `q` (part of the username or email, any case), `email=confirmed|unconfirmed|none`,
+`status=active|suspended|banned|deleted`, `active=7|30` (seen in the last N days),
+`sort=newest|oldest|last_seen|most_active` (default `newest`), `cursor`, `limit` (default 50, max 100).
+
+```json
+{
+  "items": [
+    {
+      "id": 812, "username": "rita_m", "email": "rita@example.com", "emailConfirmed": true, "newsletter": false,
+      "createdAt": "2026-11-02T10:14:00.000Z", "lastSeenAt": "2026-11-23T21:40:00.000Z",
+      "status": "active", "suspendedUntil": null, "signupFrom": "/orcamento/2027/proposta/25391",
+      "counts": { "comments": 14, "forumPosts": 3, "importa": 22, "follows": 5, "saved": 9, "predictions": 4, "reportsMade": 1, "reportsAgainst": 0 }
+    }
+  ],
+  "nextCursor": "50",
+  "total": 1342
+}
+```
+
+- `lastSeenAt`: their last request while logged in, written at most once an hour. Accounts from
+  before 24 Nov start from their last login.
+- `newsletter`: subscribed with their confirmed email.
+- `status`: deleted accounts are removed, not kept, so `deleted` never appears and
+  `status=deleted` lists nothing. `suspendedUntil` is set only while suspended.
+- `signupFrom`: null for accounts from before 24 Nov.
+- `counts.forumPosts` is threads opened plus replies; `importa` covers stories and blog posts;
+  `reportsAgainst` counts every report ever made on their comments and forum posts.
+- `most_active` sorts by the sum of the counts (reports against them left out).
+- `nextCursor` is an offset: pass it back as it is. Anything else is a 400.
+
+### `GET /admin/readers/stats`
+
+```json
+{ "total": 1342, "newToday": 12, "newThisWeek": 87, "active7d": 410, "active30d": 760, "withEmail": 690, "emailConfirmed": 540,
+  "suspended": 3, "banned": 2, "signupsByDay": [{ "date": "2026-10-26", "count": 0 }, "…", { "date": "2026-11-24", "count": 12 }] }
+```
+
+Lisbon days. `newThisWeek` is the last 7 days, today included. `signupsByDay` is the last 30
+days, oldest first, zero days included.
+
+### `GET /admin/readers/:id`
+
+A list item plus `moderation`: what was done to them, newest first (up to 200). That covers the
+actions below, moderator bans (`/admin/users/:id/disable`), and moderators hiding their comments,
+threads or replies (directly or by resolving a report).
+
+```json
+{ "...": "every field of a list item",
+  "moderation": [{ "at": "2026-11-20T09:00:00.000Z", "action": "comment_removed", "by": { "id": 2, "name": "Equipa" }, "reason": "insulto", "until": null }] }
+```
+
+`action`: `comment_removed | post_removed | suspended | unsuspended | banned | unbanned | content_removed`.
+`by` is null if that admin was deleted; `reason` is null where none was given. 404 `not_found`.
+
+### `GET /admin/readers/:id/activity?kind=&cursor=`
+
+Everything they did, newest first, 50 a page. `kind` is a comma list (unknown kinds are a 400).
+
+```json
+{
+  "items": [
+    { "at": "2026-11-23T21:40:00.000Z", "kind": "comment", "text": "Concordo com a proposta…", "removed": false,
+      "target": { "type": "article", "id": 51234, "title": "Parlamento aprova…" } },
+    { "at": "2026-11-23T20:10:00.000Z", "kind": "follow", "text": null, "removed": false,
+      "target": { "type": "budget_proposal", "id": 25391, "title": "Artigo 91.º", "year": 2027 } }
+  ],
+  "nextCursor": null
+}
+```
+
+- `kind`: `comment`, `forum_thread`, `forum_post`, `importa` (story or blog post), `vote` (an
+  article's, `text` `"up"`/`"down"`, at its last change), `follow`, `save`, `prediction` (`text`
+  `"pass"`/`"fail"`), `report` (`text` is the reason), `feedback`, and `read` (a story ticked as
+  read in «Hoje em 5»). Unfollows aren't kept, so `unfollow` never appears. Something unfollowed,
+  unsaved or un-voted simply isn't there any more.
+- `text`: the body, at most 300 characters (a thread: title — body), or null.
+- `removed`: a comment, thread or reply that's hidden.
+- `target`: `type` `article | story | thread | initiative | budget_proposal | editorial`, with
+  `id` and `title` (null when unknown), plus `year` for proposals, `board` for threads and `slug`
+  for blog posts. A comment points at the article, story or post it's on; a forum reply at its
+  thread. Null for feedback.
+
+### Actions
+
+Each takes a required `reason` (3–500 characters, 400 `invalid_request` otherwise), is audited,
+and returns the reader as `GET /admin/readers/:id` does (404 if unknown).
+
+- `POST /admin/readers/:id/suspend` `{ "until": "2026-12-01T00:00:00.000Z", "reason": "…" }`:
+  `until` must be in the future.
+- `POST /admin/readers/:id/unsuspend` `{ "reason": "…" }`
+- `POST /admin/readers/:id/ban` / `unban` `{ "reason": "…" }`
+- `POST /admin/readers/:id/remove-content` `{ "reason": "…" }`: hides every comment, thread and
+  forum reply of theirs and closes the open reports on them. Adds `"removed": 17` (how many it
+  hid now) to the reader.
+- `DELETE /admin/readers/:id` `{ "reason": "…" }`: deletes the account as `DELETE /me` does. 204.
+
+Banned and suspended readers stay logged in but get 403 `account_banned` / `account_suspended`
+on login and whenever they take part (`docs/accounts-api.md`). Neither hides what they wrote:
+that's `remove-content`.
 
 ## Comment moderation (role moderator)
 
@@ -161,7 +269,13 @@ works in locked threads, and notifies like any reply. Ideas' statuses: see `docs
   `interest.create`, `interest.update`, `interest.delete`, `report.hide`, `report.dismiss`,
   `thread.hide`, `thread.unhide`, `thread.lock`, `thread.unlock`, `thread.pin`, `thread.unpin`,
   `post.hide`, `post.unhide`, `article.hide`, `article.unhide`, `editorial.create`, `editorial.update`, `editorial.publish`,
-  `editorial.unpublish`, `editorial.feature`, `editorial.unfeature`, `editorial.delete`.
+  `editorial.unpublish`, `editorial.feature`, `editorial.unfeature`, `editorial.delete`,
+  `user.disable`, `user.enable`, and for reader accounts (entity `reader`, `entityId` the
+  reader's id): `reader.view`, `reader.suspend`, `reader.unsuspend`, `reader.ban`,
+  `reader.unban`, `reader.remove_content`, `reader.delete`. Their `after` is
+  `{ "reason": "…" }`, plus `until` for a suspension and `removed` for removed content;
+  `reader.delete` keeps only the username, in `before`.
+- A reader's page: `?entity=reader&entityId=812` shows who opened it and what was done.
 - `admin` is null if that admin was deleted.
 - Show it as a history panel next to any record (`?entity=comment&entityId=345`), and as a
   full log page for admins.

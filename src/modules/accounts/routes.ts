@@ -12,7 +12,9 @@ import {
   endReaderSession,
   endReaderSessions,
   readerCookieOptions,
+  restrictionOf,
 } from "../../accounts/sessions.js";
+import { restrictedError } from "../../accounts/participant.js";
 import { readResetToken, readVerifyToken, passwordFingerprint, resetToken, verifyToken, RESET_TTL_HOURS, VERIFY_TTL_HOURS } from "../../accounts/emailTokens.js";
 import type { Db } from "../../db/client.js";
 import { type NewsletterSettings, normalEmail } from "../../newsletter/subscribe.js";
@@ -301,6 +303,7 @@ export const accountRoutes =
             recaptchaToken: z.string().min(1).max(4_096),
             email: z.string().max(320).nullish(),
             newsletter: z.boolean().default(false),
+            signupFrom: z.unknown().optional().describe("The site page they signed up from: a path starting with /, at most 300 characters. Anything else is ignored"),
           }),
           response: {
             201: z.object({
@@ -329,7 +332,10 @@ export const accountRoutes =
         try {
           [created] = await db
             .insert(users)
-            .values({ username, passwordHash: await hashPassword(password), lastLoginAt: new Date(), email: given, newsletterWanted: newsletter && given !== null })
+            .values({
+              username, passwordHash: await hashPassword(password), lastLoginAt: new Date(), lastSeenAt: new Date(), email: given,
+              newsletterWanted: newsletter && given !== null, signupFrom: sitePath(request.body.signupFrom),
+            })
             .returning();
         } catch (error) {
           if (pgCode(error) === "23505") throw new ApiError(409, "username_taken", "That username is taken");
@@ -350,6 +356,7 @@ export const accountRoutes =
           tags: ["accounts"],
           summary: "Log in (sets an httpOnly session cookie scoped to /api/v2)",
           body: z.strictObject({ username: z.string().trim().max(40), password: z.string().max(200), recaptchaToken: z.string().min(1).max(4_096) }),
+          description: "A banned or suspended account gets 403 `account_banned` / `account_suspended` (with the right password only).",
           response: { 200: z.object({ user: userSchema }), 400: errorSchema, 401: errorSchema, 403: errorSchema, 429: errorSchema, 503: errorSchema },
         },
       },
@@ -364,7 +371,7 @@ export const accountRoutes =
         const [user] = await db.select().from(users).where(sql`lower(${users.username}) = ${name}`);
         // Unknown names are checked against a dummy hash, so the time doesn't tell them apart.
         const ok = await verifyPassword(password, user?.passwordHash ?? DUMMY_HASH);
-        if (!user || !ok || user.disabledAt) {
+        if (!user || !ok) {
           const count = (lock && lock.until > Date.now() ? lock.count : 0) + 1;
           // Bounded: drop the oldest names, never everyone's lock at once.
           if (failures.size > 10_000) for (const old of [...failures.keys()].slice(0, 1_000)) failures.delete(old);
@@ -372,6 +379,9 @@ export const accountRoutes =
           throw new ApiError(401, "invalid_credentials", "Wrong username or password");
         }
         failures.delete(name);
+        // Told only once the password is right: banned or suspended, and until when.
+        const restriction = restrictionOf(user);
+        if (restriction) throw restrictedError(restriction);
         await db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, user.id));
         await startSession(reply, user.id);
         return { user: (await publicUser(user)) };
@@ -1006,6 +1016,10 @@ export const accountRoutes =
   };
 
 /** Removes an account: its votes come off the totals, its comments and replies go, its threads are blanked. */
+/** A path on the site ("/orcamento/2027"), or null: never a full URL, another host ("//x") or control characters. */
+export const sitePath = (value: unknown) =>
+  typeof value === "string" && value.length <= 300 && /^\/(?!\/)[^\s\\\u0000-\u001f\u007f]*$/.test(value) ? value : null;
+
 export const deleteAccount = (db: Db, userId: number) =>
   db.transaction(async (tx) => {
     // After the hourly story jobs (they hold story rows while locking articles): its recounts lock

@@ -27,7 +27,7 @@ Content-Type: application/json
 
 | Tag | Covers | Sent by |
 | --- | --- | --- |
-| `news` | articles, stories, `/today`, tags, party and people news | the news scan (hourly, `:05`), and the parliament and government syncs (they relink news) |
+| `news` | articles, stories, `/today`, tags, party and people news | the news scan (every 15 minutes: `:05`, `:20`, `:35`, `:50`), and the parliament and government syncs (they relink news) |
 | `podcast` | `/podcast`, `/podcast/latest` | the news scan, only when a new or edited episode came in |
 | `agenda` | `/agenda` | the agenda sync (every 3 hours) |
 | `predictions` | "Passa ou chumba?" open rounds and results | the agenda and parliament syncs |
