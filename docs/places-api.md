@@ -67,7 +67,8 @@ The place page. The first fields are the same as before (`key`, `name`, `level`,
 | field | what |
 | --- | --- |
 | `mayor` | Municipalities: the presidente da câmara, as in `/places` |
-| `council` | Seats from the latest autárquicas: `{ election, organs: [{ organ, totalMandates, seats: [{ list, label, parties, votes, validPct, mandates }] }] }`. `CM` is the câmara and `AM` the assembleia municipal; for a parish, `AF` is the assembleia de freguesia. `null` if there are no seats here |
+| `juntaPresident` | Parishes: the presidente da junta, `{ name, list, label, parties, election }` (no id: they have no pages). `null` elsewhere, and when the names aren't known |
+| `council` | Seats from the latest autárquicas: `{ election, organs: [{ organ, totalMandates, seats: [{ list, label, parties, votes, validPct, mandates, members? }] }], source }`. `CM` is the câmara and `AM` the assembleia municipal; for a parish, `AF` is the assembleia de freguesia. `null` if there are no seats here. See **Who was elected** below |
 | `deputies` | Deputies elected by the district (círculo) the place is in: `{ circle: { key, name }, items: [{ id, name, photoUrl, party }] }`. Link each to `/deputados/:id` |
 | `elections` | The latest election of each type with results here, newest first: `[{ election, name, date, organ, turnoutPct, winner: { list, label, validPct } }]`. Link to the full results at `/elections/:election/places/:key` |
 | `contracts.carriedOut` | `{ count, total }`: public contracts carried out here, from BASE since 2024. Link to `/contracts?place=:key` |
@@ -75,6 +76,43 @@ The place page. The first fields are the same as before (`key`, `name`, `level`,
 
 Non-local places (`GLOBAL-…`, `FOREIGN-…`) still answer, with the place-specific sections
 empty.
+
+### Who was elected (`members`)
+
+Every seat lists the people its list elected, in list order:
+
+```jsonc
+"council": {
+  "election": "autarquicas-2025",
+  "organs": [{
+    "organ": "CM", "totalMandates": 9,
+    "seats": [{
+      "list": "L.PS", "label": "SIM ACREDITA", "parties": ["livre", "ps"], "votes": 24545, "validPct": 72.68, "mandates": 7,
+      "members": [
+        { "name": "Nuno Alexandre Martins da Fonseca", "position": 1, "role": "presidente", "localOfficialId": "nuno-fonseca-felgueiras" },
+        { "name": "António Fernando da Silva Fernandes", "position": 2, "role": null, "localOfficialId": null }
+      ]
+    }]
+  }],
+  "source": { "name": "CNE, Mapa Oficial n.º 2-B/2025", "url": "https://www.cne.pt/content/eleicoes-autarquicas-2025", "asOf": "2026-08-06" }
+}
+```
+
+- **Source:** the CNE's official results map of the autárquicas of 12 October 2025, with its
+  rectifications (`asOf` is the latest). It covers every câmara, assembleia municipal and
+  assembleia de freguesia. Cite `council.source` under the names. It shows **who was elected,
+  not later substitutions** (resignations, suspensions, people who didn't take their seat):
+  no open register tracks those.
+- **`members` absent:** no names are loaded for this body. Keep today's note.
+- **`members: []`:** the map's names for this list don't add up to its seats (the map has gaps
+  in about 60 of 3,875 bodies, e.g. one name missing), so we show none rather than the wrong
+  people.
+- **`role`:** `"presidente"` on the first name of the most-voted list in the câmara (the mayor)
+  and in an assembleia de freguesia (the junta president). Otherwise `null`. The assembleia
+  municipal elects its own presidente later, so the map doesn't say who.
+- **`localOfficialId`:** set only for people with a page at `/autarcas/:id`, which for now
+  means mayors.
+- **Names** are in title case ("Maria José de Aguiar"), converted from the map's capitals.
 
 ## GET /local-officials/:id
 
@@ -114,10 +152,10 @@ ranks for both their name and "presidente da câmara de X". In the sitemap they'
   results and pages, but `dicofre` is null (no code in our older data), so they can't be
   joined to boundary files by code yet.
 
-- **Junta presidents (parishes) and vereadores:** the results site publishes only the head of
-  each câmara list, so only mayors have ids and pages. We know which list won each junta
-  (`elections`, organ `AF`) and each list's seats, but not the people. No other open source
-  lists them; Diário da República notices are per municipality and not structured.
+- **Pages for vereadores, deputados municipais and junta presidents:** they're named in
+  `council` (see above), but only mayors have ids and pages.
+- **Substitutions after the election, portfolios (pelouros) and vice-presidents:** the official
+  map doesn't have them, and no open source does.
 - Mayors before 2025.
 - **Mayors' photos:** no official source publishes them in one place, so `mayor` has no
   `photoUrl`. Keep showing initials.

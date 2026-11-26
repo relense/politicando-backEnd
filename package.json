@@ -57,6 +57,7 @@
     "parliament:link-news": "tsx --env-file=.env src/jobs/linkNews.ts",
     "government:sync": "tsx --env-file=.env src/jobs/syncGovernment.ts",
     "elections:import": "tsx --env-file=.env src/jobs/importElections.ts",
+    "local-elected:fetch": "tsx src/jobs/fetchLocalElected.ts",
     "editorial:import": "tsx --env-file=.env src/jobs/importEditorial.ts",
     "editorial:publish": "tsx --env-file=.env src/jobs/publishPost.ts",
     "contracts:import": "tsx --env-file=.env src/jobs/importContracts.ts",

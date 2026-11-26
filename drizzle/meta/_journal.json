@@ -407,6 +407,13 @@
       "when": 1795553686384,
       "tag": "0057_feature_recent_posts",
       "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1795689366595,
+      "tag": "0058_local_elected",
+      "breakpoints": true
     }
   ]
 }

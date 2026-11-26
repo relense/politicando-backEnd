@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
 import type { Db } from "../../db/client.js";
+import { properName } from "../../elections/candidates.js";
 import { partiesInList } from "../../elections/mai.js";
 import { ApiError, notFound } from "../../errors.js";
 import { municipalityAt } from "../../places/locate.js";
@@ -33,6 +34,13 @@ const mayorSchema = z
   })
   .nullable();
 
+const memberSchema = z.object({
+  name: z.string(),
+  position: z.number().describe("Order among the list's elected, from 1"),
+  role: z.enum(["presidente"]).nullable().describe("The mayor (CM) or the junta president (AF): the first name on the most-voted list"),
+  localOfficialId: z.string().nullable().describe("Their page: /local-officials/:id (mayors only, for now)"),
+});
+
 const seatSchema = z.object({
   list: z.string(),
   label: z.string(),
@@ -40,7 +48,15 @@ const seatSchema = z.object({
   votes: z.number(),
   validPct: z.number().nullable(),
   mandates: z.number(),
+  members: z
+    .array(memberSchema)
+    .optional()
+    .describe("Who the list elected, in list order; [] when its names are unknown. Absent when no names are imported for this body"),
 });
+
+const juntaPresidentSchema = z
+  .object({ name: z.string(), list: z.string(), label: z.string(), parties: z.array(z.string()), election: z.string() })
+  .nullable();
 
 /** "PPD/PSD.CDS-PP" → psd, cds-pp; local coalition names keep the acronym's parties. */
 const partiesOf = (list: string) => partiesInList(list);
@@ -208,8 +224,16 @@ export const placeRoutes =
               parent: placeRef.nullable(),
               children: z.array(placeRef),
               mayor: mayorSchema.describe("Municipalities only: the presidente da câmara"),
+              juntaPresident: juntaPresidentSchema.describe("Parishes only: the presidente da junta, when the names are imported"),
               council: z
-                .object({ election: z.string(), organs: z.array(z.object({ organ: z.enum(["CM", "AM", "AF"]), totalMandates: z.number().nullable(), seats: z.array(seatSchema) })) })
+                .object({
+                  election: z.string(),
+                  organs: z.array(z.object({ organ: z.enum(["CM", "AM", "AF"]), totalMandates: z.number().nullable(), seats: z.array(seatSchema) })),
+                  source: z
+                    .object({ name: z.string(), url: z.string(), asOf: z.string().describe("YYYY-MM-DD: the version of the map") })
+                    .nullable()
+                    .describe("Where the members' names come from; null when none are imported"),
+                })
                 .nullable()
                 .describe("Seats in the câmara (CM), assembleia municipal (AM) or de freguesia (AF), from the latest autárquicas"),
               deputies: z
@@ -285,19 +309,57 @@ export const placeRoutes =
           where r.place_key = ${key} and coalesce(r.mandates, 0) > 0
             and r.organ in (${place.level === "parish" ? sql`'AF'` : sql`'CM', 'AM'`})
           order by r.organ, r.mandates desc, r.votes desc`);
-        const council = councilRows.rows.length
+        // Everyone elected, by name (the official map), for the same election.
+        const councilElection = councilRows.rows[0]?.election_id ?? null;
+        const electedRows = councilElection
+          ? (
+              await db.execute<{ organ: string; list: string; position: number; name: string }>(sql`
+                select organ, list, position, name from local_elected
+                where election_id = ${councilElection} and place_key = ${key} order by organ, list, position`)
+            ).rows
+          : [];
+        const source = electedRows.length
+          ? ((
+              await db.execute<{ name: string; url: string; as_of: string }>(sql`
+                select name, url, as_of::text as as_of from local_elected_sources where election_id = ${councilElection}`)
+            ).rows[0] ?? null)
+          : null;
+        let juntaPresident: z.infer<typeof juntaPresidentSchema> = null;
+        const council = councilElection
           ? {
-              election: councilRows.rows[0]!.election_id,
+              election: councilElection,
               organs: (["CM", "AM", "AF"] as const).flatMap((organ) => {
                 const seats = councilRows.rows.filter((r) => r.organ === organ);
-                return seats.length
-                  ? [{
-                      organ,
-                      totalMandates: seats[0]!.total,
-                      seats: seats.map((r) => ({ list: r.list, label: r.label ?? r.list, parties: partiesOf(r.list), votes: r.votes, validPct: r.valid_pct, mandates: r.mandates })),
-                    }]
-                  : [];
+                if (!seats.length) return [];
+                const named = electedRows.filter((e) => e.organ === organ);
+                // The first name on the most-voted list presides over the câmara or the junta.
+                const winner = organ === "AM" ? null : seats.reduce((a, b) => (b.votes > a.votes ? b : a));
+                return [{
+                  organ,
+                  totalMandates: seats[0]!.total,
+                  seats: seats.map((r) => {
+                    const seat = { list: r.list, label: r.label ?? r.list, parties: partiesOf(r.list), votes: r.votes, validPct: r.valid_pct, mandates: r.mandates };
+                    if (!named.length) return seat;
+                    // A list whose names don't add up to its seats (gaps in the map) shows none rather than the wrong people.
+                    const ofList = named.filter((e) => e.list === r.list);
+                    if (ofList.length !== r.mandates) return { ...seat, members: [] };
+                    const members = ofList.map((e) => {
+                      const presides = r === winner && e.position === 1;
+                      return {
+                        name: properName(e.name),
+                        position: e.position,
+                        role: presides ? ("presidente" as const) : null,
+                        localOfficialId: presides && organ === "CM" && mayor?.list === r.list ? mayor.id : null,
+                      };
+                    });
+                    if (organ === "AF" && r === winner && members[0]) {
+                      juntaPresident = { name: members[0].name, list: r.list, label: seat.label, parties: seat.parties, election: councilElection };
+                    }
+                    return { ...seat, members };
+                  }),
+                }];
               }),
+              source: source ? { name: source.name, url: source.url, asOf: source.as_of } : null,
             }
           : null;
 
@@ -343,6 +405,7 @@ export const placeRoutes =
           parent: parent ? { key: parent.key, name: parent.name, level: parent.level, dicofre: parent.dicofre } : null,
           children: children.rows.sort((a, b) => a.name.localeCompare(b.name, "pt")),
           mayor,
+          juntaPresident: place.level === "parish" ? juntaPresident : null,
           council,
           deputies,
           elections,
