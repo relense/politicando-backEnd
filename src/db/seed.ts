@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import { pathToFileURL } from "node:url";
 import { loadDatabaseConfig } from "../config.js";
+import { syncAfterVoteNotes } from "../budget/afterVote.js";
 import { importContentPosts } from "../editorial/markdownFiles.js";
 import { PARTY_DEFINITIONS, SEATS_AS_OF } from "../matching/parties.js";
 import { importLocalElectedFiles } from "../places/localElected.js";
@@ -47,6 +48,10 @@ export const seed = async (db: Db) => {
   const posts = await importContentPosts(db);
   console.log(JSON.stringify({ editorial: posts.filter((p) => p.changed).map((p) => p.slug), unchanged: posts.filter((p) => !p.changed).length }));
   if (posts.some((p) => p.changed)) await createRevalidator()(["blog"]);
+  // What happened after the Budget votes (src/budget/afterVote.ts): the site refreshes only when they changed.
+  const afterVote = await syncAfterVoteNotes(db);
+  console.log(JSON.stringify({ budgetAfterVote: afterVote }));
+  if (afterVote.changed) await createRevalidator()(["budget"]);
 };
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {

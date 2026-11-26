@@ -1791,6 +1791,35 @@ export const budgetSummaries = pgTable("budget_summaries", {
  * and the ids stay the same, so what was found about them must survive that.
  */
 
+/**
+ * What happened after the vote (announcements that approved proposals will or won't be
+ * applied), copied by the seed from src/budget/afterVote.ts, where the team writes them.
+ */
+export const budgetAfterVote = pgTable(
+  "budget_after_vote",
+  {
+    id: integer().primaryKey().generatedAlwaysAsIdentity(),
+    year: smallint().notNull(),
+    date: date().notNull(),
+    text: text().notNull(),
+    sourceName: text("source_name").notNull(),
+    sourceUrl: text("source_url").notNull(),
+    proposalIds: integer("proposal_ids").array().notNull().default(sql`'{}'::integer[]`),
+  },
+  (table) => [index("budget_after_vote_year_idx").on(table.year)],
+);
+
+/** Each proposal's status after the vote, from the newest note that sets it (see budget_after_vote). */
+export const budgetImplementations = pgTable("budget_implementations", {
+  proposalId: integer("proposal_id").primaryKey(),
+  year: smallint().notNull(),
+  status: text().$type<"applied" | "not_applied" | "disputed">().notNull(),
+  date: date().notNull(),
+  note: text(),
+  sourceName: text("source_name").notNull(),
+  sourceUrl: text("source_url").notNull(),
+});
+
 /** Proposals whose PDF couldn't be summarised yet: tried again later, less often each time. */
 export const budgetSummaryAttempts = pgTable("budget_summary_attempts", {
   proposalId: integer("proposal_id").primaryKey(),

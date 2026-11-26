@@ -74,7 +74,8 @@ The Budgets we have, newest first: every year with amendment proposals or a bill
           "votes": [{ "date": "2026-10-28", "phase": "Votação na generalidade", "result": "Aprovado",
                       "favor": [{ "party": "psd", "count": null }], "against": […], "abstention": […], "absent": [], "named": [] }]
         }
-      ]
+      ],
+      "afterVote": [ … ]                 // as on the summary: see "After the vote"
     },
     { "year": 1995, "proposals": 0, "voted": 0, "pending": 0, "lastVotedOn": null, "syncedAt": null, "bills": [ … ] }
   ],
@@ -114,6 +115,7 @@ The Budgets we have, newest first: every year with amendment proposals or a bill
 | `q` | Words in the number, title, article or topics, ignoring accents |
 | `votedFrom`, `votedTo` | Proposals with a vote in these days (`YYYY-MM-DD`): **a day's votes**. Items still carry all their votes; use each vote's `votedOn` |
 | `scheduledOn` | Proposals the voting scripts put on this day (`YYYY-MM-DD`): **"Em votação hoje"**. Planned, not certain |
+| `implementation` | Approved proposals with this status after the vote: `not_applied`, `applied` or `disputed`. **`implementation=not_applied` is "As N propostas que o Governo diz que não vai aplicar"** (`total` gives N). See "After the vote" |
 | `sort` | `voted` (default: latest vote first, unvoted last), `number` (the parliament's numbering) or `scheduled` (the order of `scheduledOn`'s scripts, committee first, then plenary; 400 `scheduled_on_required` without `scheduledOn`) |
 | `limit` | 1–100, default 20 |
 
@@ -144,6 +146,7 @@ Each item:
   "documentUrl": "https://app.parlamento.pt/webutils/docs/doc.pdf?path=…",
   "sourceUrl": "https://www.parlamento.pt/Cidadania/Paginas/DAOE.aspx",
   "scheduled": [{ "date": "2026-11-23", "venue": "committee", "position": 12, "scriptUrl": "https://app.parlamento.pt/webutils/docs/doc.pdf?path=…" }],
+  "implementation": null,            // after the vote: see "After the vote"
   "votes": [
     {
       "votedOn": "2026-11-19",
@@ -239,6 +242,7 @@ in those days and only those votes count: **the daily summary**).
   "topics": [{ "topic": "Saúde", "proposals": 12 }],
   "lastVotedOn": "2026-11-19", "syncedAt": "…",
   "bills": [ … ],                                       // as on GET /budget
+  "afterVote": [ … ],                                   // see "After the vote"
   "schedule": [
     { "id": "ar-48688", "title": "Comissão de Orçamento, Finanças e Administração Pública", "kind": "committee", "stage": "committee",
       "startsAt": "2026-11-20T15:00:00.000Z", "endsAt": null, "allDay": false, "started": false },
@@ -277,6 +281,56 @@ in those days and only those votes count: **the daily summary**).
 - `votesOnOthers` counts the group's own line on each vote (each part counts) on proposals it
   didn't author. A deputy voting apart doesn't change it.
 - `parties` are ordered by seats, then acronym: not by how many proposals passed.
+
+## After the vote
+
+After the parliament approves proposals, the Government can announce it won't apply some of
+them (for example, invoking the lei-travão). The team records these announcements by hand:
+never an automatic summary, always dated and with a source.
+
+**On the year:** `afterVote` on `GET /budget/:year/summary` and on each year of `GET /budget`:
+
+```jsonc
+"afterVote": [
+  {
+    "date": "2026-11-26",
+    "text": "O Governo anunciou que não vai aplicar 5 normas aprovadas, incluindo o IVA 0% no cabaz alimentar, invocando a lei-travão.",
+    "sourceName": "publico.pt",
+    "sourceUrl": "https://…",
+    "proposalIds": [25391, 25402]      // the proposals it's about; [] when none in particular
+  }
+]
+```
+
+- Newest first. `[]` when nothing is recorded.
+- `text` says who announced what and the reason they gave, without judging it. Show it as
+  written, with the date and "segundo {sourceName}" linking `sourceUrl`.
+
+**On a proposal:** `implementation` on every item of `GET /budget/:year/proposals` and on
+`/:id`:
+
+```jsonc
+"implementation": {
+  "status": "not_applied",             // "applied" | "not_applied" | "disputed"
+  "date": "2026-11-26",                // when it was announced
+  "note": "O Governo invoca a lei-travão.",  // short; null when there's none
+  "sourceName": "publico.pt",
+  "sourceUrl": "https://…"
+}
+```
+
+- `null` when nothing is known: show nothing.
+- Only approved or partially approved proposals have one.
+- A later announcement replaces an earlier one (say, the Government backing down: `applied`).
+- **List them:** `GET /budget/:year/proposals?implementation=not_applied` (its `total` is the N in
+  "As N propostas que o Governo diz que não vai aplicar").
+- **`statements` doesn't replace this.** The news matching runs up to 30 days after a
+  proposal's last vote. An article about the announcement can be linked to a proposal, and the
+  minister's words then show in `statements` (as `speaker`, usually with no `party`), but only
+  when the article's title or summary names that measure. An announcement about "5 normas"
+  usually names one or two of them, and it never gives a status.
+
+New notes arrive with a deploy, and the site is told to refresh (tag `budget`) when they change.
 
 All four answers are public and cached for 5 minutes. The site is told to refresh (tag
 `budget`, `docs/revalidate.md`) whenever the parliament's file changes.

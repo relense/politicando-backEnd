@@ -414,6 +414,13 @@
       "when": 1795689366595,
       "tag": "0058_local_elected",
       "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1795723330388,
+      "tag": "0059_budget_after_vote",
+      "breakpoints": true
     }
   ]
 }

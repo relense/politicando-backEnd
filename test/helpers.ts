@@ -10,7 +10,7 @@ export const resetDb = async (db: Db) => {
   await db.execute(
     sql`truncate budget_vote_notices, budget_schedule, budget_schedule_documents, budget_statements, budget_news, budget_summary_attempts, budget_summaries, budget_bills, budget_votes, budget_proposals, budget_sources, media, article_views, editorial_votes, comment_likes, story_votes, article_votes, editorial_views, corrections, feedback_messages, story_merge_checks, story_article_checks, story_apart, story_merges, forum_votes, forum_post_votes, forum_status_changes, agenda_events, past_initiatives, comments, article_parties, article_deputies, article_initiatives, articles, seen_source_uris,
       initiative_parties, initiative_deputies, initiatives, article_government_members, government_positions,
-      government_members, governments, article_presidents, presidents, local_elected, local_elected_sources, election_results, election_turnout,
+      government_members, governments, article_presidents, presidents, budget_after_vote, budget_implementations, local_elected, local_elected_sources, election_results, election_turnout,
       election_lists, elections, contract_parties, contracts, contract_imports, places, deputies, audit_log,
       admin_sessions, admins, case_people, case_events, case_sources, cases, interests, reports, forum_posts,
       forum_threads, editorial_posts, newsletter_subscribers, stories, podcast_episodes, user_sessions, user_saves, user_hidden, user_mutes, user_reads, notifications, user_follows, predictions, users restart identity cascade`,
