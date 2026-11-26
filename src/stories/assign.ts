@@ -22,12 +22,13 @@ interface Row extends Record<string, unknown> {
   source: string;
   published_at: Date;
   story_id: number | null;
+  kind: string;
   people: string[];
 }
 
 /**
- * Gives every visible news article without a story one (opinion, podcasts and newsletters
- * never make stories: src/ingestion/kind.ts): an existing story it matches, or a new
+ * Gives every visible article without a story one (an opinion piece, podcast or newsletter
+ * always gets its own, which nothing else joins: src/ingestion/kind.ts): an existing story it matches, or a new
  * one. Oldest first, so stories grow in the order the news came out. Hidden articles are
  * skipped (if one is shown again, the next run groups it). Runs after each ingest; safe to run
  * twice at once (the second waits).
@@ -79,19 +80,19 @@ type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 const group = async (tx: Tx, touched: Set<number>, createdIds: Set<number>) => {
   const [first] = (
     await tx.execute<{ at: Date | null }>(
-      sql`select min(published_at) as at from articles where story_id is null and hidden_at is null and kind = 'news'`,
+      sql`select min(published_at) as at from articles where story_id is null and hidden_at is null`,
     )
   ).rows;
   if (!first?.at) return { assigned: 0, created: 0 };
 
   const rows = (
     await tx.execute<Row>(sql`
-        select a.id, a.title, a.excerpt, a.source, a.published_at, a.story_id,
+        select a.id, a.title, a.excerpt, a.source, a.published_at, a.story_id, a.kind,
           array(select 'd:' || ad.deputy_id from article_deputies ad where ad.article_id = a.id)
             || array(select 'g:' || agm.member_id from article_government_members agm where agm.article_id = a.id)
             || array(select 'p:' || ap.president_id from article_presidents ap where ap.article_id = a.id) as people
         from articles a
-        where a.hidden_at is null and a.kind = 'news' and a.published_at >= ${first.at}::timestamptz - make_interval(days => ${CONTEXT_DAYS})
+        where a.hidden_at is null and a.published_at >= ${first.at}::timestamptz - make_interval(days => ${CONTEXT_DAYS})
         order by a.published_at, a.id`)
   ).rows;
 
@@ -99,6 +100,7 @@ const group = async (tx: Tx, touched: Set<number>, createdIds: Set<number>) => {
     article: StoryArticle & { storyId: number | null };
     terms: ReturnType<typeof termsOf>;
     source: string;
+    news: boolean;
   };
   const items: Item[] = rows.map((r) => {
     const article = {
@@ -110,14 +112,15 @@ const group = async (tx: Tx, touched: Set<number>, createdIds: Set<number>) => {
       people: r.people,
       storyId: r.story_id,
     };
-    return { article, terms: termsOf(article), source: r.source };
+    return { article, terms: termsOf(article), source: r.source, news: r.kind === "news" };
   });
   const rare = rarity(items.map((i) => i.terms));
 
   const stories = new Map<number, Grouping<Item["article"]> & { id: number }>();
+  // Only news stories can be joined; opinion and the rest stay on their own.
   for (const item of items) {
     const id = item.article.storyId;
-    if (id === null) continue;
+    if (id === null || !item.news) continue;
     const story = stories.get(id) ?? { id, articles: [] };
     story.articles.push(item);
     stories.set(id, story);
@@ -127,7 +130,7 @@ const group = async (tx: Tx, touched: Set<number>, createdIds: Set<number>) => {
   let created = 0;
   for (const item of items) {
     if (item.article.storyId !== null) continue;
-    let story = pickStory(item, [...stories.values()], rare);
+    let story = item.news ? pickStory(item, [...stories.values()], rare) : null;
     if (!story) {
       const [row] = (
         await tx.execute<{ id: number }>(
@@ -135,7 +138,7 @@ const group = async (tx: Tx, touched: Set<number>, createdIds: Set<number>) => {
         )
       ).rows;
       story = { id: row!.id, articles: [] };
-      stories.set(story.id, story);
+      if (item.news) stories.set(story.id, story);
       createdIds.add(story.id);
       created++;
     }

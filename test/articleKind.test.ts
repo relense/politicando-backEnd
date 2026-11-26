@@ -1,7 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { buildApp } from "../src/app.js";
 import { articleKind } from "../src/ingestion/kind.js";
-import { assignStories } from "../src/stories/assign.js";
 import { createTestDb, insertArticle, resetDb } from "./helpers.js";
 
 const { db, pool } = createTestDb();
@@ -49,22 +48,15 @@ describe("articleKind", () => {
   });
 });
 
-describe("articles that aren't news", () => {
-  it("never make stories, and are labelled and filterable in /articles", async () => {
-    const at = new Date(Date.now() - 3_600_000);
-    const fields = { title: "Orçamento do Estado aprovado na generalidade", excerpt: "O Orçamento passou com a abstenção do PS", publishedAt: at };
+describe("kind in /articles", () => {
+  it("is on every item and filters the list", async () => {
+    const fields = { title: "Orçamento aprovado", excerpt: "O Orçamento passou", publishedAt: new Date(Date.now() - 3_600_000) };
     const news = await insertArticle(db, { ...fields, sourceUri: "a", url: "https://a.pt/1", source: "a.pt" });
     const opinion = await insertArticle(db, { ...fields, sourceUri: "b", url: "https://b.pt/opiniao/1", source: "b.pt", kind: "opinion" });
-    expect(await assignStories(db)).toMatchObject({ assigned: 1, created: 1 });
-
     const items = (await app.inject({ url: "/api/v2/articles" })).json().items;
-    expect(items.map((a: { id: number; kind: string; storyId: number | null }) => [a.id, a.kind, a.storyId !== null])).toEqual([
-      [opinion.id, "opinion", false],
-      [news.id, "news", true],
-    ]);
+    expect(items.map((a: { id: number; kind: string }) => [a.id, a.kind]).sort()).toEqual([[news.id, "news"], [opinion.id, "opinion"]].sort());
     expect((await app.inject({ url: "/api/v2/articles?kind=opinion,podcast" })).json().items.map((a: { id: number }) => a.id)).toEqual([opinion.id]);
     expect((await app.inject({ url: "/api/v2/articles?kind=news" })).json().total).toBe(1);
     expect((await app.inject({ url: "/api/v2/articles?kind=gossip" })).statusCode).toBe(400);
-    expect((await app.inject({ url: "/api/v2/stories" })).json().items).toHaveLength(1);
   });
 });

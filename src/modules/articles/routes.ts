@@ -91,7 +91,7 @@ export const articleSchema = z.object({
   storyId: z
     .number()
     .nullable()
-    .describe("The story it belongs to, with the other outlets' versions (null for a few minutes after it's found, and always for anything but news)"),
+    .describe("The story it belongs to, with the other outlets' versions (null for a few minutes after it's found). Anything but news has a story of its own"),
   commentCount: z.number(),
   upvotes: z.number(),
   downvotes: z.number(),

@@ -6,14 +6,17 @@ stories "Importa" and comment on the story, not on each outlet's version.
 
 ## How stories are made
 
-After each news scan (every 15 minutes), every new **news** article joins the story it matches or starts a new
+After each news scan (every 15 minutes), every new article joins the story it matches or starts a new
 one. Two articles tell the same story when, within 36 hours of each other, their titles and
 excerpts share enough **rare** words ("Odemira", "reeleito", "98%", not "Governo") and,
 where their headlines name parties, the parties overlap. To join a story, an article has to
 match at least half of its articles, so stories don't drift from topic to topic.
 
-Opinion pieces, podcasts and newsletters never join or start a story (`kind` in
-articles-api.md): a column or a radio show isn't a version of the news.
+Opinion pieces, podcasts and newsletters (`kind` in articles-api.md) are in the feed too, but
+each on a story of its own that nothing joins or merges into: a column or a radio show isn't a
+version of the news. Story cards have `kind` (`"news"`, `"opinion"`, `"podcast"`,
+`"newsletter"`): tag anything but news. `GET /stories?kind=news` (or `opinion,podcast`) filters
+by it. "Hoje em 5" (`/today`) is news only.
 
 The grouping favours a missed match over a wrong one: occasionally one story shows as two
 cards, but two different stories should not show as one.

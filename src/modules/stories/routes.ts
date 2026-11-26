@@ -26,6 +26,7 @@ import {
   searchWords,
   visibleArticle,
 } from "../articles/routes.js";
+import { ARTICLE_KINDS } from "../../ingestion/kind.js";
 import { errorSchema } from "../shared.js";
 
 /*
@@ -65,6 +66,9 @@ export const storySchema = z.object({
   id: z.number(),
   title: z.string().describe("The headline most like the others (what most outlets said)"),
   excerpt: z.string().describe("The excerpt of the version whose headline is the title"),
+  kind: z
+    .enum(ARTICLE_KINDS)
+    .describe('"news", or "opinion", "podcast" or "newsletter": a piece the outlet marks as such, always alone on its card. Tag anything but news'),
   tags: z.array(storyTagSchema).describe("Events first, then at most 2 topics"),
   imageUrl: z.string().nullable(),
   firstPublishedAt: z.string(),
@@ -266,6 +270,7 @@ export const storyRoutes =
             id: r.id,
             title: lead.title,
             excerpt: lead.excerpt,
+            kind: lead.kind,
             tags: r.tags ?? [],
             imageUrl: list.find((a) => a.imageUrl)?.imageUrl ?? null,
             firstPublishedAt: new Date(r.first_at).toISOString(),
@@ -313,6 +318,10 @@ export const storyRoutes =
             ids: idList(100).optional().describe("Only these stories (saved ones)"),
             exclude: idList(500).optional().describe("Leave these stories out (hidden ones)"),
             excludeSource: commaList(30).optional().describe("Leave out stories told only by these outlets"),
+            kind: commaList(4)
+              .pipe(z.array(z.enum(ARTICLE_KINDS)))
+              .optional()
+              .describe('Only these kinds ("news", or "opinion,podcast"). All kinds by default'),
             excludeParty: commaList(30).optional().describe("Leave out stories about any of these parties. Unknown slugs are ignored"),
             tag: z.string().regex(/^[a-z0-9-]{1,40}$/).optional().describe('A tag slug from the story\'s tags, e.g. "oe2027" or "habitacao"'),
             sort: z
@@ -348,6 +357,7 @@ export const storyRoutes =
         const versions: SQL[] = [sql`articles.hidden_at is null`];
         for (const word of searchWords(query.q ?? "")) versions.push(sql`${FOLDED_TEXT} like ${`%${escapeLike(word)}%`}`);
         if (query.source) versions.push(sql`articles.source in (${sql.join(query.source.map((s) => sql`${s}`), sql`, `)})`);
+        if (query.kind) versions.push(sql`articles.kind in (${sql.join(query.kind.map((k) => sql`${k}`), sql`, `)})`);
         if (query.excludeSource) versions.push(sql`articles.source not in (${sql.join(query.excludeSource.map((s) => sql`${s}`), sql`, `)})`);
         if (query.party) {
           const found = await db.select({ id: parties.id, slug: parties.slug }).from(parties).where(inArray(parties.slug, query.party));
@@ -598,7 +608,7 @@ export const storyRoutes =
       {
         schema: {
           tags: ["stories"],
-          summary: '"Hoje em 5": the 5 stories that matter most in the last 24 hours',
+          summary: '"Hoje em 5": the 5 news stories that matter most in the last 24 hours (no opinion or podcasts)',
           description: `Stories with an article in the last 24 hours. Each outlet that covered it in those 24 hours counts 0.5^(hours since that outlet's latest article on it / ${TODAY_HALF_LIFE_HOURS}), and Importa adds min(0.5 × importa, 5) faded by the story's latest article: fresh coverage beats yesterday's big story, and one follow-up in the night refreshes only its own outlet. Ties: the newest, then the id.`,
           querystring: z.object({ limit: z.coerce.number().int().min(1).max(10).default(5) }),
           response: {
@@ -629,6 +639,8 @@ export const storyRoutes =
             ) outlet
           ) recent on true
           where st.last_at >= ${since.toISOString()}::timestamptz
+            -- The day's news: opinion pieces and podcasts are in the feed, not here.
+            and not exists (select 1 from articles k where k.story_id = st.id and k.kind <> 'news')
           order by recent.fresh
               + least(s.importa * 0.5, 5) * power(0.5, extract(epoch from (${now.toISOString()}::timestamptz - st.last_at)) / 3600.0 / ${TODAY_HALF_LIFE_HOURS}) desc,
             st.last_at desc, st.id desc
