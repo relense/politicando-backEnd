@@ -29,7 +29,7 @@ afterAll(async () => {
 
 const get = async (url: string) => {
   const response = await app.inject({ method: "GET", url: `/api/v2${url}` });
-  return { status: response.statusCode, body: response.json() };
+  return { status: response.statusCode, body: response.json(), headers: response.headers };
 };
 const postComment = async (articleId: number | string, payload: object) => {
   const response = await app.inject({
@@ -185,8 +185,31 @@ describe("article list", () => {
     expect(second.body.nextCursor).toBeNull();
 
     expect((await get("/articles/sources")).body).toEqual({
+      total: 3,
       items: [{ name: "Observador", count: 2 }, { name: "publico.pt", count: 1 }],
     });
+  });
+
+  it("counts articles per outlet and per party since an instant, for the homepage box", async () => {
+    await insertArticle(db, { sourceUri: "a", title: "A", source: "publico.pt", publishedAt: new Date("2026-11-27T09:00:00Z") }, ["ps", "psd", "chega"]);
+    await insertArticle(db, { sourceUri: "b", title: "B", source: "expresso.pt", publishedAt: new Date("2026-11-27T05:00:00Z") }, ["ps"]);
+    await insertArticle(db, { sourceUri: "c", title: "C", source: "publico.pt", publishedAt: new Date("2026-11-27T06:00:00Z") }, []);
+    // Before the period, and hidden: neither counts.
+    await insertArticle(db, { sourceUri: "d", title: "D", source: "dn.pt", publishedAt: new Date("2026-11-27T04:59:59Z") }, ["ps"]);
+    await insertArticle(db, { sourceUri: "e", title: "E", source: "dn.pt", publishedAt: new Date("2026-11-27T10:00:00Z"), hiddenAt: new Date() }, ["ps"]);
+
+    const since = "since=2026-11-27T05:00:00.000Z";
+    const sources = await get(`/articles/sources?${since}`);
+    expect(sources.body).toEqual({ total: 3, items: [{ name: "publico.pt", count: 2 }, { name: "expresso.pt", count: 1 }] });
+    expect(sources.headers["cache-control"]).toBe("public, max-age=60");
+    // A Lisbon offset works too; three parties on one article count once each, the total once.
+    expect((await get("/articles/parties?since=2026-11-27T05:00:00%2B00:00")).body).toEqual({
+      total: 3, items: [{ slug: "ps", count: 2 }, { slug: "chega", count: 1 }, { slug: "psd", count: 1 }],
+    });
+    // Without since: every visible article.
+    expect((await get("/articles/parties")).body).toMatchObject({ total: 4, items: [{ slug: "ps", count: 3 }, { slug: "chega", count: 1 }, { slug: "psd", count: 1 }] });
+    expect((await get("/articles/sources")).body.total).toBe(4);
+    expect((await get("/articles/parties?since=today")).status).toBe(400);
   });
 
   it("takes several parties and sources: any within a list, both lists together, with a total", async () => {
@@ -538,6 +561,7 @@ describe("platform", () => {
       "/api/v2/admin/users/{id}/enable",
       "/api/v2/agenda",
       "/api/v2/articles",
+      "/api/v2/articles/parties",
       "/api/v2/articles/sources",
       "/api/v2/articles/{id}",
       "/api/v2/articles/{id}/comments",

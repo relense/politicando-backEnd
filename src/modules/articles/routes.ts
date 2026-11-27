@@ -45,6 +45,17 @@ export const escapeLike = (word: string) => word.replace(/[\\%_]/g, (c) => `\\${
 export const FOLDED_TEXT = sql`translate(lower(articles.title || ' ' || articles.excerpt),
   'áàâãäåéèêëíìîïóòôõöúùûüçñý', 'aaaaaaeeeeiiiiooooouuuucny')`;
 
+/** The homepage's "today" box: counts for a period, from an instant the site works out (05:00 Lisbon). */
+const countsQuery = z.object({
+  since: z.iso
+    .datetime({ offset: true })
+    .transform((value) => new Date(value))
+    .optional()
+    .describe('Only articles published at or after this instant (ISO 8601, e.g. "2026-11-27T05:00:00.000Z")'),
+});
+/** Counts for a period change with every scan (each 15 min): a minute in shared caches is fine. */
+const COUNTS_CACHE = "public, max-age=60";
+
 export const articlePartySchema = z.object({
   slug: z.string(),
   acronym: z.string(),
@@ -468,18 +479,66 @@ export const articleRoutes =
       {
         schema: {
           tags: ["articles"],
-          summary: "Every news outlet we have articles from, most articles first (for the source filter)",
-          response: { 200: z.object({ items: z.array(z.object({ name: z.string(), count: z.number() })) }) },
+          summary: "Every news outlet we have articles from, most articles first (for the source filter); with since, counts for a period",
+          querystring: countsQuery,
+          response: {
+            200: z.object({
+              total: z.number().describe("Visible articles counted (in the period, with since)"),
+              items: z.array(z.object({ name: z.string(), count: z.number() })),
+            }),
+            400: errorSchema,
+          },
         },
       },
-      async () => {
-        const rows = await db
-          .select({ name: articles.source, count: sql<number>`count(*)::int` })
-          .from(articles)
-          .where(visibleArticle)
-          .groupBy(articles.source)
-          .orderBy(desc(sql`count(*)`), articles.source);
-        return { items: rows };
+      async (request, reply) => {
+        const { since } = request.query;
+        const where = and(visibleArticle, since ? sql`${articles.publishedAt} >= ${since}` : undefined);
+        const [rows, [counted]] = await Promise.all([
+          db
+            .select({ name: articles.source, count: sql<number>`count(*)::int` })
+            .from(articles)
+            .where(where)
+            .groupBy(articles.source)
+            .orderBy(desc(sql`count(*)`), articles.source),
+          db.select({ total: sql<number>`count(*)::int` }).from(articles).where(where),
+        ]);
+        if (since) reply.header("Cache-Control", COUNTS_CACHE);
+        return { total: counted?.total ?? 0, items: rows };
+      },
+    );
+
+    app.get(
+      "/articles/parties",
+      {
+        schema: {
+          tags: ["articles"],
+          summary: "How many visible articles mention each party (as ?party= matches), most first; with since, for a period",
+          querystring: countsQuery,
+          response: {
+            200: z.object({
+              total: z.number().describe("Distinct articles counted, with or without a party: not the sum of the counts"),
+              items: z.array(z.object({ slug: z.string(), count: z.number() })),
+            }),
+            400: errorSchema,
+          },
+        },
+      },
+      async (request, reply) => {
+        const { since } = request.query;
+        const period = since ? sql`and articles.published_at >= ${since}` : sql``;
+        const [rows, counted] = await Promise.all([
+          db.execute<{ slug: string; count: number }>(sql`
+            select p.slug, count(*)::int as count
+            from article_parties ap
+            join articles on articles.id = ap.article_id
+            join parties p on p.id = ap.party_id
+            where articles.hidden_at is null ${period}
+            group by p.slug
+            order by count(*) desc, p.slug`),
+          db.execute<{ total: number }>(sql`select count(*)::int as total from articles where articles.hidden_at is null ${period}`),
+        ]);
+        if (since) reply.header("Cache-Control", COUNTS_CACHE);
+        return { total: counted.rows[0]?.total ?? 0, items: rows.rows };
       },
     );
 

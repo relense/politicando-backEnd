@@ -140,8 +140,38 @@ Every outlet we have articles from, most articles first (then by name). This fil
 as fontes" dropdown.
 
 ```json
-{ "items": [{ "name": "observador.pt", "count": 71 }, { "name": "tsf.pt", "count": 31 }] }
+{ "total": 102, "items": [{ "name": "observador.pt", "count": 71 }, { "name": "tsf.pt", "count": 31 }] }
 ```
+
+`name` is the outlet as in `article.source` (its domain), so map it to a display name as the
+feed does. `total` is the visible articles counted.
+
+### Counts for a period (`since`)
+
+For the homepage's «Hoje: N notícias» box: `GET /articles/sources?since=2026-11-27T05:00:00.000Z`.
+
+- **`since`** is an instant in ISO 8601, with `Z` or an offset (`+00:00`; encode the `+` as
+  `%2B`). Only visible articles with `publishedAt >= since` count. The site works out when
+  "today" starts (05:00 Lisbon) and sends it. Anything else is 400 `invalid_request`.
+- Outlets with no articles in the period are left out. Order: most first, then by name.
+- `total` is the number of articles in the period, so the header doesn't add up the rows.
+- With `since`, the answer carries `Cache-Control: public, max-age=60` (the scanner runs
+  every 15 minutes). Without it, nothing changes except the new `total`.
+
+## GET /articles/parties
+
+The same for parties (the box's second tab): `GET /articles/parties?since=2026-11-27T05:00:00.000Z`.
+
+```json
+{ "total": 214, "items": [{ "slug": "ps", "count": 48 }, { "slug": "chega", "count": 41 }] }
+```
+
+- Each `count` is the visible articles in the period that mention the party, the same match
+  `GET /articles?party=ps` uses. Order: most first, then by slug. Parties with none are left out.
+- An article mentioning three parties counts once for each, so **`total` is distinct articles in
+  the period** (including ones that mention no party), not the sum of the counts. It's the
+  same number as `/articles/sources` gives for the same `since`.
+- `since` and caching as above. Without `since`, it counts every visible article.
 
 ## Errors
 
