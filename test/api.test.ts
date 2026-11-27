@@ -596,6 +596,7 @@ describe("platform", () => {
       "/api/v2/interests/contracts",
       "/api/v2/legislatures",
       "/api/v2/legislatures/{id}",
+      "/api/v2/local-officials/search",
       "/api/v2/local-officials/{id}",
       "/api/v2/me",
       "/api/v2/me/activity",

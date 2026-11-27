@@ -224,4 +224,44 @@ describe("local elected officials by name", () => {
     const restored = await get("/places/AUTARQUICAS2025-99");
     expect(restored.body.juntaPresident).toMatchObject({ name: "Luís da Borralha", list: "MBV" });
   });
+
+  it("finds everyone elected by name, presidents and the câmara first", async () => {
+    await seed();
+    expect((await get("/local-officials/search?q=sousa")).body).toEqual({ items: [], total: 0 });
+    await importLocalElected(db, FILE);
+
+    // Accents, case and parts of words; every word must match.
+    const rui = await get("/local-officials/search?q=rui%20SOUS");
+    expect(rui.status).toBe(200);
+    expect(rui.body).toEqual({
+      items: [{
+        name: "Rui de Sousa", organ: "AF", role: "presidente",
+        place: { key: "LOCAL-010103", name: "Aguada de Cima", level: "parish" },
+        municipality: { key: "LOCAL-010100", name: "Águeda" },
+        list: "PS", label: "PS", parties: ["ps"], localOfficialId: null, election: ELECTION,
+      }],
+      total: 1,
+    });
+    expect((await get("/local-officials/search?q=luis%20borralha")).body.items[0]).toMatchObject({
+      name: "Luís da Borralha", place: { key: "AUTARQUICAS2025-99", name: "Borralha" }, role: "presidente",
+    });
+
+    // The mayor, with their page; the place is the municipality.
+    expect((await get("/local-officials/search?q=jorge")).body.items).toEqual([{
+      name: "Jorge Almeida", organ: "CM", role: "presidente",
+      place: { key: "LOCAL-010100", name: "Águeda", level: "municipality" }, municipality: null,
+      list: "PPD/PSD.MPT", label: "Viva Águeda", parties: ["psd", "mpt"], localOfficialId: "jorge-almeida-agueda", election: ELECTION,
+    }]);
+
+    // "jo" alone is too short; "joa" matches João (AM, in a list missing names on the map: not shown) and nobody else.
+    expect((await get("/local-officials/search?q=jo")).status).toBe(400);
+    expect((await get("/local-officials/search?q=joa")).body).toEqual({ items: [], total: 0 });
+
+    // Whole words before parts of words, then presidents, then CM before AM before AF.
+    const ma = (await get("/local-officials/search?q=mar&limit=1")).body;
+    expect(ma.total).toBe(2);
+    expect(ma.items.map((i: { name: string }) => i.name)).toEqual(["Marlene Gaio"]);
+    const ana = (await get("/local-officials/search?q=ana")).body.items.map((i: { name: string; organ: string }) => [i.name, i.organ]);
+    expect(ana[0]).toEqual(["Ana Costa", "AF"]);
+  });
 });
