@@ -3,10 +3,11 @@ import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
 import type { Db } from "../../db/client.js";
 import { articleLocalOfficials, articles, folded } from "../../db/schema.js";
+import { properName } from "../../elections/candidates.js";
 import { partiesInList } from "../../elections/mai.js";
 import { notFound } from "../../errors.js";
 import { shortName } from "../../places/localOfficials.js";
-import { articleColumns, articleSchema, visibleArticle } from "../articles/routes.js";
+import { articleColumns, articleSchema, escapeLike, foldText, visibleArticle } from "../articles/routes.js";
 import { errorSchema } from "../shared.js";
 
 /*
@@ -48,9 +49,110 @@ const officialSchema = z.object({
   updatedAt: z.string(),
 });
 
+const searchItemSchema = z.object({
+  name: z.string().describe("As on the official map, in proper case (as in council members)"),
+  organ: z.enum(["CM", "AM", "AF"]),
+  role: z.enum(["presidente"]).nullable().describe("The mayor (CM) or the junta president (AF)"),
+  place: placeRef.describe("The municipality (CM, AM) or the parish (AF)"),
+  municipality: z.object({ key: z.string(), name: z.string() }).nullable().describe("The parish's municipality; null when the place is the municipality"),
+  list: z.string(),
+  label: z.string(),
+  parties: z.array(z.string()),
+  localOfficialId: z.string().nullable().describe("Their page, /local-officials/:id (mayors only, for now)"),
+  election: z.string(),
+});
+
+/** Words of the query, folded as the names are (capitals, no accents). */
+const nameWords = (q: string) => [...new Set(foldText(q).toUpperCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean))].slice(0, 10);
+
 export const localOfficialRoutes =
   (db: Db): FastifyPluginAsyncZod =>
   async (app) => {
+    app.get(
+      "/local-officials/search",
+      {
+        schema: {
+          tags: ["places"],
+          summary: "Everyone elected locally (câmara, assembleia municipal, assembleia de freguesia), searched by name",
+          querystring: z.object({
+            q: z.string().trim().min(3).max(200).describe("Every word must appear in the name, ignoring case and accents; parts of words count"),
+            limit: z.coerce.number().int().min(1).max(50).default(10),
+          }),
+          response: { 200: z.object({ items: z.array(searchItemSchema), total: z.number() }), 400: errorSchema },
+        },
+      },
+      async (request) => {
+        const { q, limit } = request.query;
+        const words = nameWords(q);
+        if (!words.length) return { items: [], total: 0 };
+        // Names padded with spaces and with punctuation as spaces, to tell whole words and word starts apart.
+        const padded = sql`' ' || regexp_replace(${folded(sql`e.name`)}, '[^A-Z0-9]+', ' ', 'g') || ' '`;
+        const matches = sql.join(words.map((w) => sql`${folded(sql`e.name`)} like ${`%${escapeLike(w)}%`}`), sql` and `);
+        // Best name match first: the whole name, then whole words (2 each), then word starts (1 each).
+        const score = sql.join(
+          [
+            sql`(case when ${padded} = ${` ${words.join(" ")} `} then 100 else 0 end)`,
+            ...words.map((w) => sql`(case when ${padded} like ${`% ${escapeLike(w)} %`} then 2 when ${padded} like ${`% ${escapeLike(w)}%`} then 1 else 0 end)`),
+          ],
+          sql` + `,
+        );
+        const rows = await db.execute<{
+          name: string; organ: "CM" | "AM" | "AF"; presides: boolean; place_key: string; place_name: string; place_level: string;
+          municipality_key: string | null; municipality_name: string | null; list: string; label: string; official_id: string | null;
+          election_id: string; total: number;
+        }>(sql`
+          with latest as (
+            select s.election_id from local_elected_sources s join elections el on el.id = s.election_id order by el.date desc limit 1
+          ),
+          hits as (
+            select e.election_id, e.place_key, e.organ, e.list, e.position, e.name, ${score} as score
+            from local_elected e join latest using (election_id)
+            where ${matches}
+          ),
+          -- The same people as council members on the place page: lists with seats whose names add
+          -- up to them, and the first name on the most-voted list presiding (CM, AF).
+          shown as (
+            select h.*, r.label as result_label,
+              h.organ <> 'AM' and h.position = 1 and h.list = (
+                select w.list from election_results w
+                where w.election_id = h.election_id and w.place_key = h.place_key and w.organ = h.organ and coalesce(w.mandates, 0) > 0
+                order by w.votes desc, w.mandates desc limit 1
+              ) as presides
+            from hits h
+            join election_results r on r.election_id = h.election_id and r.place_key = h.place_key and r.organ = h.organ and r.list = h.list
+            where coalesce(r.mandates, 0) > 0
+              and r.mandates = (select count(*) from local_elected x
+                where x.election_id = h.election_id and x.place_key = h.place_key and x.organ = h.organ and x.list = h.list)
+          )
+          select s.name, s.organ, s.presides, p.key as place_key, p.name as place_name, p.level as place_level,
+            m.key as municipality_key, m.name as municipality_name, s.list, coalesce(s.result_label, l.name, s.list) as label,
+            case when s.presides and s.organ = 'CM' then o.id end as official_id, s.election_id,
+            (count(*) over ())::int as total
+          from shown s
+          join places p on p.key = s.place_key
+          left join places m on m.key = p.parent_key and p.level = 'parish'
+          left join election_lists l on l.election_id = s.election_id and l.list = s.list
+          left join local_officials o on o.election_id = s.election_id and o.place_key = s.place_key and o.list = s.list
+          order by s.score desc, s.presides desc, array_position(array['CM', 'AM', 'AF'], s.organ), length(s.name), s.name, p.name
+          limit ${limit}`);
+        return {
+          items: rows.rows.map((r) => ({
+            name: properName(r.name),
+            organ: r.organ,
+            role: r.presides ? ("presidente" as const) : null,
+            place: { key: r.place_key, name: r.place_name, level: r.place_level },
+            municipality: r.municipality_key ? { key: r.municipality_key, name: r.municipality_name! } : null,
+            list: r.list,
+            label: r.label,
+            parties: partiesInList(r.list),
+            localOfficialId: r.official_id,
+            election: r.election_id,
+          })),
+          total: rows.rows[0]?.total ?? 0,
+        };
+      },
+    );
+
     app.get(
       "/local-officials/:id",
       {

@@ -114,6 +114,41 @@ Every seat lists the people its list elected, in list order:
   means mayors.
 - **Names** are in title case ("Maria José de Aguiar"), converted from the map's capitals.
 
+## GET /local-officials/search
+
+Everyone named in `council.organs[].seats[].members`, searched by name, for the search page.
+
+`GET /local-officials/search?q=ana%20exemplo&limit=10`
+
+```jsonc
+{
+  "items": [
+    {
+      "name": "Ana Exemplo da Silva",            // title case, as in members
+      "organ": "AF",                             // CM | AM | AF
+      "role": "presidente",                      // "presidente" or null, as in members
+      "place": { "key": "LOCAL-130312", "name": "Margaride", "level": "parish" },
+      "municipality": { "key": "LOCAL-130300", "name": "Felgueiras" },  // null when the place is the municipality
+      "list": "PS", "label": "Partido Socialista", "parties": ["ps"],
+      "localOfficialId": null,                   // set for mayors: /autarcas/:id
+      "election": "autarquicas-2025"
+    }
+  ],
+  "total": 3                                     // every match, not just this page
+}
+```
+
+- **`q`:** every word must appear in the name, ignoring case and accents, and parts of words
+  count, as on `/articles?q=`. 3 to 200 characters, or 400 `invalid_request`.
+- **`limit`:** 1 to 50, default 10. There's no paging: it's for a few results per kind.
+- **Order:** the best name match first: the exact full name, then more whole words, then
+  more word starts ("mar" starts "Marlene", but is only inside "Damaris"). On a tie, a
+  presidente comes first, then CM, AM, AF, then the shorter name.
+- **Coverage:** the same people, source and caveats as "Who was elected" above: the latest
+  autárquicas with names (2025), the CNE's map, no later substitutions. Lists whose names don't
+  add up to their seats (`members: []`) aren't searchable either.
+- Mayors appear here too, with their `localOfficialId`.
+
 ## GET /local-officials/:id
 
 A mayor's own page (presidente da câmara), from `mayor.id`. Ids are readable and stable:

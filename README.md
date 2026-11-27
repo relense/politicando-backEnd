@@ -137,7 +137,7 @@ municipality and parish: the mayor (from the 2025 autárquicas candidates, impor
 election), council seats, the district's deputies, recent results and contracts.
 
 Everyone elected to each câmara, assembleia municipal and assembleia de freguesia is named
-from the CNE's official results map: `npm run local-elected:fetch` converts its spreadsheet
+(and searchable by name at `GET /local-officials/search`) from the CNE's official results map: `npm run local-elected:fetch` converts its spreadsheet
 into `data/autarquicas-2025-eleitos.json` (committed), and the seed loads it on deploy,
 doing nothing unless the file changed. Run the fetch again when the CNE publishes a new
 rectification (update `AS_OF` in `src/jobs/fetchLocalElected.ts`).
