@@ -52,7 +52,15 @@ try {
     console.log(JSON.stringify({ quiet: "no Budget in discussion; the full run is daily" }));
     if (bills > 0) await createRevalidator()(["budget"]);
   } else {
-    const { results, warnings } = await syncBudget(db, { legislatures: args.includes("--all") ? "all" : [legislature ?? config.PARLIAMENT_LEGISLATURE] });
+    // The proposal files. If they can't be read (after retries), the steps below still run: the
+    // voting scripts and the summaries don't depend on them. The run still fails (results is empty).
+    let results: Awaited<ReturnType<typeof syncBudget>>["results"] = [];
+    let warnings: string[] = [];
+    try {
+      ({ results, warnings } = await syncBudget(db, { legislatures: args.includes("--all") ? "all" : [legislature ?? config.PARLIAMENT_LEGISLATURE] }));
+    } catch (error) {
+      console.error("Budget files:", error instanceof Error ? error.message : error);
+    }
     for (const result of results) console.log(JSON.stringify(result));
     for (const warning of warnings) console.error(`Budget: ${warning}`);
     // New votes on proposals readers follow go to their inbox. Best effort: never fails the sync.

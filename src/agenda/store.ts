@@ -74,31 +74,35 @@ export const syncAgendaSource = async (
 ) => {
   const rows = [...new Map(inputs.map((input) => [input.id, toRow(input, source)])).values()];
   if (rows.length === 0) return { source, upserted: 0, removed: 0 };
-  await db
-    .insert(agendaEvents)
-    .values(rows)
-    .onConflictDoUpdate({
-      target: agendaEvents.id,
-      set: Object.fromEntries(
-        [
-          "kind", "title", "summary", "allDay", "startsAt", "endsAt", "startDay", "endDay", "until", "status",
-          "place", "district", "online", "attend", "organizer", "partySlugs", "sourceUrl",
-        ].map((key) => [key, sql.raw(`excluded.${toSnake(key)}`)]),
-      ),
-    });
-  await db.update(agendaEvents).set({ updatedAt: now }).where(inArray(agendaEvents.id, rows.map((r) => r.id)));
-  const today = lisbonDay(now);
-  const removed = await db
-    .delete(agendaEvents)
-    .where(
-      and(
-        eq(agendaEvents.source, source),
-        gte(agendaEvents.startDay, window.fromDay > today ? window.fromDay : today),
-        lte(agendaEvents.startDay, window.toDay),
-        notInArray(agendaEvents.id, rows.map((r) => r.id)),
-      ),
-    )
-    .returning({ id: agendaEvents.id });
+  // One transaction: a failure halfway never leaves events updated but not removed (or the reverse).
+  const removed = await db.transaction(async (tx) => {
+    await tx
+      .insert(agendaEvents)
+      .values(rows)
+      .onConflictDoUpdate({
+        target: agendaEvents.id,
+        set: Object.fromEntries(
+          [
+            "kind", "title", "summary", "allDay", "startsAt", "endsAt", "startDay", "endDay", "until", "status",
+            "place", "district", "online", "attend", "organizer", "partySlugs", "sourceUrl",
+          ].map((key) => [key, sql.raw(`excluded.${toSnake(key)}`)]),
+        ),
+      });
+    await tx.update(agendaEvents).set({ updatedAt: now }).where(inArray(agendaEvents.id, rows.map((r) => r.id)));
+    const today = lisbonDay(now);
+    const gone = await tx
+      .delete(agendaEvents)
+      .where(
+        and(
+          eq(agendaEvents.source, source),
+          gte(agendaEvents.startDay, window.fromDay > today ? window.fromDay : today),
+          lte(agendaEvents.startDay, window.toDay),
+          notInArray(agendaEvents.id, rows.map((r) => r.id)),
+        ),
+      )
+      .returning({ id: agendaEvents.id });
+    return gone;
+  });
   return { source, upserted: rows.length, removed: removed.length };
 };
 

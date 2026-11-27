@@ -284,15 +284,17 @@ const saveArticle = (
     }
   });
 
+const emptyStats = (source: NewsSource): SourceStats => ({
+  domain: source.domain, listed: 0, new: 0, pagesRead: 0, matched: 0, rejected: 0,
+  deferred: 0, skippedForeign: 0, malformed: 0, failed: 0, listingError: null,
+});
+
 const scanSource = async (
   source: NewsSource,
   matchable: Matchable,
   { db, client, maxPagesPerSource, now = new Date(), onArticleError }: IngestOptions,
 ): Promise<SourceStats> => {
-  const stats: SourceStats = {
-    domain: source.domain, listed: 0, new: 0, pagesRead: 0, matched: 0, rejected: 0,
-    deferred: 0, skippedForeign: 0, malformed: 0, failed: 0, listingError: null,
-  };
+  const stats = emptyStats(source);
 
   const candidates = new Map<string, { item: ListingItem; politics: boolean }>();
   for (const listing of source.listings) {
@@ -418,7 +420,16 @@ export const ingest = async (options: IngestOptions): Promise<SourceStats[]> => 
     local: await loadMatchableLocalOfficials(options.db),
   };
   if (matchable.parties.length === 0) throw new Error("No parties found: run the seed first");
-  return Promise.all(options.sources.map((source) => scanSource(source, matchable, options)));
+  // A source that throws (a database error while reading it) is reported as unreadable, keeping the
+  // other sources' results rather than failing them all.
+  return Promise.all(
+    options.sources.map((source) =>
+      scanSource(source, matchable, options).catch((error: unknown): SourceStats => ({
+        ...emptyStats(source),
+        listingError: `Failed: ${error instanceof Error ? error.message : String(error)}`,
+      })),
+    ),
+  );
 };
 
 /** How far back, and how many pages per run, to look again at articles stored with a placeholder headline. */

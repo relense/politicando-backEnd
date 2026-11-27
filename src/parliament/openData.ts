@@ -1,5 +1,6 @@
 import { Readable, Transform } from "node:stream";
 import StreamArray from "stream-json/streamers/StreamArray.js";
+import { HttpError, RETRY_DELAYS_MS, withRetry } from "../ingestion/retry.js";
 
 /**
  * Downloads files from the parliament's open data pages (parlamento.pt › Dados Abertos).
@@ -66,27 +67,75 @@ export const createOpenDataClient = ({
   fetch: fetchImpl = fetch,
   timeoutMs = 300_000,
   retryDelaysMs = [120_000, 300_000, 600_000],
+  requestRetryDelaysMs = RETRY_DELAYS_MS,
   log = (message: string) => console.warn(message),
 }: {
   legislature: string;
   fetch?: typeof fetch;
+  /** How long a request may go without receiving anything (the files are large: not a cap on the whole download). */
   timeoutMs?: number;
   /**
    * Waits before trying again when a dataset's file can't be found or a page fails. The
    * parliament regenerates its files at night, and for a while a folder can list no file.
    */
   retryDelaysMs?: number[];
+  /** Waits before trying one request again after a timeout, a dropped connection or a 5xx. */
+  requestRetryDelaysMs?: readonly number[];
   log?: (message: string) => void;
 }): OpenDataLoader => {
-  const request = async (url: string) => {
-    const response = await fetchImpl(url, {
-      headers: { "User-Agent": USER_AGENT },
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    if (!response.ok) throw new Error(`HTTP ${response.status} for ${url}`);
-    return response;
+  /** One request, failing when nothing arrives for timeoutMs (waiting for the answer or between chunks of its body). */
+  const requestOnce = async (url: string) => {
+    const controller = new AbortController();
+    // The body's own stream, failed directly on expiry: reading it fails then, whatever fetch does with the abort.
+    let output: TransformStreamDefaultController<Uint8Array> | null = null;
+    const expire = () => {
+      const reason = new DOMException(`Nothing from ${url} for ${Math.round(timeoutMs / 1000)} s`, "TimeoutError");
+      controller.abort(reason);
+      output?.error(reason);
+    };
+    let timer = setTimeout(expire, timeoutMs);
+    // A body nobody finishes reading mustn't keep the process alive.
+    timer.unref();
+    const touch = () => {
+      clearTimeout(timer);
+      timer = setTimeout(expire, timeoutMs);
+      timer.unref();
+    };
+    try {
+      const response = await fetchImpl(url, { headers: { "User-Agent": USER_AGENT }, signal: controller.signal });
+      if (!response.ok) {
+        clearTimeout(timer);
+        await response.body?.cancel().catch(() => {});
+        throw new HttpError(response.status, url);
+      }
+      if (!response.body) {
+        clearTimeout(timer);
+        return response;
+      }
+      touch();
+      const body = response.body.pipeThrough(
+        new TransformStream<Uint8Array, Uint8Array>({
+          start: (out) => {
+            output = out;
+          },
+          transform: (chunk, out) => {
+            touch();
+            out.enqueue(chunk);
+          },
+          flush: () => clearTimeout(timer),
+        }),
+      );
+      return new Response(body, { status: response.status, headers: response.headers });
+    } catch (error) {
+      clearTimeout(timer);
+      throw error;
+    }
   };
-  const get = async (url: string) => (await request(url)).text();
+  const retrying = { delaysMs: requestRetryDelaysMs, onRetry: (error: unknown, wait: number) => log(`${error instanceof Error ? error.message : String(error)}; trying again in ${Math.round(wait / 1000)} s`) };
+  /** Pages and whole files: the read is tried again too. */
+  const get = (url: string) => withRetry(async () => (await requestOnce(url)).text(), retrying);
+  /** A streamed file: only getting its answer is tried again (what was already read can't be taken back). */
+  const request = (url: string) => withRetry(() => requestOnce(url), retrying);
 
   const findFile = async (dataset: Dataset) => {
     const page = `${SITE}/Cidadania/Paginas/${DATASETS[dataset]}.aspx`;

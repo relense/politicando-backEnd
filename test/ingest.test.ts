@@ -44,6 +44,21 @@ const seenUrls = async () =>
   (await db.select({ url: seenSourceUris.sourceUri }).from(seenSourceUris)).map((r) => r.url);
 
 describe("ingest", () => {
+  it("reports a source that throws as unreadable and keeps the others' results", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>(async (input) =>
+      String(input) === FEED ? new Response(feed(item("/1", "PS responde"))) : String(input) === "https://a.pt/1" ? new Response(page("O PSD reagiu.")) : new Response("", { status: 404 }),
+    );
+    const real = createPoliteClient({ fetch, sleep: async () => undefined });
+    // b.pt's reading fails outright (as a database error would), instead of answering "unavailable".
+    const client = { ...real, get: (url: string) => (url.startsWith("https://b.pt") ? Promise.reject(new Error("connection lost")) : real.get(url)) } as typeof real;
+    const stats = await ingest({
+      db, client, maxPagesPerSource: 40, now: NOW,
+      sources: [...sources(), { domain: "b.pt", listings: [{ url: "https://b.pt/feed", kind: "rss", politics: false }] }],
+    });
+    expect(stats.map((s) => [s.domain, s.matched, s.listingError])).toEqual([["a.pt", 1, null], ["b.pt", 0, "Failed: connection lost"]]);
+    expect(await storedUrls()).toEqual(["https://a.pt/1"]);
+  });
+
   it("uses the page text to match and stores only an excerpt", async () => {
     const secret = "FRASE-DO-CORPO-DO-ARTIGO";
     const { first } = await run({

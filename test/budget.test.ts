@@ -170,6 +170,26 @@ describe("syncing a Budget", () => {
 
     expect((await syncBudget(db, { legislatures: ["IX"], fetchFn: site(() => text) })).warnings).toEqual(["No IX folder on the Budget dataset page"]);
   });
+
+  it("tries the dataset page again after a timeout, and reports a folder that keeps failing as a warning", async () => {
+    const text = JSON.stringify(FILE);
+    const timeout = () => Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" });
+    // The dataset page times out once (last night's failure), then answers.
+    let pageCalls = 0;
+    const slowPage = (async (input: string | URL | Request) => {
+      if (String(input).endsWith("DAOE.aspx") && ++pageCalls === 1) throw timeout();
+      return site(() => text)(input);
+    }) as typeof fetch;
+    const synced = await syncBudget(db, { legislatures: ["XVII"], fetchFn: slowPage, retryDelaysMs: [0, 0] });
+    expect(synced.results).toMatchObject([{ year: 2027, changed: true }]);
+    expect(pageCalls).toBe(2);
+
+    const brokenFolder = (async (input: string | URL | Request) =>
+      String(input).includes("DAOE.aspx?t=17") ? new Response("busy", { status: 503 }) : site(() => text)(input)) as typeof fetch;
+    expect(await syncBudget(db, { legislatures: ["XVII"], fetchFn: brokenFolder, retryDelaysMs: [0] })).toEqual({
+      results: [], warnings: ["XVII folder: HTTP 503 for https://www.parlamento.pt/Cidadania/Paginas/DAOE.aspx?t=17&Path=b"],
+    });
+  });
 });
 
 describe("the Budget API", () => {

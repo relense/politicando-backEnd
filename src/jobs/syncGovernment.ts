@@ -32,8 +32,14 @@ try {
       process.exitCode = 1;
     }
   }
-  const since = new Date(Date.now() - RELINK_DAYS * 24 * 60 * 60 * 1000);
-  console.log(JSON.stringify({ relinked: await linkStoredArticles(db, { since }) }));
+  // On its own too: a database error here mustn't skip telling the site.
+  try {
+    const since = new Date(Date.now() - RELINK_DAYS * 24 * 60 * 60 * 1000);
+    console.log(JSON.stringify({ relinked: await linkStoredArticles(db, { since }) }));
+  } catch (error) {
+    console.error("Relinking news failed:", error);
+    process.exitCode = 1;
+  }
   await createRevalidator()(["government", "news"]);
 } finally {
   await pool.end();

@@ -3,6 +3,7 @@ import { eq, sql } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import { budgetProposals, budgetSources, budgetVotes } from "../db/schema.js";
 import { findFolderLink } from "../parliament/openData.js";
+import { fetchText, RETRY_DELAYS_MS } from "../ingestion/retry.js";
 import { parseProposals } from "./parse.js";
 
 /*
@@ -13,7 +14,6 @@ import { parseProposals } from "./parse.js";
 
 const SITE = "https://www.parlamento.pt";
 export const BUDGET_DATASET_PAGE = `${SITE}/Cidadania/Paginas/DAOE.aspx`;
-const USER_AGENT = "PoliticandoBot/1.0 (+https://github.com/relense/politicando-backEnd)";
 
 const decode = (href: string) => href.replace(/&amp;/g, "&");
 
@@ -74,13 +74,16 @@ export const storeBudgetYear = async (db: Db, year: number, url: string, text: s
 /** Syncs every Budget in these legislatures' folders (the current one by default). */
 export const syncBudget = async (
   db: Db,
-  { legislatures, fetchFn = fetch, timeoutMs = 120_000 }: { legislatures: string[] | "all"; fetchFn?: typeof fetch; timeoutMs?: number },
+  {
+    legislatures,
+    fetchFn = fetch,
+    timeoutMs = 120_000,
+    retryDelaysMs = RETRY_DELAYS_MS,
+  }: { legislatures: string[] | "all"; fetchFn?: typeof fetch; timeoutMs?: number; retryDelaysMs?: readonly number[] },
 ) => {
-  const get = async (url: string) => {
-    const response = await fetchFn(url, { headers: { "User-Agent": USER_AGENT }, signal: AbortSignal.timeout(timeoutMs) });
-    if (!response.ok) throw new Error(`HTTP ${response.status} for ${url}`);
-    return response.text();
-  };
+  // Tried again on a timeout or a 5xx: one slow answer from parlamento.pt shouldn't fail the run.
+  const get = (url: string) =>
+    fetchText(url, { fetchFn, timeoutMs, delaysMs: retryDelaysMs, onRetry: (error, wait) => console.warn(`${error instanceof Error ? error.message : String(error)}; trying again in ${wait / 1000} s`) });
   const page = await get(BUDGET_DATASET_PAGE);
   const wanted = legislatures === "all" ? findLegislatures(page) : legislatures;
   const results: BudgetSyncResult[] = [];
@@ -91,7 +94,14 @@ export const syncBudget = async (
       warnings.push(`No ${legislature} folder on the Budget dataset page`);
       continue;
     }
-    for (const file of findProposalFiles(await get(folder))) {
+    let files: ReturnType<typeof findProposalFiles>;
+    try {
+      files = findProposalFiles(await get(folder));
+    } catch (error) {
+      warnings.push(`${legislature} folder: ${error instanceof Error ? error.message : String(error)}`);
+      continue;
+    }
+    for (const file of files) {
       try {
         results.push(await storeBudgetYear(db, file.year, file.url, await get(file.url)));
       } catch (error) {
