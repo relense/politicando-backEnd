@@ -312,6 +312,7 @@ Production checklist:
 - Blog posts can live in `content/editorial/*.md` (front matter as in `src/editorial/markdownFiles.ts`): every deploy publishes new ones and updates live ones whose file changed. A post taken down (admin or `/publish/:slug/unpublish`) stays down, and a byline set through the API is kept.
 - Create the first admin with `node dist/jobs/createAdmin.js <email> "<name>" admin`, then invite the rest from the admin (`docs/admin-api.md`).
 - Schedule the jobs from the host's cron, with the same image: `node dist/jobs/ingest.js` every 15 minutes, `syncParliament.js` and `syncGovernment.js` daily, `importContracts.js` weekly.
+- Failures in the jobs: fetches from official sites are tried again after a timeout, a dropped connection, a 429 or a 5xx (10 s, then 30 s: `src/ingestion/retry.ts`), and each step runs on its own, so one failing still fails the run (it shows in Render) but doesn't skip the steps after it or the site refresh. Render never runs two copies of the same cron at once (a late run delays the next).
 
 ```sh
 node dist/db/migrate.js   # on each release: migrates, then seeds

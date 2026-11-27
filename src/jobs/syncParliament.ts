@@ -13,20 +13,30 @@ const RELINK_DAYS = 30;
 const config = loadParliamentConfig();
 const { db, pool } = createDb(config.DATABASE_URL);
 
+/** Each step on its own: one failing doesn't skip the others, but still fails the run. */
+const step = async (name: string, run: () => Promise<unknown>) => {
+  try {
+    const result = await run();
+    if (result !== undefined) console.log(JSON.stringify({ [name]: result }));
+  } catch (error) {
+    console.error(`${name} failed:`, error);
+    process.exitCode = 1;
+  }
+};
+
 try {
-  const stats = await syncParliament(db, createOpenDataClient({ legislature: config.PARLIAMENT_LEGISLATURE }));
-  for (const warning of stats.warnings) console.warn(`Warning: ${warning}`);
-  console.log(JSON.stringify({ ...stats, warnings: stats.warnings.length }));
+  await step("parliament", async () => {
+    const stats = await syncParliament(db, createOpenDataClient({ legislature: config.PARLIAMENT_LEGISLATURE }));
+    for (const warning of stats.warnings) console.warn(`Warning: ${warning}`);
+    return { ...stats, warnings: stats.warnings.length };
+  });
   // New initiatives and deputies can match news the scanner already stored.
   const since = new Date(Date.now() - RELINK_DAYS * 24 * 60 * 60 * 1000);
-  console.log(JSON.stringify({ relinked: await linkStoredArticles(db, { since }) }));
+  await step("relinked", () => linkStoredArticles(db, { since }));
   // "Passa ou chumba?": settle what the new votes decided, and tell the readers.
-  console.log(JSON.stringify({ predictions: await resolvePredictions(db) }));
-  console.log(JSON.stringify({ voteRounds: await openVoteRounds(db) }));
-  await createRevalidator()(["parliament", "predictions", "news"]);
-} catch (error) {
-  console.error("Parliament sync failed:", error);
-  process.exitCode = 1;
+  await step("predictions", () => resolvePredictions(db));
+  await step("voteRounds", () => openVoteRounds(db));
+  await step("revalidate", () => createRevalidator()(["parliament", "predictions", "news"]));
 } finally {
   await pool.end();
 }

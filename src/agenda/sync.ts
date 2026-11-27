@@ -8,6 +8,7 @@ import { parseParliamentAgenda } from "./parliament.js";
 import { parsePresidentAgenda, PRESIDENT_AGENDA_URL } from "./president.js";
 import { type AgendaInput, syncAgendaSource } from "./store.js";
 import { lisbonDay } from "./time.js";
+import { fetchText, RETRY_DELAYS_MS } from "../ingestion/retry.js";
 
 const USER_AGENT = "PoliticandoBot/1.0 (+https://github.com/relense/politicando-backEnd)";
 
@@ -15,6 +16,7 @@ export interface AgendaSyncDeps {
   parliament: OpenDataLoader;
   fetch?: typeof fetch;
   now?: Date;
+  retryDelaysMs?: readonly number[];
 }
 
 const span = (events: AgendaInput[]) => {
@@ -35,12 +37,10 @@ export const loadDistricts = async (db: Db) => {
 };
 
 /** Imports every source; each fails on its own and is reported as an error. */
-export const syncAgenda = async (db: Db, { parliament, fetch: fetchImpl = fetch, now = new Date() }: AgendaSyncDeps) => {
-  const get = async (url: string, accept = "text/html") => {
-    const response = await fetchImpl(url, { headers: { "User-Agent": USER_AGENT, Accept: accept }, signal: AbortSignal.timeout(60_000) });
-    if (!response.ok) throw new Error(`HTTP ${response.status} for ${url}`);
-    return response;
-  };
+export const syncAgenda = async (db: Db, { parliament, fetch: fetchImpl = fetch, now = new Date(), retryDelaysMs = RETRY_DELAYS_MS }: AgendaSyncDeps) => {
+  // Tried again on a timeout, a dropped connection or a 5xx.
+  const get = (url: string, accept = "text/html") =>
+    fetchText(url, { fetchFn: fetchImpl, timeoutMs: 60_000, init: { headers: { "User-Agent": USER_AGENT, Accept: accept } }, delaysMs: retryDelaysMs });
   const results: Record<string, unknown> = {};
   const run = async (name: string, task: () => Promise<unknown>) => {
     try {
@@ -56,7 +56,7 @@ export const syncAgenda = async (db: Db, { parliament, fetch: fetchImpl = fetch,
   });
 
   await run("president", async () => {
-    const { days, events, empty } = parsePresidentAgenda(await (await get(PRESIDENT_AGENDA_URL)).text(), await loadDistricts(db));
+    const { days, events, empty } = parsePresidentAgenda(await get(PRESIDENT_AGENDA_URL), await loadDistricts(db));
     // Nothing on the agenda: keep what we have (an event already imported may still happen).
     if (empty) return { upserted: 0, removed: 0, empty: true };
     if (days.length === 0) throw new Error("No days on the President's agenda page: has it changed?");
@@ -67,9 +67,8 @@ export const syncAgenda = async (db: Db, { parliament, fetch: fetchImpl = fetch,
     const year = Number(lisbonDay(now).slice(0, 4));
     const out = [];
     for (const y of [year, year + 1]) {
-      const response = await get(europarlMeetingsUrl(y), "application/ld+json");
       // Next year's calendar comes out late in the year: until then the API answers empty.
-      const text = await response.text();
+      const text = await get(europarlMeetingsUrl(y), "application/ld+json");
       if (!text.trim()) continue;
       const events = parseEuroparlMeetings(JSON.parse(text));
       out.push(await syncAgendaSource(db, "europarl", events, { fromDay: `${y}-01-01`, toDay: `${y}-12-31` }, now));

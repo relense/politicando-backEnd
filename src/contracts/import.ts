@@ -10,6 +10,7 @@ import type { Db } from "../db/client.js";
 import { contractParties, contracts, places } from "../db/schema.js";
 import { overwriteAll } from "../db/upsert.js";
 import { USER_AGENT } from "../ingestion/politeClient.js";
+import { fetchJson } from "../ingestion/retry.js";
 import { streamJsonArray } from "../parliament/openData.js";
 import { CONTRACTS_DATASET, parseContract, parseResources, placeMatcher, type ParsedContract } from "./base.js";
 
@@ -78,9 +79,8 @@ export const importContracts = async (
 /** The yearly files on dados.gov.pt, with when each was last regenerated. */
 export const fetchContractFiles = async (fetchImpl: typeof fetch = fetch) => {
   const url = `https://dados.gov.pt/api/1/datasets/${CONTRACTS_DATASET}/`;
-  const response = await fetchImpl(url, { headers: { "User-Agent": USER_AGENT }, signal: AbortSignal.timeout(60_000) });
-  if (!response.ok) throw new Error(`HTTP ${response.status} for ${url}`);
-  return parseResources(await response.json());
+  // Tried again on a timeout or a 5xx: dados.gov.pt failing once shouldn't skip a week's import.
+  return parseResources(await fetchJson(url, { fetchFn: fetchImpl, timeoutMs: 60_000 }));
 };
 
 /**
@@ -110,9 +110,16 @@ export async function* contractFileRecords(url: string): AsyncIterable<unknown> 
       unzip.on("error", reject);
       unzip.on("close", resolve);
     });
-    yield* streamJsonArray(unzip.stdout);
-    const code = await exited;
-    if (code !== 0) throw new Error(`unzip exited with ${code}: ${stderr.trim()}`);
+    // Awaited only after the stream: if unzip can't start, that rejection is reported there, not as unhandled.
+    exited.catch(() => {});
+    try {
+      yield* streamJsonArray(unzip.stdout);
+      const code = await exited;
+      if (code !== 0) throw new Error(`unzip exited with ${code}: ${stderr.trim()}`);
+    } finally {
+      // Stopped early (a database error mid-file): don't leave unzip running and the process alive.
+      if (unzip.exitCode === null && unzip.signalCode === null) unzip.kill();
+    }
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import { deputies, governmentMembers } from "../db/schema.js";
+import { HttpError, withRetry } from "../ingestion/retry.js";
 
 /*
  * Official site, Wikipedia, Wikidata and social accounts of deputies and members of the
@@ -50,36 +51,29 @@ export const mergeLinks = (own: Link[], extra: Link[]) => {
 
 /** Deputies asked about per query: one query for all of them outgrew Wikidata's 60-second limit. */
 const DEPUTY_BATCH = 200;
-/** Waits before asking again after a timeout, a 429 or a 5xx (Wikidata's query service is often busy). */
+/** Waits before asking again after a timeout, a network error, a 429 or a 5xx (Wikidata's query service is often busy). */
 const RETRY_DELAYS_MS = [5_000, 20_000];
 
 type Options = { fetchFn?: typeof fetch; retryDelaysMs?: number[] };
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-const query = async ({ fetchFn = fetch, retryDelaysMs = RETRY_DELAYS_MS }: Options, sparql: string): Promise<Binding[]> => {
-  for (let attempt = 0; ; attempt++) {
-    let retryable: unknown;
-    try {
+const query = ({ fetchFn = fetch, retryDelaysMs = RETRY_DELAYS_MS }: Options, sparql: string): Promise<Binding[]> =>
+  withRetry(
+    async () => {
       const response = await fetchFn(ENDPOINT, {
         method: "POST",
         headers: { Accept: "application/sparql-results+json", "Content-Type": "application/x-www-form-urlencoded", "User-Agent": USER_AGENT },
         body: new URLSearchParams({ query: sparql }).toString(),
         signal: AbortSignal.timeout(60_000),
       });
-      if (response.ok) return ((await response.json()) as { results: { bindings: Binding[] } }).results.bindings;
-      const error = new Error(`Wikidata answered ${response.status}`);
-      if (response.status !== 429 && response.status < 500) throw error;
-      retryable = error;
-    } catch (error) {
-      if (!(error instanceof Error && error.name === "TimeoutError")) throw error;
-      retryable = error;
-    }
-    const delay = retryDelaysMs[attempt];
-    if (delay === undefined) throw retryable;
-    await sleep(delay);
-  }
-};
+      if (!response.ok) {
+        await response.body?.cancel().catch(() => {});
+        // Kept as HttpError so 429 and 5xx count as passing; the message names Wikidata.
+        throw Object.assign(new HttpError(response.status, ENDPOINT), { message: `Wikidata answered ${response.status}` });
+      }
+      return ((await response.json()) as { results: { bindings: Binding[] } }).results.bindings;
+    },
+    { delaysMs: retryDelaysMs },
+  );
 
 const literal = (text: string) => `"${text.replace(/["\\]/g, "")}"@pt`;
 
